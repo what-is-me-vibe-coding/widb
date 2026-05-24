@@ -1,0 +1,40 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build output
+/bin/
+/dist/
+/build/
+
+# Test artifacts
+*.test
+*.out
+coverage.html
+coverage.out
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (generated during runtime)
+/data/
+*.db
+*.wal
+*.log
+*.seg
+*.idx
+
+# Temp
+/tmp/
+*.tmp
