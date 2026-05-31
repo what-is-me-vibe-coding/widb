@@ -19,7 +19,7 @@ func TestCreateWAL(t *testing.T) {
 		t.Errorf("expected size 0, got %d", w.Size())
 	}
 
-	w.Close()
+	_ = w.Close()
 
 	_, err = os.Stat(path)
 	if err != nil {
@@ -35,7 +35,7 @@ func TestWALAppendWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	payload := []byte("hello wal")
 	if err := w.AppendWrite(payload); err != nil {
@@ -59,7 +59,7 @@ func TestWALAppendCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	if err := w.AppendCommit([]byte("commit data")); err != nil {
 		t.Fatalf("AppendCommit failed: %v", err)
@@ -74,7 +74,7 @@ func TestWALAppendCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	if err := w.AppendCheckpoint([]byte("checkpoint data")); err != nil {
 		t.Fatalf("AppendCheckpoint failed: %v", err)
@@ -106,14 +106,14 @@ func TestWALRecovery(t *testing.T) {
 			t.Fatalf("Append failed: %v", err)
 		}
 	}
-	w.Sync()
-	w.Close()
+	_ = w.Sync()
+	_ = w.Close()
 
 	recovered, recs, err := OpenWAL(path)
 	if err != nil {
 		t.Fatalf("OpenWAL failed: %v", err)
 	}
-	defer recovered.Close()
+	defer func() { _ = recovered.Close() }()
 
 	if len(recs) != len(records) {
 		t.Fatalf("expected %d records, got %d", len(records), len(recs))
@@ -137,13 +137,13 @@ func TestWALRecoveryEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	w.Close()
+	_ = w.Close()
 
 	recovered, recs, err := OpenWAL(path)
 	if err != nil {
 		t.Fatalf("OpenWAL failed: %v", err)
 	}
-	defer recovered.Close()
+	defer func() { _ = recovered.Close() }()
 
 	if len(recs) != 0 {
 		t.Errorf("expected 0 records, got %d", len(recs))
@@ -165,15 +165,15 @@ func TestWALAppendAfterRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	w.AppendWrite([]byte("before"))
-	w.Sync()
-	w.Close()
+	_ = w.AppendWrite([]byte("before"))
+	_ = w.Sync()
+	_ = w.Close()
 
 	recovered, recs, err := OpenWAL(path)
 	if err != nil {
 		t.Fatalf("OpenWAL failed: %v", err)
 	}
-	defer recovered.Close()
+	defer func() { _ = recovered.Close() }()
 
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(recs))
@@ -182,14 +182,14 @@ func TestWALAppendAfterRecovery(t *testing.T) {
 	if err := recovered.AppendWrite([]byte("after")); err != nil {
 		t.Fatalf("AppendWrite after recovery failed: %v", err)
 	}
-	recovered.Sync()
-	recovered.Close()
+	_ = recovered.Sync()
+	_ = recovered.Close()
 
 	recovered2, recs2, err := OpenWAL(path)
 	if err != nil {
 		t.Fatalf("second OpenWAL failed: %v", err)
 	}
-	defer recovered2.Close()
+	defer func() { _ = recovered2.Close() }()
 
 	if len(recs2) != 2 {
 		t.Fatalf("expected 2 records, got %d", len(recs2))
@@ -204,7 +204,7 @@ func TestWALLargePayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	largePayload := make([]byte, maxRecordPayload+1)
 	err = w.AppendWrite(largePayload)
@@ -221,7 +221,7 @@ func TestWALRotate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	w.maxSize = walMetaSize + 100
 
@@ -246,7 +246,7 @@ func TestWALConcurrentWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	const goroutines = 10
 	const writesPerRoutine = 100
@@ -267,14 +267,14 @@ func TestWALConcurrentWrite(t *testing.T) {
 		<-done
 	}
 
-	w.Sync()
-	w.Close()
+	_ = w.Sync()
+	_ = w.Close()
 
 	recovered, recs, err := OpenWAL(path)
 	if err != nil {
 		t.Fatalf("OpenWAL failed: %v", err)
 	}
-	defer recovered.Close()
+	defer func() { _ = recovered.Close() }()
 
 	expected := goroutines * writesPerRoutine
 	if len(recs) != expected {
@@ -290,9 +290,9 @@ func TestWALCorruptedCRC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	w.AppendWrite([]byte("valid record"))
-	w.Sync()
-	w.Close()
+	_ = w.AppendWrite([]byte("valid record"))
+	_ = w.Sync()
+	_ = w.Close()
 
 	data, err := os.ReadFile(path)
 	if err != nil {

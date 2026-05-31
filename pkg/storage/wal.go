@@ -69,7 +69,7 @@ func OpenWAL(path string) (*WAL, []RawRecord, error) {
 
 	records, fileSize, err := replayWAL(f)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, nil, fmt.Errorf("wal replay: %w", err)
 	}
 
