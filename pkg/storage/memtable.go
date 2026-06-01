@@ -289,6 +289,29 @@ func estimateRowSize(row Row) int64 {
 	return size
 }
 
+// All 返回 MemTable 中所有键值对，按键顺序排列。
+func (m *MemTable) All() []struct {
+	Key   string
+	Value Row
+} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []struct {
+		Key   string
+		Value Row
+	}
+	x := m.tree.head.forward[0]
+	for x != nil {
+		result = append(result, struct {
+			Key   string
+			Value Row
+		}{Key: x.key, Value: x.value})
+		x = x.forward[0]
+	}
+	return result
+}
+
 // String 返回 MemTable 的可读信息。
 func (m *MemTable) String() string {
 	return fmt.Sprintf("MemTable{entries=%d, size=%d, maxSize=%d, frozen=%v}",

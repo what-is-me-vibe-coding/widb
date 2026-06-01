@@ -10,9 +10,13 @@ import (
 )
 
 const (
-	colName = "name"
-	colData = "data"
-	colID   = "id"
+	colName   = "name"
+	colData   = "data"
+	colID     = "id"
+	colAge    = "age"
+	colActive = "active"
+	colVal    = "val"
+	colScore  = "score"
 )
 
 func TestNewMemTable(t *testing.T) {
@@ -35,7 +39,7 @@ func TestMemTablePutAndGet(t *testing.T) {
 		Version: 1,
 		Columns: map[string]common.Value{
 			colName: common.NewString("alice"),
-			"age":   common.NewInt64(30),
+			colAge:  common.NewInt64(30),
 		},
 	}
 
@@ -454,7 +458,7 @@ func TestMemTableLargeDataset(t *testing.T) {
 			Columns: map[string]common.Value{
 				colName:   common.NewString(fmt.Sprintf("user_%d", i)),
 				"balance": common.NewFloat64(float64(i) * 1.5),
-				"active":  common.NewBool(i%2 == 0),
+				colActive: common.NewBool(i%2 == 0),
 			},
 		}
 		_, _, _ = mt.Put(key, row)
