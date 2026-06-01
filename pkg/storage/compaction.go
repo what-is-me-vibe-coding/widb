@@ -50,7 +50,7 @@ func (c *Compactor) Compact(segments []*Segment, cols []ColumnMeta) (*Segment, e
 }
 
 // CompactToLevel 将 L0 的 segments 合并到 L1，或将 Ln 合并到 Ln+1。
-func (c *Compactor) CompactToLevel(segments []*Segment, level int, cols []ColumnMeta) (*Segment, error) {
+func (c *Compactor) CompactToLevel(segments []*Segment, _ int, cols []ColumnMeta) (*Segment, error) {
 	seg, err := c.Compact(segments, cols)
 	if err != nil {
 		return nil, err
@@ -132,27 +132,52 @@ func extractValue(cd columnData, row uint32) common.Value {
 
 	switch cd.typ {
 	case common.TypeInt64:
-		if ints, ok := cd.data.([]int64); ok && row < uint32(len(ints)) {
-			return common.NewInt64(ints[row])
-		}
+		return extractInt64Value(cd.data, row)
 	case common.TypeFloat64:
-		if floats, ok := cd.data.([]float64); ok && row < uint32(len(floats)) {
-			return common.NewFloat64(floats[row])
-		}
+		return extractFloat64Value(cd.data, row)
 	case common.TypeBool:
-		if bools, ok := cd.data.([]uint64); ok && row < uint32(len(bools)) {
-			return common.NewBool(bools[row] != 0)
-		}
+		return extractBoolValue(cd.data, row)
 	case common.TypeString:
-		if strs, ok := cd.data.([]string); ok && row < uint32(len(strs)) {
-			return common.NewString(strs[row])
-		}
+		return extractStringValue(cd.data, row)
 	case common.TypeTimestamp:
-		if times, ok := cd.data.([]int64); ok && row < uint32(len(times)) {
-			return common.NewTimestamp(time.Unix(0, times[row]))
-		}
+		return extractTimestampValue(cd.data, row)
+	default:
+		return common.NewNull()
 	}
+}
 
+func extractInt64Value(data interface{}, row uint32) common.Value {
+	if ints, ok := data.([]int64); ok && row < uint32(len(ints)) {
+		return common.NewInt64(ints[row])
+	}
+	return common.NewNull()
+}
+
+func extractFloat64Value(data interface{}, row uint32) common.Value {
+	if floats, ok := data.([]float64); ok && row < uint32(len(floats)) {
+		return common.NewFloat64(floats[row])
+	}
+	return common.NewNull()
+}
+
+func extractBoolValue(data interface{}, row uint32) common.Value {
+	if bools, ok := data.([]uint64); ok && row < uint32(len(bools)) {
+		return common.NewBool(bools[row] != 0)
+	}
+	return common.NewNull()
+}
+
+func extractStringValue(data interface{}, row uint32) common.Value {
+	if strs, ok := data.([]string); ok && row < uint32(len(strs)) {
+		return common.NewString(strs[row])
+	}
+	return common.NewNull()
+}
+
+func extractTimestampValue(data interface{}, row uint32) common.Value {
+	if times, ok := data.([]int64); ok && row < uint32(len(times)) {
+		return common.NewTimestamp(time.Unix(0, times[row]))
+	}
 	return common.NewNull()
 }
 

@@ -9,6 +9,8 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
+const col0Name = "col_0"
+
 func setupEngine(t *testing.T, dir string, maxSize int64) *Engine {
 	t.Helper()
 	eng, err := NewEngine(EngineConfig{
@@ -18,7 +20,7 @@ func setupEngine(t *testing.T, dir string, maxSize int64) *Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { eng.Close() })
+	t.Cleanup(func() { _ = eng.Close() })
 	return eng
 }
 
@@ -53,6 +55,58 @@ func makeValue(typ common.DataType, i int) common.Value {
 	}
 }
 
+func createColumns(colTypes []common.DataType) []ColumnMeta {
+	cols := make([]ColumnMeta, len(colTypes))
+	for i, typ := range colTypes {
+		cols[i] = ColumnMeta{ID: uint32(i), Name: fmt.Sprintf("col_%d", i), Type: typ}
+	}
+	return cols
+}
+
+func verifyCompactedSegment(t *testing.T, newSeg *Segment, wantRows, wantCols int) {
+	t.Helper()
+	if newSeg.RowCount != uint32(wantRows) {
+		t.Errorf("expected %d rows, got %d", wantRows, newSeg.RowCount)
+	}
+	if len(newSeg.Columns) != wantCols {
+		t.Errorf("expected %d columns, got %d", len(newSeg.Columns), wantCols)
+	}
+	if newSeg.FilePath == "" {
+		t.Error("expected non-empty file path")
+	}
+	if _, err := os.Stat(newSeg.FilePath); os.IsNotExist(err) {
+		t.Error("compacted segment file does not exist")
+	}
+}
+
+func runCompactorCase(t *testing.T, dir string, numRows, numFlushes int, colTypes []common.DataType, wantRows, wantCols int) {
+	t.Helper()
+
+	cols := createColumns(colTypes)
+	eng := setupEngine(t, dir, 64<<20)
+
+	rowsPerFlush := numRows / numFlushes
+	for f := 0; f < numFlushes; f++ {
+		writeRows(t, eng, cols, rowsPerFlush, f*rowsPerFlush)
+		if err := eng.Flush(cols); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	segments := eng.Segments()
+	if len(segments) == 0 {
+		t.Fatal("expected segments after flush")
+	}
+
+	compactor := NewCompactor(dir)
+	newSeg, err := compactor.Compact(segments, cols)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyCompactedSegment(t, newSeg, wantRows, wantCols)
+}
+
 func TestCompactorBasic(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -74,46 +128,9 @@ func TestCompactorBasic(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer os.RemoveAll(dir)
+			defer func() { _ = os.RemoveAll(dir) }()
 
-			cols := make([]ColumnMeta, len(tt.colTypes))
-			for i, typ := range tt.colTypes {
-				cols[i] = ColumnMeta{ID: uint32(i), Name: fmt.Sprintf("col_%d", i), Type: typ}
-			}
-
-			eng := setupEngine(t, dir, 64<<20)
-
-			rowsPerFlush := tt.numRows / tt.numFlushes
-			for f := 0; f < tt.numFlushes; f++ {
-				writeRows(t, eng, cols, rowsPerFlush, f*rowsPerFlush)
-				if err := eng.Flush(cols); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			segments := eng.Segments()
-			if len(segments) == 0 {
-				t.Fatal("expected segments after flush")
-			}
-
-			compactor := NewCompactor(dir)
-			newSeg, err := compactor.Compact(segments, cols)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if newSeg.RowCount != uint32(tt.wantRows) {
-				t.Errorf("expected %d rows, got %d", tt.wantRows, newSeg.RowCount)
-			}
-			if len(newSeg.Columns) != tt.wantCols {
-				t.Errorf("expected %d columns, got %d", len(newSeg.Columns), tt.wantCols)
-			}
-			if newSeg.FilePath == "" {
-				t.Error("expected non-empty file path")
-			}
-			if _, err := os.Stat(newSeg.FilePath); os.IsNotExist(err) {
-				t.Error("compacted segment file does not exist")
-			}
+			runCompactorCase(t, dir, tt.numRows, tt.numFlushes, tt.colTypes, tt.wantRows, tt.wantCols)
 		})
 	}
 }
@@ -123,7 +140,7 @@ func TestCompactorEmptySegments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	compactor := NewCompactor(dir)
 	_, err = compactor.Compact(nil, nil)
@@ -137,9 +154,9 @@ func TestCompactorCleanupSegments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
-	cols := []ColumnMeta{{ID: 0, Name: "col_0", Type: common.TypeInt64}}
+	cols := []ColumnMeta{{ID: 0, Name: col0Name, Type: common.TypeInt64}}
 	eng := setupEngine(t, dir, 1<<10)
 	writeRows(t, eng, cols, 50, 0)
 	if err := eng.Flush(cols); err != nil {
@@ -169,9 +186,9 @@ func TestEngineCompactAndShouldCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
-	cols := []ColumnMeta{{ID: 0, Name: "col_0", Type: common.TypeInt64}}
+	cols := []ColumnMeta{{ID: 0, Name: col0Name, Type: common.TypeInt64}}
 	eng := setupEngine(t, dir, 64<<20)
 
 	if eng.ShouldCompact() {
@@ -219,9 +236,9 @@ func TestCompactorCompactToLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
-	cols := []ColumnMeta{{ID: 0, Name: "col_0", Type: common.TypeInt64}}
+	cols := []ColumnMeta{{ID: 0, Name: col0Name, Type: common.TypeInt64}}
 	eng := setupEngine(t, dir, 1<<10)
 	writeRows(t, eng, cols, 20, 0)
 	if err := eng.Flush(cols); err != nil {
