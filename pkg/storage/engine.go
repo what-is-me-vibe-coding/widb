@@ -67,10 +67,6 @@ func (e *Engine) Write(key string, values map[string]common.Value) error {
 	}
 	e.nextVersion++
 
-	if e.activeMem.IsFrozen() && e.activeMem.Len() == 0 {
-		// 如果活跃 MemTable 已被冻结且为空，切换到新的
-	}
-
 	if e.activeMem.ShouldFlush() {
 		if err := e.rotateMemTable(); err != nil {
 			return fmt.Errorf("engine write: rotate memtable: %w", err)

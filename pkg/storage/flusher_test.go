@@ -19,19 +19,19 @@ func TestFlusherFlush(t *testing.T) {
 		row Row
 	}{
 		{"key1", Row{Version: 1, Columns: map[string]common.Value{
-			"id":   common.NewInt64(1),
-			"name": common.NewString("alice"),
-			"age":  common.NewInt64(30),
+			"id":    common.NewInt64(1),
+			colName: common.NewString("alice"),
+			colAge:  common.NewInt64(30),
 		}}},
 		{"key2", Row{Version: 1, Columns: map[string]common.Value{
-			"id":   common.NewInt64(2),
-			"name": common.NewString("bob"),
-			"age":  common.NewInt64(25),
+			"id":    common.NewInt64(2),
+			colName: common.NewString("bob"),
+			colAge:  common.NewInt64(25),
 		}}},
 		{"key3", Row{Version: 1, Columns: map[string]common.Value{
-			"id":   common.NewInt64(3),
-			"name": common.NewString("charlie"),
-			"age":  common.NewInt64(35),
+			"id":    common.NewInt64(3),
+			colName: common.NewString("charlie"),
+			colAge:  common.NewInt64(35),
 		}}},
 	}
 
@@ -44,8 +44,8 @@ func TestFlusherFlush(t *testing.T) {
 
 	cols := []ColumnMeta{
 		{ID: 0, Name: "id", Type: common.TypeInt64},
-		{ID: 1, Name: "name", Type: common.TypeString},
-		{ID: 2, Name: "age", Type: common.TypeInt64},
+		{ID: 1, Name: colName, Type: common.TypeString},
+		{ID: 2, Name: colAge, Type: common.TypeInt64},
 	}
 
 	seg, err := flusher.Flush(mem, cols)
@@ -82,17 +82,17 @@ func TestFlusherFlushWithNulls(t *testing.T) {
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
-		"val": common.NewInt64(100),
+		colVal: common.NewInt64(100),
 	}})
 	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
-		"val": common.NewNull(),
+		colVal: common.NewNull(),
 	}})
 	_, _, _ = mem.Put("k3", Row{Version: 1, Columns: map[string]common.Value{
-		"val": common.NewInt64(300),
+		colVal: common.NewInt64(300),
 	}})
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "val", Type: common.TypeInt64},
+		{ID: 0, Name: colVal, Type: common.TypeInt64},
 	}
 
 	seg, err := flusher.Flush(mem, cols)
@@ -119,14 +119,14 @@ func TestFlusherFlushFloat64(t *testing.T) {
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
-		"score": common.NewFloat64(1.5),
+		colScore: common.NewFloat64(1.5),
 	}})
 	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
-		"score": common.NewFloat64(2.7),
+		colScore: common.NewFloat64(2.7),
 	}})
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "score", Type: common.TypeFloat64},
+		{ID: 0, Name: colScore, Type: common.TypeFloat64},
 	}
 
 	seg, err := flusher.Flush(mem, cols)
@@ -143,14 +143,14 @@ func TestFlusherFlushBool(t *testing.T) {
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
-		"active": common.NewBool(true),
+		colActive: common.NewBool(true),
 	}})
 	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
-		"active": common.NewBool(false),
+		colActive: common.NewBool(false),
 	}})
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "active", Type: common.TypeBool},
+		{ID: 0, Name: colActive, Type: common.TypeBool},
 	}
 
 	seg, err := flusher.Flush(mem, cols)
@@ -192,7 +192,7 @@ func TestFlusherFlushEmptyMemTable(t *testing.T) {
 
 	mem := NewMemTable()
 	cols := []ColumnMeta{
-		{ID: 0, Name: "val", Type: common.TypeInt64},
+		{ID: 0, Name: colVal, Type: common.TypeInt64},
 	}
 
 	_, err := flusher.Flush(mem, cols)
@@ -206,12 +206,12 @@ func TestFlusherFlushMultiSegment(t *testing.T) {
 	flusher := NewFlusher(tmpDir)
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "val", Type: common.TypeInt64},
+		{ID: 0, Name: colVal, Type: common.TypeInt64},
 	}
 
 	mem1 := NewMemTable()
 	_, _, _ = mem1.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
-		"val": common.NewInt64(1),
+		colVal: common.NewInt64(1),
 	}})
 
 	seg1, err := flusher.Flush(mem1, cols)
@@ -221,7 +221,7 @@ func TestFlusherFlushMultiSegment(t *testing.T) {
 
 	mem2 := NewMemTable()
 	_, _, _ = mem2.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
-		"val": common.NewInt64(2),
+		colVal: common.NewInt64(2),
 	}})
 
 	seg2, err := flusher.Flush(mem2, cols)
@@ -243,7 +243,7 @@ func TestFlusherFlushMissingColumn(t *testing.T) {
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
-		"val": common.NewInt64(1),
+		colVal: common.NewInt64(1),
 	}})
 
 	cols := []ColumnMeta{
