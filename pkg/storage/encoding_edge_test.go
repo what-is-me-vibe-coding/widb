@@ -184,7 +184,7 @@ func TestNullBitmapRoundTrip(t *testing.T) {
 }
 
 func TestEncodePlainStrings(t *testing.T) {
-	data := []string{testStrHello, testStrWorld, "", "foo"}
+	data := []string{testStrHello, testStrWorld, "", testStrFoo}
 	enc, err := encodePlainStrings(data, uint32(len(data)), nil)
 	if err != nil {
 		t.Fatalf("encodePlainStrings: %v", err)

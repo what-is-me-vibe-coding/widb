@@ -114,6 +114,8 @@ const (
 	testStrHello = "hello"
 	testStrApple = "apple"
 	testStrWorld = "world"
+	testStrFoo   = "foo"
+	testStrTest  = "test"
 )
 
 func TestEncodeDecodeEmpty(t *testing.T) {
@@ -247,7 +249,7 @@ func TestEncodeDecodeRoundTripFloat64(t *testing.T) {
 }
 
 func TestEncodeDecodeRoundTripString(t *testing.T) {
-	data := []string{testStrHello, testStrWorld, testStrHello, "test"}
+	data := []string{testStrHello, testStrWorld, testStrHello, testStrTest}
 	enc, err := EncodeColumn(common.TypeString, data, uint32(len(data)), nil)
 	if err != nil {
 		t.Fatalf("EncodeColumn: %v", err)

@@ -7,7 +7,7 @@ import (
 )
 
 func TestEncodeDecodePlainString(t *testing.T) {
-	data := []string{testStrHello, testStrWorld, "", "test", "foo"}
+	data := []string{testStrHello, testStrWorld, "", testStrTest, testStrFoo}
 	enc, err := EncodeColumn(common.TypeString, data, uint32(len(data)), nil)
 	if err != nil {
 		t.Fatalf("EncodeColumn failed: %v", err)

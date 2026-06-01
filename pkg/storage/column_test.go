@@ -121,7 +121,7 @@ func TestColumnVectorSetAndGetBool(t *testing.T) {
 func TestColumnVectorSetAndGetString(t *testing.T) {
 	cv := NewColumnVector(1, common.TypeString, 16)
 
-	values := []string{"hello", "world", "test", "", "foo"}
+	values := []string{"hello", "world", testStrTest, "", testStrFoo}
 	for i, s := range values {
 		cv.SetString(uint32(i), s)
 		cv.len++
