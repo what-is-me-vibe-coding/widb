@@ -386,7 +386,7 @@ func TestMemTableConcurrentReadWrite(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		wg.Add(1)
-		go func(base int) {
+		go func(_ int) {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				key := fmt.Sprintf("key%03d", j)
