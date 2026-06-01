@@ -7,6 +7,13 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
+const (
+	testNameFloat64   = "Float64"
+	testNameBool      = "Bool"
+	testNameString    = "String"
+	testNameTimestamp = "Timestamp"
+)
+
 func TestNewColumnVector(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -17,10 +24,10 @@ func TestNewColumnVector(t *testing.T) {
 	}{
 		{"Int64_default_capacity", 1, common.TypeInt64, 0, defaultColumnCapacity},
 		{"Int64_custom_capacity", 2, common.TypeInt64, 128, 128},
-		{"Float64", 3, common.TypeFloat64, 0, defaultColumnCapacity},
-		{"Bool", 4, common.TypeBool, 0, defaultColumnCapacity},
-		{"String", 5, common.TypeString, 0, defaultColumnCapacity},
-		{"Timestamp", 6, common.TypeTimestamp, 0, defaultColumnCapacity},
+		{testNameFloat64, 3, common.TypeFloat64, 0, defaultColumnCapacity},
+		{testNameBool, 4, common.TypeBool, 0, defaultColumnCapacity},
+		{testNameString, 5, common.TypeString, 0, defaultColumnCapacity},
+		{testNameTimestamp, 6, common.TypeTimestamp, 0, defaultColumnCapacity},
 	}
 
 	for _, tt := range tests {
@@ -141,7 +148,7 @@ func TestColumnVectorSetAndGetTimestamp(t *testing.T) {
 	}
 
 	for i := uint32(0); i < 10; i++ {
-		v := cv.GetValue(uint32(i))
+		v := cv.GetValue(i)
 		if v.Typ != common.TypeTimestamp {
 			t.Errorf("row %d type = %v, want Timestamp", i, v.Typ)
 		}
@@ -193,10 +200,10 @@ func TestColumnVectorSetValue(t *testing.T) {
 		value common.Value
 	}{
 		{"Int64", common.TypeInt64, common.NewInt64(42)},
-		{"Float64", common.TypeFloat64, common.NewFloat64(3.14)},
-		{"Bool", common.TypeBool, common.NewBool(true)},
-		{"String", common.TypeString, common.NewString("hello")},
-		{"Timestamp", common.TypeTimestamp, common.NewTimestamp(time.Now())},
+		{testNameFloat64, common.TypeFloat64, common.NewFloat64(3.14)},
+		{testNameBool, common.TypeBool, common.NewBool(true)},
+		{testNameString, common.TypeString, common.NewString("hello")},
+		{testNameTimestamp, common.TypeTimestamp, common.NewTimestamp(time.Now())},
 		{"Null", common.TypeInt64, common.NewNull()},
 	}
 
@@ -380,10 +387,10 @@ func TestColumnVectorGrowForAllTypes(t *testing.T) {
 		typ  common.DataType
 		val  common.Value
 	}{
-		{"Bool", common.TypeBool, common.NewBool(true)},
-		{"Float64", common.TypeFloat64, common.NewFloat64(1.0)},
-		{"String", common.TypeString, common.NewString("x")},
-		{"Timestamp", common.TypeTimestamp, common.NewTimestamp(time.Now())},
+		{testNameBool, common.TypeBool, common.NewBool(true)},
+		{testNameFloat64, common.TypeFloat64, common.NewFloat64(1.0)},
+		{testNameString, common.TypeString, common.NewString("x")},
+		{testNameTimestamp, common.TypeTimestamp, common.NewTimestamp(time.Now())},
 	}
 
 	for _, tt := range tests {
