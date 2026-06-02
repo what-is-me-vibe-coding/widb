@@ -242,25 +242,9 @@ func (p *Parser) convertExpr(expr sqlparser.Expr) (Expression, error) {
 	case *sqlparser.ComparisonExpr:
 		return p.convertComparisonExpr(e)
 	case *sqlparser.AndExpr:
-		left, err := p.convertExpr(e.Left)
-		if err != nil {
-			return nil, err
-		}
-		right, err := p.convertExpr(e.Right)
-		if err != nil {
-			return nil, err
-		}
-		return &BinaryExpr{Op: OpAnd, Left: left, Right: right}, nil
+		return p.convertBinaryExpr(e.Left, e.Right, OpAnd)
 	case *sqlparser.OrExpr:
-		left, err := p.convertExpr(e.Left)
-		if err != nil {
-			return nil, err
-		}
-		right, err := p.convertExpr(e.Right)
-		if err != nil {
-			return nil, err
-		}
-		return &BinaryExpr{Op: OpOr, Left: left, Right: right}, nil
+		return p.convertBinaryExpr(e.Left, e.Right, OpOr)
 	case *sqlparser.NotExpr:
 		inner, err := p.convertExpr(e.Expr)
 		if err != nil {
@@ -274,6 +258,19 @@ func (p *Parser) convertExpr(expr sqlparser.Expr) (Expression, error) {
 	default:
 		return nil, fmt.Errorf("query parse: unsupported expr type %T", expr)
 	}
+}
+
+// convertBinaryExpr 转换二元逻辑表达式（AND/OR）。
+func (p *Parser) convertBinaryExpr(left, right sqlparser.Expr, op BinaryOp) (*BinaryExpr, error) {
+	l, err := p.convertExpr(left)
+	if err != nil {
+		return nil, err
+	}
+	r, err := p.convertExpr(right)
+	if err != nil {
+		return nil, err
+	}
+	return &BinaryExpr{Op: op, Left: l, Right: r}, nil
 }
 
 // convertSQLVal 转换 SQL 字面量值。
