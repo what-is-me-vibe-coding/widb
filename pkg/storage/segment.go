@@ -39,6 +39,20 @@ type Segment struct {
 	FilePath string
 }
 
+func (s *Segment) SegmentID() uint64 {
+	return s.ID
+}
+
+func (s *Segment) ForEachColumnStat(fn func(colID uint32, colType common.DataType, min, max []byte, nullCount uint32)) {
+	for _, stat := range s.Footer.ColumnStats {
+		var dt common.DataType
+		if int(stat.ColumnID) < len(s.Columns) {
+			dt = s.Columns[stat.ColumnID].Type
+		}
+		fn(stat.ColumnID, dt, stat.Min, stat.Max, stat.NullCount)
+	}
+}
+
 // SegmentBuilder 从 Chunk 构建 Segment。
 type SegmentBuilder struct {
 	id      uint64

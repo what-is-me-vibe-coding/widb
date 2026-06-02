@@ -6,13 +6,10 @@ import (
 	"sync"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
 
-// PredicateOp 表示比较操作类型。
 type PredicateOp int
 
-// 比较操作常量。
 const (
 	OpEqual PredicateOp = iota
 	OpNotEqual
@@ -22,7 +19,6 @@ const (
 	OpGreaterEqual
 )
 
-// ColumnSparseStat 存储单个列的稀疏索引信息。
 type ColumnSparseStat struct {
 	MinValue  common.Value
 	MaxValue  common.Value
@@ -30,7 +26,17 @@ type ColumnSparseStat struct {
 	HasValues bool
 }
 
-// SparseIndex 管理所有 Segment 的列级稀疏索引。
+type SegmentStats interface {
+	SegmentID() uint64
+	ForEachColumnStat(func(colID uint32, colType common.DataType, min, max []byte, nullCount uint32))
+}
+
+type ColumnVectorReader interface {
+	Len() uint32
+	NullBitmap() *common.Bitmap
+	GetValue(i uint32) common.Value
+}
+
 type SparseIndex struct {
 	mu    sync.RWMutex
 	stats map[colStatKey]ColumnSparseStat
@@ -41,33 +47,30 @@ type colStatKey struct {
 	ColID uint32
 }
 
-// NewSparseIndex 创建 SparseIndex。
 func NewSparseIndex() *SparseIndex {
 	return &SparseIndex{
 		stats: make(map[colStatKey]ColumnSparseStat),
 	}
 }
 
-// RegisterColumnStat 注册单列的统计信息。
-func (si *SparseIndex) RegisterColumnStat(segID uint64, colID uint32, stat storage.ColumnStat, dataType common.DataType) {
+func (si *SparseIndex) RegisterColumnStat(segID uint64, colID uint32, min, max []byte, nullCount uint32, dataType common.DataType) {
 	si.mu.Lock()
 	defer si.mu.Unlock()
 
 	key := colStatKey{SegID: segID, ColID: colID}
 	css := ColumnSparseStat{
-		NullCount: stat.NullCount,
+		NullCount: nullCount,
 	}
 
-	if len(stat.Min) > 0 && len(stat.Max) > 0 {
-		css.MinValue = bytesToValue(stat.Min, dataType)
-		css.MaxValue = bytesToValue(stat.Max, dataType)
+	if len(min) > 0 && len(max) > 0 {
+		css.MinValue = bytesToValue(min, dataType)
+		css.MaxValue = bytesToValue(max, dataType)
 		css.HasValues = true
 	}
 
 	si.stats[key] = css
 }
 
-// GetColumnStat 获取指定列统计信息。
 func (si *SparseIndex) GetColumnStat(segID uint64, colID uint32) (ColumnSparseStat, bool) {
 	si.mu.RLock()
 	defer si.mu.RUnlock()
@@ -76,7 +79,6 @@ func (si *SparseIndex) GetColumnStat(segID uint64, colID uint32) (ColumnSparseSt
 	return css, ok
 }
 
-// UnregisterSegment 移除指定 Segment 的所有统计信息。
 func (si *SparseIndex) UnregisterSegment(segID uint64) {
 	si.mu.Lock()
 	defer si.mu.Unlock()
@@ -88,9 +90,6 @@ func (si *SparseIndex) UnregisterSegment(segID uint64) {
 	}
 }
 
-// CanSkip 判断指定 Segment 是否可以跳过某个列上的谓词。
-// CanSkip 返回 true 表示该 Segment 不可能包含匹配结果，可以跳过。
-// 返回 false 表示可能包含匹配结果，需要继续读取。
 func (si *SparseIndex) CanSkip(segID uint64, colID uint32, op PredicateOp, value common.Value) bool {
 	css, ok := si.GetColumnStat(segID, colID)
 	if !ok || !css.HasValues {
@@ -100,50 +99,36 @@ func (si *SparseIndex) CanSkip(segID uint64, colID uint32, op PredicateOp, value
 	minVal := css.MinValue
 	maxVal := css.MaxValue
 
-	// 匹配条件判断：
-	// 可以跳过 ↔ 区间 [min, max] 中不存在任何一个满足条件的值
 	switch op {
 	case OpEqual:
-		// value 不在区间 → 全部不满足 → 可以跳过
 		return value.Less(minVal) || maxVal.Less(value)
 	case OpNotEqual:
-		// 即使 min/max 不等于 value，中间可能存在等于 value → 无法判定跳过
 		return false
 	case OpLess:
-		// 查找 v < value → 若所有值 >= value 即 min >= value → 可跳过
-		// min >= value → !(min < value) → 可以跳过
 		return !minVal.Less(value)
 	case OpLessEqual:
-		// 查找 v <= value → 若所有值 > value 即 min > value → min.Less(value) 为 false → value.Less(min) 为 true → 可以跳过
 		return value.Less(minVal)
 	case OpGreater:
-		// 查找 v > value → 若所有值 <= value 即 max <= value → value < max 为 false → !(value.Less(maxVal)) → 可以跳过
 		return !value.Less(maxVal)
 	case OpGreaterEqual:
-		// 查找 v >= value → 若所有值 < value 即 max < value → max.Less(value) → 可以跳过
 		return maxVal.Less(value)
 	default:
 		return false
 	}
 }
 
-// LoadFromSegment 从 Segment 的 Footer 加载所有列统计信息。
-func (si *SparseIndex) LoadFromSegment(seg *storage.Segment, _, _ string, _ int) {
+func (si *SparseIndex) LoadFromSegment(seg SegmentStats, _, _ string, _ int) {
 	if seg == nil {
 		return
 	}
 
-	for _, stat := range seg.Footer.ColumnStats {
-		var dt common.DataType
-		if int(stat.ColumnID) < len(seg.Columns) {
-			dt = seg.Columns[stat.ColumnID].Type
-		}
-		si.RegisterColumnStat(seg.ID, stat.ColumnID, stat, dt)
-	}
+	segID := seg.SegmentID()
+	seg.ForEachColumnStat(func(colID uint32, colType common.DataType, min, max []byte, nullCount uint32) {
+		si.RegisterColumnStat(segID, colID, min, max, nullCount, colType)
+	})
 }
 
-// BuildFromColumnVector 从列向量构建统计信息并注册。
-func (si *SparseIndex) BuildFromColumnVector(segID uint64, colID uint32, cv *storage.ColumnVector) {
+func (si *SparseIndex) BuildFromColumnVector(segID uint64, colID uint32, cv ColumnVectorReader) {
 	if cv == nil || cv.Len() == 0 {
 		return
 	}
@@ -183,14 +168,12 @@ func (si *SparseIndex) BuildFromColumnVector(segID uint64, colID uint32, cv *sto
 	si.mu.Unlock()
 }
 
-// StatCount 返回统计信息条目数。
 func (si *SparseIndex) StatCount() int {
 	si.mu.RLock()
 	defer si.mu.RUnlock()
 	return len(si.stats)
 }
 
-// Clear 清空所有统计信息。
 func (si *SparseIndex) Clear() {
 	si.mu.Lock()
 	defer si.mu.Unlock()

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
 
 func TestNewSparseIndex(t *testing.T) {
@@ -21,14 +20,7 @@ func TestNewSparseIndex(t *testing.T) {
 func TestRegisterColumnStat(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID:  0,
-		Min:       int64ToBytes(10),
-		Max:       int64ToBytes(100),
-		NullCount: 0,
-	}
-
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	css, ok := si.GetColumnStat(1, 0)
 	if !ok {
@@ -48,12 +40,7 @@ func TestRegisterColumnStat(t *testing.T) {
 func TestRegisterColumnStatEmptyMinMax(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID:  0,
-		NullCount: 5,
-	}
-
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, nil, nil, 5, common.TypeInt64)
 
 	css, ok := si.GetColumnStat(1, 0)
 	if !ok {
@@ -70,13 +57,7 @@ func TestRegisterColumnStatEmptyMinMax(t *testing.T) {
 func TestCanSkipEqual(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID:  0,
-		Min:       int64ToBytes(10),
-		Max:       int64ToBytes(100),
-		NullCount: 0,
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	if si.CanSkip(1, 0, OpEqual, common.NewInt64(50)) {
 		t.Error("should not skip when value is in range")
@@ -92,12 +73,7 @@ func TestCanSkipEqual(t *testing.T) {
 func TestCanSkipLess(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      int64ToBytes(10),
-		Max:      int64ToBytes(100),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	if !si.CanSkip(1, 0, OpLess, common.NewInt64(5)) {
 		t.Error("should skip when max < 5 is false (min is 10)")
@@ -113,12 +89,7 @@ func TestCanSkipLess(t *testing.T) {
 func TestCanSkipLessEqual(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      int64ToBytes(10),
-		Max:      int64ToBytes(100),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	if !si.CanSkip(1, 0, OpLessEqual, common.NewInt64(5)) {
 		t.Error("should skip when all values > 5 (min=10)")
@@ -134,12 +105,7 @@ func TestCanSkipLessEqual(t *testing.T) {
 func TestCanSkipGreater(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      int64ToBytes(10),
-		Max:      int64ToBytes(100),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	if !si.CanSkip(1, 0, OpGreater, common.NewInt64(200)) {
 		t.Error("should skip when all values are <= 200, none > 200")
@@ -152,12 +118,7 @@ func TestCanSkipGreater(t *testing.T) {
 func TestCanSkipGreaterEqual(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      int64ToBytes(10),
-		Max:      int64ToBytes(100),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	if !si.CanSkip(1, 0, OpGreaterEqual, common.NewInt64(200)) {
 		t.Error("should skip when all values < 200")
@@ -178,12 +139,7 @@ func TestCanSkipNoStat(t *testing.T) {
 func TestCanSkipString(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      []byte("apple"),
-		Max:      []byte("zebra"),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeString)
+	si.RegisterColumnStat(1, 0, []byte("apple"), []byte("zebra"), 0, common.TypeString)
 
 	if si.CanSkip(1, 0, OpEqual, common.NewString("mango")) {
 		t.Error("should not skip when string is in range")
@@ -199,12 +155,7 @@ func TestCanSkipString(t *testing.T) {
 func TestCanSkipFloat64(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      float64ToBytes(1.5),
-		Max:      float64ToBytes(99.9),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeFloat64)
+	si.RegisterColumnStat(1, 0, float64ToBytes(1.5), float64ToBytes(99.9), 0, common.TypeFloat64)
 
 	if si.CanSkip(1, 0, OpEqual, common.NewFloat64(50.0)) {
 		t.Error("should not skip when value is in range")
@@ -220,14 +171,9 @@ func TestCanSkipFloat64(t *testing.T) {
 func TestSparseUnregisterSegment(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      int64ToBytes(10),
-		Max:      int64ToBytes(100),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
-	si.RegisterColumnStat(1, 1, stat, common.TypeInt64)
-	si.RegisterColumnStat(2, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
+	si.RegisterColumnStat(1, 1, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
+	si.RegisterColumnStat(2, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	if si.StatCount() != 3 {
 		t.Fatalf("expected 3 stats, got %d", si.StatCount())
@@ -252,13 +198,8 @@ func TestSparseUnregisterSegment(t *testing.T) {
 func TestSparseClear(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      int64ToBytes(10),
-		Max:      int64ToBytes(100),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
-	si.RegisterColumnStat(2, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
+	si.RegisterColumnStat(2, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	si.Clear()
 	if si.StatCount() != 0 {
@@ -266,20 +207,37 @@ func TestSparseClear(t *testing.T) {
 	}
 }
 
+type mockSegmentStats struct {
+	id   uint64
+	cols []mockColStat
+}
+
+type mockColStat struct {
+	colID     uint32
+	colType   common.DataType
+	min       []byte
+	max       []byte
+	nullCount uint32
+}
+
+func (m *mockSegmentStats) SegmentID() uint64 {
+	return m.id
+}
+
+func (m *mockSegmentStats) ForEachColumnStat(fn func(colID uint32, colType common.DataType, min, max []byte, nullCount uint32)) {
+	for _, c := range m.cols {
+		fn(c.colID, c.colType, c.min, c.max, c.nullCount)
+	}
+}
+
 func TestLoadFromSegment(t *testing.T) {
 	si := NewSparseIndex()
 
-	seg := &storage.Segment{
-		ID: 42,
-		Columns: []storage.EncodedColumn{
-			{Type: common.TypeInt64},
-			{Type: common.TypeString},
-		},
-		Footer: storage.SegmentFooter{
-			ColumnStats: []storage.ColumnStat{
-				{ColumnID: 0, Min: int64ToBytes(1), Max: int64ToBytes(1000), NullCount: 3},
-				{ColumnID: 1, Min: []byte("alpha"), Max: []byte("omega"), NullCount: 0},
-			},
+	seg := &mockSegmentStats{
+		id: 42,
+		cols: []mockColStat{
+			{colID: 0, colType: common.TypeInt64, min: int64ToBytes(1), max: int64ToBytes(1000), nullCount: 3},
+			{colID: 1, colType: common.TypeString, min: []byte("alpha"), max: []byte("omega"), nullCount: 0},
 		},
 	}
 
@@ -317,15 +275,49 @@ func TestLoadFromSegmentNil(t *testing.T) {
 	}
 }
 
+type mockColumnVector struct {
+	len    uint32
+	nulls  *common.Bitmap
+	values []common.Value
+}
+
+func newMockColumnVector(values []common.Value, nullIndices map[int]bool) *mockColumnVector {
+	cv := &mockColumnVector{
+		len:    uint32(len(values)),
+		nulls:  common.NewBitmap(uint32(len(values))),
+		values: values,
+	}
+	for idx := range nullIndices {
+		cv.nulls.Set(uint32(idx))
+	}
+	return cv
+}
+
+func (m *mockColumnVector) Len() uint32 {
+	return m.len
+}
+
+func (m *mockColumnVector) NullBitmap() *common.Bitmap {
+	return m.nulls
+}
+
+func (m *mockColumnVector) GetValue(i uint32) common.Value {
+	if i >= uint32(len(m.values)) {
+		return common.NewNull()
+	}
+	return m.values[i]
+}
+
 func TestBuildFromColumnVector(t *testing.T) {
 	si := NewSparseIndex()
 
-	cv := storage.NewColumnVector(0, common.TypeInt64, 10)
-	mustAppend(t, cv, common.NewInt64(42))
-	mustAppend(t, cv, common.NewInt64(10))
-	mustAppend(t, cv, common.NewInt64(99))
-	mustAppend(t, cv, common.NewInt64(5))
-	mustAppend(t, cv, common.NewInt64(200))
+	cv := newMockColumnVector([]common.Value{
+		common.NewInt64(42),
+		common.NewInt64(10),
+		common.NewInt64(99),
+		common.NewInt64(5),
+		common.NewInt64(200),
+	}, nil)
 
 	si.BuildFromColumnVector(1, 0, cv)
 
@@ -347,12 +339,13 @@ func TestBuildFromColumnVector(t *testing.T) {
 func TestBuildFromColumnVectorWithNulls(t *testing.T) {
 	si := NewSparseIndex()
 
-	cv := storage.NewColumnVector(0, common.TypeInt64, 10)
-	mustAppend(t, cv, common.NewInt64(100))
-	mustAppend(t, cv, common.NewNull())
-	mustAppend(t, cv, common.NewInt64(200))
-	mustAppend(t, cv, common.NewNull())
-	mustAppend(t, cv, common.NewInt64(50))
+	cv := newMockColumnVector([]common.Value{
+		common.NewInt64(100),
+		common.NewNull(),
+		common.NewInt64(200),
+		common.NewNull(),
+		common.NewInt64(50),
+	}, map[int]bool{1: true, 3: true})
 
 	si.BuildFromColumnVector(1, 0, cv)
 
@@ -374,7 +367,7 @@ func TestBuildFromColumnVectorWithNulls(t *testing.T) {
 func TestBuildFromColumnVectorEmpty(t *testing.T) {
 	si := NewSparseIndex()
 
-	cv := storage.NewColumnVector(0, common.TypeInt64, 0)
+	cv := &mockColumnVector{len: 0}
 	si.BuildFromColumnVector(1, 0, cv)
 
 	if si.StatCount() != 0 {
@@ -394,12 +387,7 @@ func TestBuildFromColumnVectorNil(t *testing.T) {
 func TestCanSkipNotEqual(t *testing.T) {
 	si := NewSparseIndex()
 
-	stat := storage.ColumnStat{
-		ColumnID: 0,
-		Min:      int64ToBytes(10),
-		Max:      int64ToBytes(100),
-	}
-	si.RegisterColumnStat(1, 0, stat, common.TypeInt64)
+	si.RegisterColumnStat(1, 0, int64ToBytes(10), int64ToBytes(100), 0, common.TypeInt64)
 
 	if si.CanSkip(1, 0, OpNotEqual, common.NewInt64(5)) {
 		t.Error("cannot skip NotEqual based on min/max alone")
@@ -416,12 +404,7 @@ func TestConcurrentReadWrite(_ *testing.T) {
 	for i := 0; i < 5; i++ {
 		go func(id uint64) {
 			for j := 0; j < 100; j++ {
-				stat := storage.ColumnStat{
-					ColumnID: uint32(j),
-					Min:      int64ToBytes(int64(j * 10)),
-					Max:      int64ToBytes(int64(j*10 + 100)),
-				}
-				si.RegisterColumnStat(id, uint32(j), stat, common.TypeInt64)
+				si.RegisterColumnStat(id, uint32(j), int64ToBytes(int64(j*10)), int64ToBytes(int64(j*10+100)), 0, common.TypeInt64)
 			}
 			done <- true
 		}(uint64(i))
@@ -468,11 +451,4 @@ func float64ToBytes(v float64) []byte {
 	b[6] = byte(bits >> 48)
 	b[7] = byte(bits >> 56)
 	return b
-}
-
-func mustAppend(t *testing.T, cv *storage.ColumnVector, v common.Value) {
-	t.Helper()
-	if err := cv.Append(v); err != nil {
-		t.Fatal(err)
-	}
 }
