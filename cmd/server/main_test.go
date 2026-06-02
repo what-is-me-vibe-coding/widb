@@ -1,11 +1,25 @@
 package main
 
 import (
+	"bytes"
+	"os"
 	"testing"
 )
 
-func TestMain(t *testing.T) {
-	// main 函数目前只打印一行日志，测试其不会 panic
-	// 未来随着功能增加，这里会补充更多测试
-	_ = t
+func TestMainOutput(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	main()
+	_ = w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	if buf.String() != "test-db server starting...\n" {
+		t.Errorf("unexpected output: %q", buf.String())
+	}
 }

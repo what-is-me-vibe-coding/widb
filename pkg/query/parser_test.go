@@ -6,12 +6,6 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
-const (
-	testTableUsers = "users"
-	testColName    = "name"
-	testColAge     = "age"
-)
-
 func TestParseSelectBasic(t *testing.T) {
 	p := NewParser()
 	stmt, err := p.Parse("SELECT id, name FROM users")
@@ -58,7 +52,7 @@ func TestParseSelectWithAlias(t *testing.T) {
 		t.Fatalf("Parse SELECT with alias: %v", err)
 	}
 	sel := stmt.(*SelectStatement)
-	if sel.Columns[0].Alias != "user_id" {
+	if sel.Columns[0].Alias != testColUserID {
 		t.Errorf("expected alias user_id, got %q", sel.Columns[0].Alias)
 	}
 	if sel.Columns[1].Alias != "" {
@@ -192,7 +186,7 @@ func TestParseSelectWithFuncExpr(t *testing.T) {
 	}
 	sel := stmt.(*SelectStatement)
 	fn, ok := sel.Columns[0].Expr.(*FuncExpr)
-	if !ok || fn.Name != "count" {
+	if !ok || fn.Name != testFuncCount {
 		t.Fatalf("expected count, got %v", sel.Columns[0].Expr)
 	}
 	if _, ok := fn.Args[0].(*StarExpr); !ok {

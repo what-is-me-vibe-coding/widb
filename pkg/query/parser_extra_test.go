@@ -51,7 +51,7 @@ func TestParseSelectWithFuncArgs(t *testing.T) {
 		t.Fatalf("Parse func args: %v", err)
 	}
 	sel := stmt.(*SelectStatement)
-	for i, name := range []string{"max", "min", "avg"} {
+	for i, name := range []string{testFuncMax, testFuncMin, testFuncAvg} {
 		fn, ok := sel.Columns[i].Expr.(*FuncExpr)
 		if !ok || fn.Name != name {
 			t.Errorf("col %d: expected %s, got %v", i, name, sel.Columns[i].Expr)

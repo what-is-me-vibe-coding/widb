@@ -197,6 +197,7 @@ type Expression interface {
 // ColumnExpr 表示列引用表达式。
 type ColumnExpr struct {
 	Name string
+	typ  common.DataType
 }
 
 func (e *ColumnExpr) exprNode()      {}
