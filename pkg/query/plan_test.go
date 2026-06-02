@@ -8,10 +8,10 @@ import (
 
 func TestPlanNodeString(t *testing.T) {
 	scan := &ScanNode{
-		Table:     "users",
-		Columns:   []string{"id", "name"},
+		Table:     testTableUsers,
+		Columns:   []string{"id", testColName},
 		Predicate: &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: "id"}, Right: &LiteralExpr{Value: common.NewInt64(0)}},
-		schema:    []ColumnDef{{Name: "id", Type: common.TypeInt64}, {Name: "name", Type: common.TypeString}},
+		schema:    []ColumnDef{{Name: "id", Type: common.TypeInt64}, {Name: testColName, Type: common.TypeString}},
 	}
 
 	s := scan.String()
@@ -21,7 +21,7 @@ func TestPlanNodeString(t *testing.T) {
 
 	filter := &FilterNode{
 		Child:     scan,
-		Condition: &BinaryExpr{Op: OpEq, Left: &ColumnExpr{Name: "name"}, Right: &LiteralExpr{Value: common.NewString("test")}},
+		Condition: &BinaryExpr{Op: OpEq, Left: &ColumnExpr{Name: testColName}, Right: &LiteralExpr{Value: common.NewString("test")}},
 	}
 	s = filter.String()
 	if s == "" {
@@ -37,8 +37,8 @@ func TestPlanNodeString(t *testing.T) {
 	proj := &ProjectNode{
 		Child:       scan,
 		Expressions: []Expression{&ColumnExpr{Name: "id"}},
-		Aliases:     []string{"user_id"},
-		schema:      []ColumnDef{{Name: "user_id", Type: common.TypeInt64}},
+		Aliases:     []string{testColUserID},
+		schema:      []ColumnDef{{Name: testColUserID, Type: common.TypeInt64}},
 	}
 	s = proj.String()
 	if s == "" {
@@ -49,7 +49,7 @@ func TestPlanNodeString(t *testing.T) {
 		Child:      scan,
 		GroupBy:    []Expression{&ColumnExpr{Name: "id"}},
 		Aggregates: []AggregateExpr{{Func: AggCount, Arg: &StarExpr{}}},
-		schema:     []ColumnDef{{Name: "id", Type: common.TypeInt64}, {Name: "COUNT(*)", Type: common.TypeInt64}},
+		schema:     []ColumnDef{{Name: "id", Type: common.TypeInt64}, {Name: testAggCountStar, Type: common.TypeInt64}},
 	}
 	s = agg.String()
 	if s == "" {
@@ -73,7 +73,7 @@ func TestAggregateExprString(t *testing.T) {
 		t.Errorf("expected 'COUNT(*)', got %q", agg.String())
 	}
 
-	agg = AggregateExpr{Func: AggSum, Arg: &ColumnExpr{Name: "score"}}
+	agg = AggregateExpr{Func: AggSum, Arg: &ColumnExpr{Name: testColScore}}
 	if agg.String() != "SUM(score)" {
 		t.Errorf("expected 'SUM(score)', got %q", agg.String())
 	}
@@ -202,9 +202,9 @@ func TestExprReturnType(t *testing.T) {
 		{"unary not", &UnaryExpr{Op: OpNot, Expr: &LiteralExpr{Value: common.NewBool(true)}}, common.TypeBool},
 		{"func count", &FuncExpr{Name: "COUNT", Args: []Expression{&StarExpr{}}}, common.TypeInt64},
 		{"func sum int", &FuncExpr{Name: "SUM", Args: []Expression{&ColumnExpr{Name: "id", typ: common.TypeInt64}}}, common.TypeInt64},
-		{"func avg", &FuncExpr{Name: "AVG", Args: []Expression{&ColumnExpr{Name: "score", typ: common.TypeFloat64}}}, common.TypeFloat64},
-		{"func min", &FuncExpr{Name: "MIN", Args: []Expression{&ColumnExpr{Name: "age", typ: common.TypeInt64}}}, common.TypeInt64},
-		{"func max", &FuncExpr{Name: "MAX", Args: []Expression{&ColumnExpr{Name: "age", typ: common.TypeInt64}}}, common.TypeInt64},
+		{"func avg", &FuncExpr{Name: testAggAVG, Args: []Expression{&ColumnExpr{Name: testColScore, typ: common.TypeFloat64}}}, common.TypeFloat64},
+		{"func min", &FuncExpr{Name: "MIN", Args: []Expression{&ColumnExpr{Name: testColAge, typ: common.TypeInt64}}}, common.TypeInt64},
+		{"func max", &FuncExpr{Name: "MAX", Args: []Expression{&ColumnExpr{Name: testColAge, typ: common.TypeInt64}}}, common.TypeInt64},
 		{"star", &StarExpr{}, common.TypeNull},
 	}
 
@@ -226,7 +226,7 @@ func TestInferAggReturnType(t *testing.T) {
 	}{
 		{"count", AggregateExpr{Func: AggCount, Arg: nil}, common.TypeInt64},
 		{"sum literal", AggregateExpr{Func: AggSum, Arg: &LiteralExpr{Value: common.NewInt64(1)}}, common.TypeInt64},
-		{"sum column", AggregateExpr{Func: AggSum, Arg: &ColumnExpr{Name: "score", typ: common.TypeFloat64}}, common.TypeFloat64},
+		{"sum column", AggregateExpr{Func: AggSum, Arg: &ColumnExpr{Name: testColScore, typ: common.TypeFloat64}}, common.TypeFloat64},
 	}
 
 	for _, tt := range tests {
@@ -245,11 +245,11 @@ func TestParseAggFunc(t *testing.T) {
 		input    string
 		expected AggregateFunc
 	}{
-		{"count", "count", AggCount},
+		{"count", testFuncCount, AggCount},
 		{"sum", "sum", AggSum},
-		{"min", "min", AggMin},
-		{"max", "max", AggMax},
-		{"avg", "avg", AggAvg},
+		{"min", testFuncMin, AggMin},
+		{"max", testFuncMax, AggMax},
+		{"avg", testFuncAvg, AggAvg},
 		{"unknown", "unknown", AggCount},
 	}
 
@@ -266,9 +266,9 @@ func TestParseAggFunc(t *testing.T) {
 func TestScanNodeSchema(t *testing.T) {
 	schema := []ColumnDef{
 		{Name: "id", Type: common.TypeInt64, Nullable: false},
-		{Name: "name", Type: common.TypeString, Nullable: true},
+		{Name: testColName, Type: common.TypeString, Nullable: true},
 	}
-	scan := &ScanNode{Table: "t", Columns: []string{"id", "name"}, schema: schema}
+	scan := &ScanNode{Table: "t", Columns: []string{"id", testColName}, schema: schema}
 	if len(scan.Schema()) != 2 {
 		t.Errorf("expected 2 columns in schema, got %d", len(scan.Schema()))
 	}

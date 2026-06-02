@@ -33,11 +33,11 @@ func TestOptimizerColumnPruning(t *testing.T) {
 		colSet[col] = true
 	}
 
-	if !colSet["name"] {
-		t.Error("expected 'name' column to be preserved")
+	if !colSet[testColName] {
+		t.Errorf("expected 'name' column to be preserved")
 	}
-	if !colSet["age"] {
-		t.Error("expected 'age' column to be preserved (used in WHERE)")
+	if !colSet[testColAge] {
+		t.Errorf("expected 'age' column to be preserved (used in WHERE)")
 	}
 }
 
@@ -65,25 +65,25 @@ func TestOptimizerColumnPruningWithFilter(t *testing.T) {
 	rule := &ColumnPruningRule{}
 
 	scan := &ScanNode{
-		Table:   "users",
-		Columns: []string{"id", "name", "age"},
+		Table:   testTableUsers,
+		Columns: []string{"id", testColName, testColAge},
 		schema: []ColumnDef{
 			{Name: "id", Type: common.TypeInt64},
-			{Name: "name", Type: common.TypeString},
-			{Name: "age", Type: common.TypeInt64},
+			{Name: testColName, Type: common.TypeString},
+			{Name: testColAge, Type: common.TypeInt64},
 		},
 	}
 
 	filter := &FilterNode{
 		Child:     scan,
-		Condition: &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: "age"}, Right: &LiteralExpr{Value: common.NewInt64(20)}},
+		Condition: &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: testColAge}, Right: &LiteralExpr{Value: common.NewInt64(20)}},
 	}
 
 	proj := &ProjectNode{
 		Child:       filter,
-		Expressions: []Expression{&ColumnExpr{Name: "name"}},
+		Expressions: []Expression{&ColumnExpr{Name: testColName}},
 		Aliases:     []string{""},
-		schema:      []ColumnDef{{Name: "name", Type: common.TypeString}},
+		schema:      []ColumnDef{{Name: testColName, Type: common.TypeString}},
 	}
 
 	result := rule.Apply(proj)
@@ -102,10 +102,10 @@ func TestOptimizerColumnPruningWithFilter(t *testing.T) {
 	for _, col := range resultScan.Columns {
 		colSet[col] = true
 	}
-	if !colSet["name"] {
+	if !colSet[testColName] {
 		t.Error("expected 'name' column to be preserved")
 	}
-	if !colSet["age"] {
+	if !colSet[testColAge] {
 		t.Error("expected 'age' column to be preserved (used in filter)")
 	}
 }
@@ -114,24 +114,24 @@ func TestOptimizerColumnPruningWithAggregate(t *testing.T) {
 	rule := &ColumnPruningRule{}
 
 	scan := &ScanNode{
-		Table:   "users",
-		Columns: []string{"id", "name", "age", "score"},
+		Table:   testTableUsers,
+		Columns: []string{"id", testColName, testColAge, testColScore},
 		schema: []ColumnDef{
 			{Name: "id", Type: common.TypeInt64},
-			{Name: "name", Type: common.TypeString},
-			{Name: "age", Type: common.TypeInt64},
-			{Name: "score", Type: common.TypeFloat64},
+			{Name: testColName, Type: common.TypeString},
+			{Name: testColAge, Type: common.TypeInt64},
+			{Name: testColScore, Type: common.TypeFloat64},
 		},
 	}
 
 	agg := &AggregateNode{
 		Child:   scan,
-		GroupBy: []Expression{&ColumnExpr{Name: "age"}},
+		GroupBy: []Expression{&ColumnExpr{Name: testColAge}},
 		Aggregates: []AggregateExpr{
-			{Func: AggSum, Arg: &ColumnExpr{Name: "score"}},
+			{Func: AggSum, Arg: &ColumnExpr{Name: testColScore}},
 		},
 		schema: []ColumnDef{
-			{Name: "age", Type: common.TypeInt64},
+			{Name: testColAge, Type: common.TypeInt64},
 			{Name: "SUM(score)", Type: common.TypeFloat64},
 		},
 	}
@@ -152,10 +152,10 @@ func TestOptimizerColumnPruningWithAggregate(t *testing.T) {
 	for _, col := range resultScan.Columns {
 		colSet[col] = true
 	}
-	if !colSet["age"] {
+	if !colSet[testColAge] {
 		t.Error("expected 'age' column to be preserved (group by)")
 	}
-	if !colSet["score"] {
+	if !colSet[testColScore] {
 		t.Error("expected 'score' column to be preserved (aggregate arg)")
 	}
 }

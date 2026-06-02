@@ -36,11 +36,11 @@ func TestOptimizerPredicatePushdownEliminatesFilter(t *testing.T) {
 	rule := &PredicatePushdownRule{}
 
 	scan := &ScanNode{
-		Table:   "users",
-		Columns: []string{"id", "name"},
+		Table:   testTableUsers,
+		Columns: []string{"id", testColName},
 		schema: []ColumnDef{
 			{Name: "id", Type: common.TypeInt64, Nullable: false},
-			{Name: "name", Type: common.TypeString, Nullable: true},
+			{Name: testColName, Type: common.TypeString, Nullable: true},
 		},
 	}
 
@@ -64,17 +64,17 @@ func TestOptimizerMergeFilters(t *testing.T) {
 	rule := &PredicatePushdownRule{}
 
 	scan := &ScanNode{
-		Table:   "users",
-		Columns: []string{"id", "age"},
+		Table:   testTableUsers,
+		Columns: []string{"id", testColAge},
 		schema: []ColumnDef{
 			{Name: "id", Type: common.TypeInt64},
-			{Name: "age", Type: common.TypeInt64},
+			{Name: testColAge, Type: common.TypeInt64},
 		},
 	}
 
 	innerFilter := &FilterNode{
 		Child:     scan,
-		Condition: &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: "age"}, Right: &LiteralExpr{Value: common.NewInt64(20)}},
+		Condition: &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: testColAge}, Right: &LiteralExpr{Value: common.NewInt64(20)}},
 	}
 
 	outerFilter := &FilterNode{
@@ -97,22 +97,22 @@ func TestOptimizerPushdownThroughProject(t *testing.T) {
 	rule := &PredicatePushdownRule{}
 
 	scan := &ScanNode{
-		Table:   "users",
-		Columns: []string{"id", "name", "age"},
+		Table:   testTableUsers,
+		Columns: []string{"id", testColName, testColAge},
 		schema: []ColumnDef{
 			{Name: "id", Type: common.TypeInt64},
-			{Name: "name", Type: common.TypeString},
-			{Name: "age", Type: common.TypeInt64},
+			{Name: testColName, Type: common.TypeString},
+			{Name: testColAge, Type: common.TypeInt64},
 		},
 	}
 
 	proj := &ProjectNode{
 		Child:       scan,
-		Expressions: []Expression{&ColumnExpr{Name: "id"}, &ColumnExpr{Name: "name"}},
+		Expressions: []Expression{&ColumnExpr{Name: "id"}, &ColumnExpr{Name: testColName}},
 		Aliases:     []string{"", ""},
 		schema: []ColumnDef{
 			{Name: "id", Type: common.TypeInt64},
-			{Name: "name", Type: common.TypeString},
+			{Name: testColName, Type: common.TypeString},
 		},
 	}
 
@@ -141,29 +141,29 @@ func TestOptimizerPushdownThroughAggregate(t *testing.T) {
 	rule := &PredicatePushdownRule{}
 
 	scan := &ScanNode{
-		Table:   "users",
-		Columns: []string{"id", "age"},
+		Table:   testTableUsers,
+		Columns: []string{"id", testColAge},
 		schema: []ColumnDef{
 			{Name: "id", Type: common.TypeInt64},
-			{Name: "age", Type: common.TypeInt64},
+			{Name: testColAge, Type: common.TypeInt64},
 		},
 	}
 
 	agg := &AggregateNode{
 		Child:   scan,
-		GroupBy: []Expression{&ColumnExpr{Name: "age"}},
+		GroupBy: []Expression{&ColumnExpr{Name: testColAge}},
 		Aggregates: []AggregateExpr{
 			{Func: AggCount, Arg: &StarExpr{}},
 		},
 		schema: []ColumnDef{
-			{Name: "age", Type: common.TypeInt64},
-			{Name: "COUNT(*)", Type: common.TypeInt64},
+			{Name: testColAge, Type: common.TypeInt64},
+			{Name: testAggCountStar, Type: common.TypeInt64},
 		},
 	}
 
 	filter := &FilterNode{
 		Child:     agg,
-		Condition: &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: "COUNT(*)"}, Right: &LiteralExpr{Value: common.NewInt64(5)}},
+		Condition: &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: testAggCountStar}, Right: &LiteralExpr{Value: common.NewInt64(5)}},
 	}
 
 	result := rule.Apply(filter)

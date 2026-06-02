@@ -7,6 +7,7 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
+// PlanNode represents a node in the query execution plan.
 type PlanNode interface {
 	planNode()
 	Schema() []ColumnDef
@@ -14,6 +15,7 @@ type PlanNode interface {
 	String() string
 }
 
+// ScanNode represents a table scan operation in the query plan.
 type ScanNode struct {
 	Table     string
 	Columns   []string
@@ -23,10 +25,12 @@ type ScanNode struct {
 
 func (n *ScanNode) planNode() {}
 
+// Schema returns the output schema of the scan node.
 func (n *ScanNode) Schema() []ColumnDef {
 	return n.schema
 }
 
+// Children returns the child nodes of the scan node, which is always nil.
 func (n *ScanNode) Children() []PlanNode {
 	return nil
 }
@@ -39,6 +43,7 @@ func (n *ScanNode) String() string {
 	return fmt.Sprintf("Scan(Table: %s, Columns: %v%s)", n.Table, n.Columns, pred)
 }
 
+// FilterNode represents a filter operation that applies a condition to its child node.
 type FilterNode struct {
 	Child     PlanNode
 	Condition Expression
@@ -46,10 +51,12 @@ type FilterNode struct {
 
 func (n *FilterNode) planNode() {}
 
+// Schema returns the output schema of the filter node, which is the same as its child's schema.
 func (n *FilterNode) Schema() []ColumnDef {
 	return n.Child.Schema()
 }
 
+// Children returns the child nodes of the filter node.
 func (n *FilterNode) Children() []PlanNode {
 	return []PlanNode{n.Child}
 }
@@ -58,6 +65,7 @@ func (n *FilterNode) String() string {
 	return fmt.Sprintf("Filter(Condition: %s, %s)", n.Condition.String(), n.Child.String())
 }
 
+// ProjectNode represents a projection operation that selects and aliases expressions from its child node.
 type ProjectNode struct {
 	Child       PlanNode
 	Expressions []Expression
@@ -67,10 +75,12 @@ type ProjectNode struct {
 
 func (n *ProjectNode) planNode() {}
 
+// Schema returns the output schema of the project node.
 func (n *ProjectNode) Schema() []ColumnDef {
 	return n.schema
 }
 
+// Children returns the child nodes of the project node.
 func (n *ProjectNode) Children() []PlanNode {
 	return []PlanNode{n.Child}
 }
@@ -87,6 +97,7 @@ func (n *ProjectNode) String() string {
 	return fmt.Sprintf("Project(%s, %s)", strings.Join(exprs, ", "), n.Child.String())
 }
 
+// AggregateNode represents an aggregation operation with optional grouping.
 type AggregateNode struct {
 	Child      PlanNode
 	GroupBy    []Expression
@@ -96,10 +107,12 @@ type AggregateNode struct {
 
 func (n *AggregateNode) planNode() {}
 
+// Schema returns the output schema of the aggregate node.
 func (n *AggregateNode) Schema() []ColumnDef {
 	return n.schema
 }
 
+// Children returns the child nodes of the aggregate node.
 func (n *AggregateNode) Children() []PlanNode {
 	return []PlanNode{n.Child}
 }
@@ -130,6 +143,7 @@ func (n *AggregateNode) String() string {
 	return b.String()
 }
 
+// LimitNode represents a limit operation that restricts the number of rows with an optional offset.
 type LimitNode struct {
 	Child  PlanNode
 	Offset uint64
@@ -138,10 +152,12 @@ type LimitNode struct {
 
 func (n *LimitNode) planNode() {}
 
+// Schema returns the output schema of the limit node, which is the same as its child's schema.
 func (n *LimitNode) Schema() []ColumnDef {
 	return n.Child.Schema()
 }
 
+// Children returns the child nodes of the limit node.
 func (n *LimitNode) Children() []PlanNode {
 	return []PlanNode{n.Child}
 }
@@ -150,8 +166,25 @@ func (n *LimitNode) String() string {
 	return fmt.Sprintf("Limit(Offset: %d, Count: %d, %s)", n.Offset, n.Count, n.Child.String())
 }
 
+// Aggregate function name constants used for string matching and representation.
+const (
+	aggNameCount = "count"
+	aggNameSum   = "sum"
+	aggNameMin   = "min"
+	aggNameMax   = "max"
+	aggNameAvg   = "avg"
+
+	aggNameCountUpper = "COUNT"
+	aggNameSumUpper   = "SUM"
+	aggNameMinUpper   = "MIN"
+	aggNameMaxUpper   = "MAX"
+	aggNameAvgUpper   = "AVG"
+)
+
+// AggregateFunc represents an aggregate function type.
 type AggregateFunc int
 
+// Aggregate function constants.
 const (
 	AggCount AggregateFunc = iota
 	AggSum
@@ -163,20 +196,21 @@ const (
 func (f AggregateFunc) String() string {
 	switch f {
 	case AggCount:
-		return "COUNT"
+		return aggNameCountUpper
 	case AggSum:
-		return "SUM"
+		return aggNameSumUpper
 	case AggMin:
-		return "MIN"
+		return aggNameMinUpper
 	case AggMax:
-		return "MAX"
+		return aggNameMaxUpper
 	case AggAvg:
-		return "AVG"
+		return aggNameAvgUpper
 	default:
 		return "UNKNOWN"
 	}
 }
 
+// AggregateExpr represents an aggregate function call with its argument expression.
 type AggregateExpr struct {
 	Func AggregateFunc
 	Arg  Expression
@@ -202,6 +236,7 @@ func inferAggReturnType(agg AggregateExpr) common.DataType {
 	return common.TypeNull
 }
 
+// ResolvedColumnExpr represents a column expression that has been resolved to a specific index in the schema.
 type ResolvedColumnExpr struct {
 	Name string
 	Idx  int
@@ -253,15 +288,15 @@ func inferBinaryReturnType(e *BinaryExpr) common.DataType {
 
 func inferFuncReturnType(e *FuncExpr) common.DataType {
 	switch strings.ToLower(e.Name) {
-	case "count":
+	case aggNameCount:
 		return common.TypeInt64
-	case "sum":
+	case aggNameSum:
 		if len(e.Args) > 0 {
 			return exprReturnType(e.Args[0])
 		}
-	case "avg":
+	case aggNameAvg:
 		return common.TypeFloat64
-	case "min", "max":
+	case aggNameMin, aggNameMax:
 		if len(e.Args) > 0 {
 			return exprReturnType(e.Args[0])
 		}

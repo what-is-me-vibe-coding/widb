@@ -8,18 +8,22 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
+// CatalogProvider provides table metadata for the analyzer.
 type CatalogProvider interface {
 	GetTable(name string) (*catalog.Table, error)
 }
 
+// Analyzer performs semantic analysis on SQL statements.
 type Analyzer struct {
 	catalog CatalogProvider
 }
 
+// NewAnalyzer creates a new Analyzer with the given catalog provider.
 func NewAnalyzer(catalog CatalogProvider) *Analyzer {
 	return &Analyzer{catalog: catalog}
 }
 
+// Analyze resolves and validates a Statement, returning a PlanNode or an error.
 func (a *Analyzer) Analyze(stmt Statement) (PlanNode, error) {
 	switch s := stmt.(type) {
 	case *SelectStatement:
@@ -308,7 +312,7 @@ func (a *Analyzer) exprHasAggregate(expr Expression) bool {
 
 func isAggregateFunc(name string) bool {
 	switch strings.ToLower(name) {
-	case "count", "sum", "min", "max", "avg":
+	case aggNameCount, aggNameSum, aggNameMin, aggNameMax, aggNameAvg:
 		return true
 	}
 	return false
@@ -380,22 +384,22 @@ func (a *Analyzer) collectAggregates(expr Expression, aggs *[]AggregateExpr) {
 
 func parseAggFunc(name string) AggregateFunc {
 	switch strings.ToLower(name) {
-	case "count":
+	case aggNameCount:
 		return AggCount
-	case "sum":
+	case aggNameSum:
 		return AggSum
-	case "min":
+	case aggNameMin:
 		return AggMin
-	case "max":
+	case aggNameMax:
 		return AggMax
-	case "avg":
+	case aggNameAvg:
 		return AggAvg
 	default:
 		return AggCount
 	}
 }
 
-func (a *Analyzer) buildProjectOutput(sel []SelectColumn, resolved []resolvedColumn, table *catalog.Table) ([]Expression, []string, []ColumnDef, error) {
+func (a *Analyzer) buildProjectOutput(_ []SelectColumn, resolved []resolvedColumn, _ *catalog.Table) ([]Expression, []string, []ColumnDef, error) {
 	exprs := make([]Expression, len(resolved))
 	aliases := make([]string, len(resolved))
 	schema := make([]ColumnDef, len(resolved))
@@ -422,7 +426,7 @@ func (a *Analyzer) buildProjectOutput(sel []SelectColumn, resolved []resolvedCol
 	return exprs, aliases, schema, nil
 }
 
-func (a *Analyzer) needsProjection(sel *SelectStatement, table *catalog.Table) bool {
+func (a *Analyzer) needsProjection(sel *SelectStatement, _ *catalog.Table) bool {
 	if sel.From == nil {
 		return true
 	}

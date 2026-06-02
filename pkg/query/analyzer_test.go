@@ -9,13 +9,13 @@ import (
 
 func testCatalog() *catalog.Database {
 	db := catalog.NewDatabase()
-	db.Tables["users"] = &catalog.Table{
-		Name: "users",
+	db.Tables[testTableUsers] = &catalog.Table{
+		Name: testTableUsers,
 		Columns: []catalog.ColumnDef{
 			{Name: "id", Type: common.TypeInt64, Nullable: false},
-			{Name: "name", Type: common.TypeString, Nullable: true},
-			{Name: "age", Type: common.TypeInt64, Nullable: true},
-			{Name: "score", Type: common.TypeFloat64, Nullable: true},
+			{Name: testColName, Type: common.TypeString, Nullable: true},
+			{Name: testColAge, Type: common.TypeInt64, Nullable: true},
+			{Name: testColScore, Type: common.TypeFloat64, Nullable: true},
 		},
 		PrimaryKey: []string{"id"},
 	}
@@ -23,7 +23,7 @@ func testCatalog() *catalog.Database {
 		Name: "orders",
 		Columns: []catalog.ColumnDef{
 			{Name: "order_id", Type: common.TypeInt64, Nullable: false},
-			{Name: "user_id", Type: common.TypeInt64, Nullable: true},
+			{Name: testColUserID, Type: common.TypeInt64, Nullable: true},
 			{Name: "amount", Type: common.TypeFloat64, Nullable: true},
 		},
 		PrimaryKey: []string{"order_id"},
@@ -49,7 +49,7 @@ func TestAnalyzerSelectBasic(t *testing.T) {
 	if scan == nil {
 		t.Fatal("expected scan node in plan")
 	}
-	if scan.Table != "users" {
+	if scan.Table != testTableUsers {
 		t.Errorf("expected scan table 'users', got %q", scan.Table)
 	}
 }
@@ -72,7 +72,7 @@ func TestAnalyzerSelectStar(t *testing.T) {
 	if scan == nil {
 		t.Fatal("expected scan node in plan")
 	}
-	if scan.Table != "users" {
+	if scan.Table != testTableUsers {
 		t.Errorf("expected scan table 'users', got %q", scan.Table)
 	}
 }
@@ -187,7 +187,7 @@ func TestAnalyzerInsert(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ScanNode, got %T", plan)
 	}
-	if scan.Table != "users" {
+	if scan.Table != testTableUsers {
 		t.Errorf("expected scan table 'users', got %q", scan.Table)
 	}
 }

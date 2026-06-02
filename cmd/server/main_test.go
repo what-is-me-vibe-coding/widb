@@ -14,11 +14,11 @@ func TestMainOutput(t *testing.T) {
 	old := os.Stdout
 	os.Stdout = w
 	main()
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, _ = buf.ReadFrom(r)
 	if buf.String() != "test-db server starting...\n" {
 		t.Errorf("unexpected output: %q", buf.String())
 	}

@@ -86,7 +86,7 @@ func TestASTLiteralExpr(t *testing.T) {
 }
 
 func TestASTFuncExpr(t *testing.T) {
-	fn := &FuncExpr{Name: "count", Args: []Expression{&StarExpr{}}}
+	fn := &FuncExpr{Name: testFuncCount, Args: []Expression{&StarExpr{}}}
 	str := fn.String()
 	if str != "count(*)" {
 		t.Errorf("expected 'count(*)', got %s", str)
@@ -136,7 +136,7 @@ func TestASTColumnDef(t *testing.T) {
 }
 
 func TestASTSelectColumn(t *testing.T) {
-	sc := SelectColumn{Expr: &ColumnExpr{Name: "id"}, Alias: "user_id"}
+	sc := SelectColumn{Expr: &ColumnExpr{Name: "id"}, Alias: testColUserID}
 	str := sc.String()
 	if str != "id AS user_id" {
 		t.Errorf("expected 'id AS user_id', got %s", str)

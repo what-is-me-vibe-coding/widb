@@ -10,7 +10,7 @@ func TestOptimizerConstantFolding(t *testing.T) {
 	rule := &ConstantFoldingRule{}
 
 	scan := &ScanNode{
-		Table:   "users",
+		Table:   testTableUsers,
 		Columns: []string{"id"},
 		schema: []ColumnDef{
 			{Name: "id", Type: common.TypeInt64, Nullable: false},

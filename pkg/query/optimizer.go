@@ -2,15 +2,18 @@ package query
 
 import "github.com/what-is-me-vibe-coding/test-db/pkg/common"
 
+// OptimizeRule defines the interface for query optimization rules.
 type OptimizeRule interface {
 	Apply(node PlanNode) PlanNode
 	Name() string
 }
 
+// Optimizer applies a set of optimization rules to a query plan.
 type Optimizer struct {
 	rules []OptimizeRule
 }
 
+// NewOptimizer creates a new Optimizer with the default set of optimization rules.
 func NewOptimizer() *Optimizer {
 	return &Optimizer{
 		rules: []OptimizeRule{
@@ -21,6 +24,7 @@ func NewOptimizer() *Optimizer {
 	}
 }
 
+// Optimize applies all registered optimization rules to the given plan node.
 func (o *Optimizer) Optimize(node PlanNode) PlanNode {
 	result := node
 	for _, rule := range o.rules {
@@ -29,10 +33,14 @@ func (o *Optimizer) Optimize(node PlanNode) PlanNode {
 	return result
 }
 
+// PredicatePushdownRule pushes filter predicates down the plan tree
+// to reduce intermediate result sizes as early as possible.
 type PredicatePushdownRule struct{}
 
+// Name returns the name of the PredicatePushdownRule.
 func (r *PredicatePushdownRule) Name() string { return "PredicatePushdown" }
 
+// Apply applies predicate pushdown optimization to the given plan node.
 func (r *PredicatePushdownRule) Apply(node PlanNode) PlanNode {
 	return r.pushDown(node)
 }
@@ -147,13 +155,17 @@ func (r *PredicatePushdownRule) splitPredicateByAggregate(cond Expression, agg *
 
 	pushable = mergeConjuncts(pushConds)
 	remaining = mergeConjuncts(remainConds)
-	return
+	return pushable, remaining
 }
 
+// ConstantFoldingRule evaluates constant expressions at optimization time
+// to reduce runtime computation.
 type ConstantFoldingRule struct{}
 
+// Name returns the name of the ConstantFoldingRule.
 func (r *ConstantFoldingRule) Name() string { return "ConstantFolding" }
 
+// Apply applies constant folding optimization to the given plan node.
 func (r *ConstantFoldingRule) Apply(node PlanNode) PlanNode {
 	return r.foldNode(node)
 }
@@ -266,10 +278,14 @@ func isTruthy(v common.Value) bool {
 	return true
 }
 
+// ColumnPruningRule removes unnecessary columns from scan nodes
+// to reduce the amount of data processed.
 type ColumnPruningRule struct{}
 
+// Name returns the name of the ColumnPruningRule.
 func (r *ColumnPruningRule) Name() string { return "ColumnPruning" }
 
+// Apply applies column pruning optimization to the given plan node.
 func (r *ColumnPruningRule) Apply(node PlanNode) PlanNode {
 	needed := r.collectNeededColumns(node)
 	return r.pruneNode(node, needed)
