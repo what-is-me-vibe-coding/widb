@@ -25,6 +25,7 @@ type ColumnStat struct {
 type SegmentFooter struct {
 	ColumnStats []ColumnStat
 	BloomFilter []byte
+	RawKeys     []byte
 	IndexOffset int64
 }
 
@@ -37,6 +38,7 @@ type Segment struct {
 	Columns  []EncodedColumn
 	Footer   SegmentFooter
 	FilePath string
+	Keys     []string
 }
 
 func (s *Segment) SegmentID() uint64 {
@@ -347,7 +349,118 @@ func (b *SegmentBuilder) Build() (*Segment, error) {
 			return nil, fmt.Errorf("segment builder: build bloom filter: %w", err)
 		}
 		seg.Footer.BloomFilter = data
+		seg.Keys = make([]string, len(b.keys))
+		copy(seg.Keys, b.keys)
+		seg.Footer.RawKeys = serializeKeys(b.keys)
 	}
 
 	return seg, nil
+}
+
+func serializeKeys(keys []string) []byte {
+	if len(keys) == 0 {
+		return nil
+	}
+	var buf []byte
+	count := make([]byte, 4)
+	binary.LittleEndian.PutUint32(count, uint32(len(keys)))
+	buf = append(buf, count...)
+	for _, k := range keys {
+		kb := []byte(k)
+		kl := make([]byte, 4)
+		binary.LittleEndian.PutUint32(kl, uint32(len(kb)))
+		buf = append(buf, kl...)
+		buf = append(buf, kb...)
+	}
+	return buf
+}
+
+func deserializeKeys(data []byte) []string {
+	if len(data) < 4 {
+		return nil
+	}
+	count := binary.LittleEndian.Uint32(data[0:])
+	pos := 4
+	keys := make([]string, 0, count)
+	for i := uint32(0); i < count; i++ {
+		if pos+4 > len(data) {
+			break
+		}
+		kLen := binary.LittleEndian.Uint32(data[pos:])
+		pos += 4
+		if pos+int(kLen) > len(data) {
+			break
+		}
+		keys = append(keys, string(data[pos:pos+int(kLen)]))
+		pos += int(kLen)
+	}
+	return keys
+}
+
+func (s *Segment) FindRowByKey(key string) (uint32, bool) {
+	if len(s.Keys) == 0 {
+		return 0, false
+	}
+	lo, hi := 0, len(s.Keys)-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		if s.Keys[mid] == key {
+			return uint32(mid), true
+		}
+		if s.Keys[mid] < key {
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return 0, false
+}
+
+func (s *Segment) GetColumnValue(colIdx uint32, rowIdx uint32) (common.Value, error) {
+	if int(colIdx) >= len(s.Columns) {
+		return common.NewNull(), fmt.Errorf("segment: column index %d out of range", colIdx)
+	}
+	src := &s.Columns[colIdx]
+	enc := &EncodedColumn{
+		Encoding: src.Encoding,
+		Type:     src.Type,
+		RowCount: src.RowCount,
+	}
+	if len(src.Data) > 0 {
+		enc.Data = make([]byte, len(src.Data))
+		copy(enc.Data, src.Data)
+	}
+	if len(src.Offsets) > 0 {
+		enc.Offsets = make([]uint32, len(src.Offsets))
+		copy(enc.Offsets, src.Offsets)
+	}
+	if len(src.Dict) > 0 {
+		enc.Dict = make([]string, len(src.Dict))
+		copy(enc.Dict, src.Dict)
+	}
+	if len(src.Nulls) > 0 {
+		enc.Nulls = make([]byte, len(src.Nulls))
+		copy(enc.Nulls, src.Nulls)
+	}
+	if err := DecompressColumn(enc); err != nil {
+		return common.NewNull(), fmt.Errorf("segment: decompress column %d: %w", colIdx, err)
+	}
+	decoded, nulls, err := DecodeColumn(enc)
+	if err != nil {
+		return common.NewNull(), fmt.Errorf("segment: decode column %d: %w", colIdx, err)
+	}
+	cd := columnData{data: decoded, nulls: nulls, typ: enc.Type}
+	return extractValue(cd, rowIdx), nil
+}
+
+func (s *Segment) GetAllColumnValues(rowIdx uint32, colMeta []ColumnMeta) (map[string]common.Value, error) {
+	values := make(map[string]common.Value, len(colMeta))
+	for colIdx, col := range colMeta {
+		val, err := s.GetColumnValue(uint32(colIdx), rowIdx)
+		if err != nil {
+			continue
+		}
+		values[col.Name] = val
+	}
+	return values, nil
 }

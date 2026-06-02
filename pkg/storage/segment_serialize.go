@@ -208,6 +208,11 @@ func serializeFooter(footer *SegmentFooter) []byte {
 	buf = append(buf, bloomLen...)
 	buf = append(buf, footer.BloomFilter...)
 
+	rawKeysLen := make([]byte, 4)
+	binary.LittleEndian.PutUint32(rawKeysLen, uint32(len(footer.RawKeys)))
+	buf = append(buf, rawKeysLen...)
+	buf = append(buf, footer.RawKeys...)
+
 	indexOffset := make([]byte, 8)
 	binary.LittleEndian.PutUint64(indexOffset, uint64(footer.IndexOffset))
 	buf = append(buf, indexOffset...)
@@ -240,6 +245,11 @@ func deserializeFooter(data []byte) (*SegmentFooter, error) {
 
 	var err error
 	pos, footer.BloomFilter, err = readBloomFilter(data, pos)
+	if err != nil {
+		return nil, err
+	}
+
+	pos, footer.RawKeys, err = readRawKeys(data, pos)
 	if err != nil {
 		return nil, err
 	}
@@ -315,6 +325,24 @@ func readBloomFilter(data []byte, pos int) (int, []byte, error) {
 	return pos, nil, nil
 }
 
+func readRawKeys(data []byte, pos int) (int, []byte, error) {
+	if pos+4 > len(data) {
+		return pos, nil, nil
+	}
+	rawKeysLen := binary.LittleEndian.Uint32(data[pos:])
+	pos += 4
+	if rawKeysLen > 0 {
+		if pos+int(rawKeysLen) > len(data) {
+			return pos, nil, fmt.Errorf("segment: footer truncated at raw keys data")
+		}
+		b := make([]byte, rawKeysLen)
+		copy(b, data[pos:pos+int(rawKeysLen)])
+		pos += int(rawKeysLen)
+		return pos, b, nil
+	}
+	return pos, nil, nil
+}
+
 // Serialize 将 Segment 序列化为完整的文件字节流。
 func (s *Segment) Serialize() ([]byte, error) {
 	var buf []byte
@@ -380,6 +408,7 @@ func DeserializeSegment(data []byte) (*Segment, error) {
 
 	seg := &Segment{
 		Footer: *footer,
+		Keys:   deserializeKeys(footer.RawKeys),
 	}
 
 	columns, err := readColumns(data, footerOffset)

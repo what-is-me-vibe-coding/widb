@@ -15,24 +15,21 @@ const (
 	defaultLevelSizeMultiplier   = 2
 )
 
-// Compactor 负责将多个 Segment 合并为更少的 Segment。
 type Compactor struct {
 	dataDir string
 	nextID  uint64
 }
 
-// NewCompactor 创建一个 Compactor 实例。
 func NewCompactor(dataDir string) *Compactor {
 	return &Compactor{dataDir: dataDir}
 }
 
-// Compact 将输入的 segments 合并为一个新的 Segment。
 func (c *Compactor) Compact(segments []*Segment, cols []ColumnMeta) (*Segment, error) {
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("compactor: no segments to compact")
 	}
 
-	rows, err := c.mergeSegments(segments)
+	rows, err := c.mergeSegments(segments, cols)
 	if err != nil {
 		return nil, fmt.Errorf("compactor: merge segments: %w", err)
 	}
@@ -49,7 +46,6 @@ func (c *Compactor) Compact(segments []*Segment, cols []ColumnMeta) (*Segment, e
 	return seg, nil
 }
 
-// CompactToLevel 将 L0 的 segments 合并到 L1，或将 Ln 合并到 Ln+1。
 func (c *Compactor) CompactToLevel(segments []*Segment, _ int, cols []ColumnMeta) (*Segment, error) {
 	seg, err := c.Compact(segments, cols)
 	if err != nil {
@@ -58,11 +54,10 @@ func (c *Compactor) CompactToLevel(segments []*Segment, _ int, cols []ColumnMeta
 	return seg, nil
 }
 
-// mergeSegments 从多个 Segment 读取数据并按键合并排序。
-func (c *Compactor) mergeSegments(segments []*Segment) ([]memRow, error) {
+func (c *Compactor) mergeSegments(segments []*Segment, cols []ColumnMeta) ([]memRow, error) {
 	var allRows []memRow
 	for _, seg := range segments {
-		rows, err := c.readSegmentRows(seg)
+		rows, err := c.readSegmentRows(seg, cols)
 		if err != nil {
 			return nil, fmt.Errorf("compactor: read segment %d: %w", seg.ID, err)
 		}
@@ -76,8 +71,7 @@ func (c *Compactor) mergeSegments(segments []*Segment) ([]memRow, error) {
 	return allRows, nil
 }
 
-// readSegmentRows 从 Segment 中读取所有行数据。
-func (c *Compactor) readSegmentRows(seg *Segment) ([]memRow, error) {
+func (c *Compactor) readSegmentRows(seg *Segment, cols []ColumnMeta) ([]memRow, error) {
 	if seg.RowCount == 0 {
 		return nil, nil
 	}
@@ -102,16 +96,30 @@ func (c *Compactor) readSegmentRows(seg *Segment) ([]memRow, error) {
 		decodedCols[i] = cd
 	}
 
+	colNames := make([]string, numCols)
+	for i := range colNames {
+		if i < len(cols) {
+			colNames[i] = cols[i].Name
+		} else {
+			colNames[i] = fmt.Sprintf("col_%d", i)
+		}
+	}
+
 	rows := make([]memRow, 0, seg.RowCount)
 	for r := uint32(0); r < seg.RowCount; r++ {
 		values := make(map[string]common.Value)
 		for i := range decodedCols {
-			colName := fmt.Sprintf("col_%d", i)
 			val := extractValue(decodedCols[i], r)
-			values[colName] = val
+			values[colNames[i]] = val
+		}
+		var key string
+		if int(r) < len(seg.Keys) {
+			key = seg.Keys[r]
+		} else {
+			key = fmt.Sprintf("row_%d", seg.ID*1000000+uint64(len(rows)))
 		}
 		rows = append(rows, memRow{
-			Key:   fmt.Sprintf("row_%d", seg.ID*1000000+uint64(len(rows))),
+			Key:   key,
 			Value: Row{Columns: values},
 		})
 	}
@@ -181,7 +189,6 @@ func extractTimestampValue(data interface{}, row uint32) common.Value {
 	return common.NewNull()
 }
 
-// buildSegment 从合并后的行数据构建新的 Segment。
 func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, error) {
 	rowCount := uint32(len(rows))
 	minKey := rows[0].Key
@@ -189,6 +196,12 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 
 	c.nextID++
 	builder := NewSegmentBuilder(c.nextID, minKey, maxKey)
+
+	keys := make([]string, len(rows))
+	for i, row := range rows {
+		keys[i] = row.Key
+	}
+	builder.SetKeys(keys)
 
 	for _, colMeta := range cols {
 		cv := NewColumnVector(colMeta.ID, colMeta.Type, rowCount)
@@ -235,7 +248,6 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 	return seg, nil
 }
 
-// CleanupSegments 删除旧 Segment 文件。
 func (c *Compactor) CleanupSegments(segments []*Segment) error {
 	for _, seg := range segments {
 		if seg.FilePath != "" {
