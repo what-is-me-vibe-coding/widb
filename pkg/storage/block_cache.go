@@ -69,7 +69,7 @@ func (bc *BlockCache) Put(segID uint64, colIdx uint32, block *CachedBlock) {
 	bc.cache.Put(blockCacheKey(segID, colIdx), block, block.Size)
 }
 
-// Invalidate 使指定 Segment 的所有缓存条目失效。
+// InvalidateSegment 使指定 Segment 的所有缓存条目失效。
 func (bc *BlockCache) InvalidateSegment(segID uint64, columnCount int) {
 	for i := 0; i < columnCount; i++ {
 		bc.cache.Delete(blockCacheKey(segID, uint32(i)))
@@ -110,7 +110,7 @@ type BlockCacheStats struct {
 }
 
 // estimateBlockSize 估算解码后列块的内存占用。
-func estimateBlockSize(data interface{}, nulls *common.Bitmap, typ common.DataType, rowCount uint32) int {
+func estimateBlockSize(data interface{}, nulls *common.Bitmap, _ common.DataType, rowCount uint32) int {
 	size := 0
 	switch d := data.(type) {
 	case []int64:

@@ -17,7 +17,7 @@ func TestEngineCacheIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
-	defer eng.Close()
+	defer func() { _ = eng.Close() }()
 
 	cols := []ColumnMeta{
 		{Name: "id", Type: common.TypeInt64},
@@ -79,7 +79,7 @@ func TestEngineCacheInvalidationOnCompact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
-	defer eng.Close()
+	defer func() { _ = eng.Close() }()
 
 	cols := []ColumnMeta{
 		{Name: "id", Type: common.TypeInt64},
@@ -135,7 +135,7 @@ func TestEngineCacheStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
-	defer eng.Close()
+	defer func() { _ = eng.Close() }()
 
 	bcStats, icStats := eng.CacheStats()
 	if bcStats.HitRate != 0 {
@@ -150,7 +150,7 @@ func TestEngineCacheAccessors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
-	defer eng.Close()
+	defer func() { _ = eng.Close() }()
 
 	if eng.BlockCache() == nil {
 		t.Fatal("expected non-nil BlockCache")
@@ -166,14 +166,18 @@ func TestEngineDefaultCacheConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
-	defer eng.Close()
+	defer func() { _ = eng.Close() }()
 
 	// 默认配置应正常工作
 	cols := []ColumnMeta{
 		{Name: "val", Type: common.TypeInt64},
 	}
-	eng.Write("k1", map[string]common.Value{"val": common.NewInt64(1)})
-	eng.Flush(cols)
+	if err := eng.Write("k1", map[string]common.Value{"val": common.NewInt64(1)}); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if err := eng.Flush(cols); err != nil {
+		t.Fatalf("flush failed: %v", err)
+	}
 
 	row, ok := eng.Get("k1")
 	if !ok {

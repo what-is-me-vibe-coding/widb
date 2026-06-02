@@ -25,7 +25,7 @@ type Engine struct {
 	primaryIndex  *index.PrimaryIndex
 	bloomIndex    *index.BloomIndex
 	sparseIndex   *index.SparseIndex
-	indexCache    *index.IndexCache
+	indexCache    *index.Cache
 	blockCache    *BlockCache
 	columnMeta    []ColumnMeta
 }
@@ -35,7 +35,7 @@ type EngineConfig struct {
 	DataDir         string
 	MaxMemTableSize int64
 	BlockCacheCfg   BlockCacheConfig
-	IndexCacheCfg   index.IndexCacheConfig
+	IndexCacheCfg   index.CacheConfig
 }
 
 // NewEngine 创建一个新的存储引擎实例。
@@ -67,7 +67,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		primaryIndex: index.NewPrimaryIndex(),
 		bloomIndex:   index.NewBloomIndex(),
 		sparseIndex:  index.NewSparseIndex(),
-		indexCache:   index.NewIndexCache(cfg.IndexCacheCfg),
+		indexCache:   index.NewCache(cfg.IndexCacheCfg),
 		blockCache:   NewBlockCache(cfg.BlockCacheCfg),
 	}
 
@@ -256,51 +256,6 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 	return nil
 }
 
-func (e *Engine) registerSegmentIndexes(seg *Segment, level int) {
-	segMeta := index.SegmentMeta{
-		ID:     seg.ID,
-		MinKey: seg.MinKey,
-		MaxKey: seg.MaxKey,
-		Level:  level,
-	}
-	_ = e.primaryIndex.RegisterSegment(segMeta)
-
-	if len(seg.Footer.BloomFilter) > 0 {
-		_ = e.bloomIndex.RegisterFromBytes(seg.ID, seg.Footer.BloomFilter)
-		// 同步到 IndexCache
-		if filter, ok := e.bloomIndex.GetFilter(seg.ID); ok {
-			e.indexCache.PutBloom(seg.ID, filter)
-		}
-	}
-
-	e.sparseIndex.LoadFromSegment(seg, seg.MinKey, seg.MaxKey, level)
-	// 同步稀疏索引到 IndexCache
-	for i, stat := range seg.Footer.ColumnStats {
-		colID := stat.ColumnID
-		var dt common.DataType
-		if int(colID) < len(seg.Columns) {
-			dt = seg.Columns[colID].Type
-		}
-		css := index.ColumnSparseStat{NullCount: stat.NullCount}
-		if len(stat.Min) > 0 && len(stat.Max) > 0 {
-			css.MinValue = index.BytesToValue(stat.Min, dt)
-			css.MaxValue = index.BytesToValue(stat.Max, dt)
-			css.HasValues = true
-		}
-		e.indexCache.PutSparse(seg.ID, colID, css)
-		_ = i
-	}
-}
-
-func (e *Engine) unregisterSegmentIndexes(segID uint64) {
-	_ = e.primaryIndex.UnregisterSegment(segID)
-	e.bloomIndex.Unregister(segID)
-	e.sparseIndex.UnregisterSegment(segID)
-	e.indexCache.InvalidateBloom(segID)
-	e.indexCache.InvalidateSparse(segID, len(e.columnMeta))
-	e.blockCache.InvalidateSegment(segID, len(e.columnMeta))
-}
-
 // Segments 返回所有 Segment 的副本。
 func (e *Engine) Segments() []*Segment {
 	e.mu.RLock()
@@ -322,13 +277,7 @@ func (e *Engine) SegmentCount() int {
 func (e *Engine) L0SegmentCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	count := 0
-	for _, lvl := range e.segmentLevels {
-		if lvl == 0 {
-			count++
-		}
-	}
-	return count
+	return e.l0Count()
 }
 
 // Compact 执行 Tiered Compaction，将 L0 合并到 L1。
@@ -450,14 +399,14 @@ func (e *Engine) BlockCache() *BlockCache {
 }
 
 // IndexCache 返回 IndexCache 实例。
-func (e *Engine) IndexCache() *index.IndexCache {
+func (e *Engine) IndexCache() *index.Cache {
 	return e.indexCache
 }
 
 // CacheStats 返回缓存统计信息。
-func (e *Engine) CacheStats() (BlockCacheStats, index.IndexCacheStats) {
+func (e *Engine) CacheStats() (BlockCacheStats, index.CacheStats) {
 	var bs BlockCacheStats
-	var is index.IndexCacheStats
+	var is index.CacheStats
 	if e.blockCache != nil {
 		bs = e.blockCache.Stats()
 	}
@@ -476,38 +425,4 @@ func (e *Engine) rotateMemTable() error {
 	e.immutable = append(e.immutable, e.activeMem)
 	e.activeMem = NewMemTableWithSize(e.activeMem.maxSize)
 	return nil
-}
-
-func (e *Engine) l0Count() int {
-	count := 0
-	for _, lvl := range e.segmentLevels {
-		if lvl == 0 {
-			count++
-		}
-	}
-	return count
-}
-
-func (e *Engine) collectL0Segments() ([]*Segment, []int) {
-	var segments []*Segment
-	var indices []int
-	for i, lvl := range e.segmentLevels {
-		if lvl == 0 {
-			segments = append(segments, e.segments[i])
-			indices = append(indices, i)
-		}
-	}
-	return segments, indices
-}
-
-func (e *Engine) collectL1Segments() ([]*Segment, []int) {
-	var segments []*Segment
-	var indices []int
-	for i, lvl := range e.segmentLevels {
-		if lvl == 1 {
-			segments = append(segments, e.segments[i])
-			indices = append(indices, i)
-		}
-	}
-	return segments, indices
 }

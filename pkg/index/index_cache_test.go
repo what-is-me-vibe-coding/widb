@@ -7,8 +7,8 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
-func TestIndexCacheBloomOperations(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{
+func TestCacheBloomOperations(t *testing.T) {
+	cache := NewCache(CacheConfig{
 		BloomCapacity:  1024,
 		SparseCapacity: 1024,
 	})
@@ -35,8 +35,8 @@ func TestIndexCacheBloomOperations(t *testing.T) {
 	}
 }
 
-func TestIndexCacheBloomEviction(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{
+func TestCacheBloomEviction(t *testing.T) {
+	cache := NewCache(CacheConfig{
 		BloomCapacity:  200,
 		SparseCapacity: 1024,
 	})
@@ -54,8 +54,8 @@ func TestIndexCacheBloomEviction(t *testing.T) {
 	}
 }
 
-func TestIndexCacheBloomInvalidate(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{
+func TestCacheBloomInvalidate(t *testing.T) {
+	cache := NewCache(CacheConfig{
 		BloomCapacity:  1024,
 		SparseCapacity: 1024,
 	})
@@ -71,8 +71,8 @@ func TestIndexCacheBloomInvalidate(t *testing.T) {
 	}
 }
 
-func TestIndexCacheSparseOperations(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{
+func TestCacheSparseOperations(t *testing.T) {
+	cache := NewCache(CacheConfig{
 		BloomCapacity:  1024,
 		SparseCapacity: 1024,
 	})
@@ -104,8 +104,8 @@ func TestIndexCacheSparseOperations(t *testing.T) {
 	}
 }
 
-func TestIndexCacheSparseInvalidate(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{
+func TestCacheSparseInvalidate(t *testing.T) {
+	cache := NewCache(CacheConfig{
 		BloomCapacity:  1024,
 		SparseCapacity: 1024,
 	})
@@ -129,8 +129,8 @@ func TestIndexCacheSparseInvalidate(t *testing.T) {
 	}
 }
 
-func TestIndexCacheStats(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{
+func TestCacheStats(t *testing.T) {
+	cache := NewCache(CacheConfig{
 		BloomCapacity:  1024,
 		SparseCapacity: 1024,
 	})
@@ -161,8 +161,8 @@ func TestIndexCacheStats(t *testing.T) {
 	}
 }
 
-func TestIndexCacheClear(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{
+func TestCacheClear(t *testing.T) {
+	cache := NewCache(CacheConfig{
 		BloomCapacity:  1024,
 		SparseCapacity: 1024,
 	})
@@ -180,8 +180,8 @@ func TestIndexCacheClear(t *testing.T) {
 	}
 }
 
-func TestIndexCachePutNilBloom(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{
+func TestCachePutNilBloom(t *testing.T) {
+	cache := NewCache(CacheConfig{
 		BloomCapacity:  1024,
 		SparseCapacity: 1024,
 	})
@@ -192,8 +192,8 @@ func TestIndexCachePutNilBloom(t *testing.T) {
 	}
 }
 
-func TestIndexCacheDefaultConfig(t *testing.T) {
-	cache := NewIndexCache(IndexCacheConfig{}) // 使用默认配置
+func TestCacheDefaultConfig(t *testing.T) {
+	cache := NewCache(CacheConfig{}) // 使用默认配置
 	if cache == nil {
 		t.Fatal("expected non-nil cache")
 	}
