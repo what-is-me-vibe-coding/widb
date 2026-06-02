@@ -15,15 +15,18 @@ const (
 	defaultLevelSizeMultiplier   = 2
 )
 
+// Compactor 负责将多个 Segment 合并为更少的 Segment。
 type Compactor struct {
 	dataDir string
 	nextID  uint64
 }
 
+// NewCompactor 创建一个 Compactor 实例。
 func NewCompactor(dataDir string) *Compactor {
 	return &Compactor{dataDir: dataDir}
 }
 
+// Compact 将输入的 segments 合并为一个新的 Segment。
 func (c *Compactor) Compact(segments []*Segment, cols []ColumnMeta) (*Segment, error) {
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("compactor: no segments to compact")
@@ -46,6 +49,7 @@ func (c *Compactor) Compact(segments []*Segment, cols []ColumnMeta) (*Segment, e
 	return seg, nil
 }
 
+// CompactToLevel 将 L0 的 segments 合并到 L1，或将 Ln 合并到 Ln+1。
 func (c *Compactor) CompactToLevel(segments []*Segment, _ int, cols []ColumnMeta) (*Segment, error) {
 	seg, err := c.Compact(segments, cols)
 	if err != nil {
@@ -248,6 +252,7 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 	return seg, nil
 }
 
+// CleanupSegments 删除旧 Segment 文件。
 func (c *Compactor) CleanupSegments(segments []*Segment) error {
 	for _, seg := range segments {
 		if seg.FilePath != "" {

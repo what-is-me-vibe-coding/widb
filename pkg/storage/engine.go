@@ -11,6 +11,7 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
 )
 
+// Engine 是存储引擎的核心结构。
 type Engine struct {
 	mu            sync.RWMutex
 	activeMem     *MemTable
@@ -27,11 +28,13 @@ type Engine struct {
 	columnMeta    []ColumnMeta
 }
 
+// EngineConfig 是 Engine 的配置参数。
 type EngineConfig struct {
 	DataDir         string
 	MaxMemTableSize int64
 }
 
+// NewEngine 创建一个新的存储引擎实例。
 func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
 		return nil, fmt.Errorf("engine: create data dir: %w", err)
@@ -65,6 +68,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	return eng, nil
 }
 
+// Write 向引擎写入一行数据。
 func (e *Engine) Write(key string, values map[string]common.Value) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -89,6 +93,7 @@ func (e *Engine) Write(key string, values map[string]common.Value) error {
 	return nil
 }
 
+// Get 根据主键查询一行数据，查询路径：MemTable → Immutable → PrimaryIndex → BloomFilter → Segment。
 func (e *Engine) Get(key string) (Row, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -159,6 +164,7 @@ func (e *Engine) findSegmentByID(segID uint64) *Segment {
 	return nil
 }
 
+// Scan 扫描指定键范围内的所有行。
 func (e *Engine) Scan(start, end string) []struct {
 	Key   string
 	Value Row
@@ -180,6 +186,7 @@ func (e *Engine) Scan(start, end string) []struct {
 	return results
 }
 
+// Flush 将内存表中的数据刷写到磁盘。
 func (e *Engine) Flush(cols []ColumnMeta) error {
 	e.mu.Lock()
 
@@ -237,6 +244,7 @@ func (e *Engine) unregisterSegmentIndexes(segID uint64) {
 	e.sparseIndex.UnregisterSegment(segID)
 }
 
+// Segments 返回所有 Segment 的副本。
 func (e *Engine) Segments() []*Segment {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -246,12 +254,14 @@ func (e *Engine) Segments() []*Segment {
 	return result
 }
 
+// SegmentCount 返回 Segment 的数量。
 func (e *Engine) SegmentCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return len(e.segments)
 }
 
+// L0SegmentCount 返回 L0 层 Segment 的数量。
 func (e *Engine) L0SegmentCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -264,6 +274,7 @@ func (e *Engine) L0SegmentCount() int {
 	return count
 }
 
+// Compact 执行 Tiered Compaction，将 L0 合并到 L1。
 func (e *Engine) Compact(cols []ColumnMeta) error {
 	e.mu.Lock()
 
@@ -316,18 +327,21 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 	return nil
 }
 
+// ShouldCompact 判断是否需要执行 Compaction。
 func (e *Engine) ShouldCompact() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.l0Count() >= defaultL0CompactionThreshold
 }
 
+// MemTableSize 返回当前活跃 MemTable 的大小。
 func (e *Engine) MemTableSize() int64 {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.activeMem.Size()
 }
 
+// Close 关闭引擎，同步并关闭 WAL。
 func (e *Engine) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -342,18 +356,22 @@ func (e *Engine) Close() error {
 	return nil
 }
 
+// PrimaryIndex 返回主键索引实例。
 func (e *Engine) PrimaryIndex() *index.PrimaryIndex {
 	return e.primaryIndex
 }
 
+// BloomIndex 返回布隆过滤器索引实例。
 func (e *Engine) BloomIndex() *index.BloomIndex {
 	return e.bloomIndex
 }
 
+// SparseIndex 返回稀疏索引实例。
 func (e *Engine) SparseIndex() *index.SparseIndex {
 	return e.sparseIndex
 }
 
+// ColumnMeta 返回列元数据的副本。
 func (e *Engine) ColumnMeta() []ColumnMeta {
 	e.mu.RLock()
 	defer e.mu.RUnlock()

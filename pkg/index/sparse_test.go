@@ -224,7 +224,7 @@ func (m *mockSegmentStats) SegmentID() uint64 {
 	return m.id
 }
 
-func (m *mockSegmentStats) ForEachColumnStat(fn func(colID uint32, colType common.DataType, min, max []byte, nullCount uint32)) {
+func (m *mockSegmentStats) ForEachColumnStat(fn func(colID uint32, colType common.DataType, minVal, maxVal []byte, nullCount uint32)) {
 	for _, c := range m.cols {
 		fn(c.colID, c.colType, c.min, c.max, c.nullCount)
 	}
