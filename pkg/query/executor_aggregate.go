@@ -101,6 +101,22 @@ func (e *Executor) executeAggregate(agg *AggregateNode) (*execResult, error) {
 	inputSchema := childResult.schema
 	colIdxMap := buildColIdxMapFromSchema(inputSchema)
 
+	groupAccum, groupRows, groupOrder := e.aggregateRows(agg, childResult, inputSchema, colIdxMap)
+
+	schema := agg.Schema()
+	outputCols := e.buildAggregateOutput(agg, schema, groupAccum, groupRows, groupOrder, colIdxMap)
+
+	output := storage.NewChunk(defaultChunkSize)
+	for _, col := range outputCols {
+		if err := output.AddColumn(col); err != nil {
+			return nil, fmt.Errorf("executor aggregate: %w", err)
+		}
+	}
+
+	return &execResult{chunks: []*storage.Chunk{output}, schema: schema}, nil
+}
+
+func (e *Executor) aggregateRows(agg *AggregateNode, childResult *execResult, inputSchema []ColumnDef, colIdxMap map[string]int) (map[string][]accumulator, map[string]*groupRow, []string) {
 	groupAccum := make(map[string][]accumulator)
 	groupRows := make(map[string]*groupRow)
 	groupOrder := make([]string, 0)
@@ -108,8 +124,8 @@ func (e *Executor) executeAggregate(agg *AggregateNode) (*execResult, error) {
 	for _, chunk := range childResult.chunks {
 		for row := uint32(0); row < chunk.RowCount(); row++ {
 			rowVals := buildRowValues(chunk, inputSchema, row)
-
 			groupKey := buildGroupKey(agg.GroupBy, rowVals, colIdxMap)
+
 			if _, ok := groupAccum[groupKey]; !ok {
 				groupAccum[groupKey] = newAccumulators(agg.Aggregates)
 				groupRows[groupKey] = &groupRow{key: groupKey, values: rowVals}
@@ -126,19 +142,19 @@ func (e *Executor) executeAggregate(agg *AggregateNode) (*execResult, error) {
 		}
 	}
 
-	schema := agg.Schema()
-	output := storage.NewChunk(defaultChunkSize)
-
-	outputCols := make([]*storage.ColumnVector, len(schema))
-	for i, colDef := range schema {
-		outputCols[i] = storage.NewColumnVector(uint32(i), colDef.Type, uint32(len(groupOrder)))
-	}
-
-	// 当没有输入行时，仍然需要为 COUNT 等聚合生成一行结果
 	if len(groupOrder) == 0 {
 		groupOrder = append(groupOrder, "")
 		groupAccum[""] = newAccumulators(agg.Aggregates)
 		groupRows[""] = &groupRow{key: "", values: nil}
+	}
+
+	return groupAccum, groupRows, groupOrder
+}
+
+func (e *Executor) buildAggregateOutput(agg *AggregateNode, schema []ColumnDef, groupAccum map[string][]accumulator, groupRows map[string]*groupRow, groupOrder []string, colIdxMap map[string]int) []*storage.ColumnVector {
+	outputCols := make([]*storage.ColumnVector, len(schema))
+	for i, colDef := range schema {
+		outputCols[i] = storage.NewColumnVector(uint32(i), colDef.Type, uint32(len(groupOrder)))
 	}
 
 	for _, groupKey := range groupOrder {
@@ -148,28 +164,18 @@ func (e *Executor) executeAggregate(agg *AggregateNode) (*execResult, error) {
 
 		for _, gb := range agg.GroupBy {
 			val, _ := evalExpr(gb, gr.values, colIdxMap)
-			if err := outputCols[colIdx].Append(coerceValue(val, schema[colIdx].Type)); err != nil {
-				return nil, fmt.Errorf("executor aggregate: %w", err)
-			}
+			_ = outputCols[colIdx].Append(coerceValue(val, schema[colIdx].Type))
 			colIdx++
 		}
 
 		for _, acc := range accs {
 			val := acc.result()
-			if err := outputCols[colIdx].Append(coerceValue(val, schema[colIdx].Type)); err != nil {
-				return nil, fmt.Errorf("executor aggregate: %w", err)
-			}
+			_ = outputCols[colIdx].Append(coerceValue(val, schema[colIdx].Type))
 			colIdx++
 		}
 	}
 
-	for _, col := range outputCols {
-		if err := output.AddColumn(col); err != nil {
-			return nil, fmt.Errorf("executor aggregate: %w", err)
-		}
-	}
-
-	return &execResult{chunks: []*storage.Chunk{output}, schema: schema}, nil
+	return outputCols
 }
 
 // buildGroupKey 构建分组键。

@@ -54,25 +54,8 @@ func evalBinaryExpr(e *BinaryExpr, row map[string]common.Value, colIdxMap map[st
 		return common.NewNull(), err
 	}
 
-	switch e.Op {
-	case OpAnd:
-		if !isTruthyValue(left) {
-			return common.NewBool(false), nil
-		}
-		right, err := evalExpr(e.Right, row, colIdxMap)
-		if err != nil {
-			return common.NewNull(), err
-		}
-		return common.NewBool(isTruthyValue(right)), nil
-	case OpOr:
-		if isTruthyValue(left) {
-			return common.NewBool(true), nil
-		}
-		right, err := evalExpr(e.Right, row, colIdxMap)
-		if err != nil {
-			return common.NewNull(), err
-		}
-		return common.NewBool(isTruthyValue(right)), nil
+	if result, ok, err := evalLogicalOp(e, left, row, colIdxMap); ok {
+		return result, err
 	}
 
 	right, err := evalExpr(e.Right, row, colIdxMap)
@@ -84,19 +67,57 @@ func evalBinaryExpr(e *BinaryExpr, row map[string]common.Value, colIdxMap map[st
 		return common.NewNull(), nil
 	}
 
+	if result, ok := evalComparisonOp(e.Op, left, right); ok {
+		return result, nil
+	}
+
+	return evalArithmeticOp(e.Op, left, right)
+}
+
+func evalLogicalOp(e *BinaryExpr, left common.Value, row map[string]common.Value, colIdxMap map[string]int) (common.Value, bool, error) {
 	switch e.Op {
+	case OpAnd:
+		if !isTruthyValue(left) {
+			return common.NewBool(false), true, nil
+		}
+		right, err := evalExpr(e.Right, row, colIdxMap)
+		if err != nil {
+			return common.NewNull(), true, err
+		}
+		return common.NewBool(isTruthyValue(right)), true, nil
+	case OpOr:
+		if isTruthyValue(left) {
+			return common.NewBool(true), true, nil
+		}
+		right, err := evalExpr(e.Right, row, colIdxMap)
+		if err != nil {
+			return common.NewNull(), true, err
+		}
+		return common.NewBool(isTruthyValue(right)), true, nil
+	}
+	return common.NewNull(), false, nil
+}
+
+func evalComparisonOp(op BinaryOp, left, right common.Value) (common.Value, bool) {
+	switch op {
 	case OpEq:
-		return common.NewBool(left.Equal(right)), nil
+		return common.NewBool(left.Equal(right)), true
 	case OpNe:
-		return common.NewBool(!left.Equal(right)), nil
+		return common.NewBool(!left.Equal(right)), true
 	case OpLt:
-		return common.NewBool(left.Less(right)), nil
+		return common.NewBool(left.Less(right)), true
 	case OpGt:
-		return common.NewBool(right.Less(left)), nil
+		return common.NewBool(right.Less(left)), true
 	case OpLe:
-		return common.NewBool(!right.Less(left)), nil
+		return common.NewBool(!right.Less(left)), true
 	case OpGe:
-		return common.NewBool(!left.Less(right)), nil
+		return common.NewBool(!left.Less(right)), true
+	}
+	return common.NewNull(), false
+}
+
+func evalArithmeticOp(op BinaryOp, left, right common.Value) (common.Value, error) {
+	switch op {
 	case OpAdd:
 		return evalArithmetic(left, right, opAdd)
 	case OpSub:
@@ -106,8 +127,7 @@ func evalBinaryExpr(e *BinaryExpr, row map[string]common.Value, colIdxMap map[st
 	case OpDiv:
 		return evalArithmetic(left, right, opDiv)
 	}
-
-	return common.NewNull(), fmt.Errorf("executor: unsupported binary op %v", e.Op)
+	return common.NewNull(), fmt.Errorf("executor: unsupported binary op %v", op)
 }
 
 func evalUnaryExpr(e *UnaryExpr, row map[string]common.Value, colIdxMap map[string]int) (common.Value, error) {
