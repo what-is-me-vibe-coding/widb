@@ -1,11 +1,14 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
@@ -34,19 +37,115 @@ type EngineConfig struct {
 	MaxMemTableSize int64
 }
 
+// walWriteRecord 是 Write 操作的 JSON 序列化格式。
+type walWriteRecord struct {
+	Key     string                    `json:"key"`
+	Version uint64                    `json:"version"`
+	Columns map[string]walValueRecord `json:"columns"`
+}
+
+// walValueRecord 是 common.Value 的 JSON 序列化格式。
+type walValueRecord struct {
+	Typ     int     `json:"typ"`
+	Valid   bool    `json:"valid"`
+	Int64   int64   `json:"int64"`
+	Float64 float64 `json:"float64"`
+	Str     string  `json:"str"`
+	Time    string  `json:"time"`
+}
+
+// walCheckpointRecord 是 Checkpoint 记录的 JSON 序列化格式。
+type walCheckpointRecord struct {
+	LastFlushedVersion uint64       `json:"last_flushed_version"`
+	ColumnMeta         []walColMeta `json:"column_meta,omitempty"`
+}
+
+// walColMeta 是 ColumnMeta 的 JSON 序列化格式。
+type walColMeta struct {
+	ID   uint32 `json:"id"`
+	Name string `json:"name"`
+	Typ  int    `json:"typ"`
+}
+
+func serializeWriteRecord(key string, version uint64, columns map[string]common.Value) ([]byte, error) {
+	rec := walWriteRecord{
+		Key:     key,
+		Version: version,
+		Columns: make(map[string]walValueRecord, len(columns)),
+	}
+	for colName, v := range columns {
+		rec.Columns[colName] = walValueRecord{
+			Typ:     int(v.Typ),
+			Valid:   v.Valid,
+			Int64:   v.Int64,
+			Float64: v.Float64,
+			Str:     v.Str,
+			Time:    v.Time.Format(time.RFC3339Nano),
+		}
+	}
+	return json.Marshal(rec)
+}
+
+func deserializeWriteRecord(data []byte) (string, uint64, map[string]common.Value, error) {
+	var rec walWriteRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return "", 0, nil, fmt.Errorf("engine: deserialize write record: %w", err)
+	}
+	columns := make(map[string]common.Value, len(rec.Columns))
+	for colName, v := range rec.Columns {
+		val := common.Value{
+			Typ:     common.DataType(v.Typ),
+			Valid:   v.Valid,
+			Int64:   v.Int64,
+			Float64: v.Float64,
+			Str:     v.Str,
+		}
+		if v.Time != "" {
+			t, err := time.Parse(time.RFC3339Nano, v.Time)
+			if err != nil {
+				return "", 0, nil, fmt.Errorf("engine: parse time %q: %w", v.Time, err)
+			}
+			val.Time = t
+		}
+		columns[colName] = val
+	}
+	return rec.Key, rec.Version, columns, nil
+}
+
+func serializeCheckpointRecord(lastFlushedVersion uint64, colMeta []ColumnMeta) ([]byte, error) {
+	rec := walCheckpointRecord{
+		LastFlushedVersion: lastFlushedVersion,
+	}
+	for _, cm := range colMeta {
+		rec.ColumnMeta = append(rec.ColumnMeta, walColMeta{
+			ID:   cm.ID,
+			Name: cm.Name,
+			Typ:  int(cm.Type),
+		})
+	}
+	return json.Marshal(rec)
+}
+
+func deserializeCheckpointRecord(data []byte) (uint64, []ColumnMeta, error) {
+	var rec walCheckpointRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return 0, nil, fmt.Errorf("engine: deserialize checkpoint record: %w", err)
+	}
+	var colMeta []ColumnMeta
+	for _, cm := range rec.ColumnMeta {
+		colMeta = append(colMeta, ColumnMeta{
+			ID:   cm.ID,
+			Name: cm.Name,
+			Type: common.DataType(cm.Typ),
+		})
+	}
+	return rec.LastFlushedVersion, colMeta, nil
+}
+
 // NewEngine 创建一个新的存储引擎实例。
 func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
 		return nil, fmt.Errorf("engine: create data dir: %w", err)
-	}
-
-	walPath := filepath.Join(cfg.DataDir, "wal.log")
-	wal, _, err := OpenWAL(walPath)
-	if err != nil {
-		wal, err = CreateWAL(walPath)
-		if err != nil {
-			return nil, fmt.Errorf("engine: create wal: %w", err)
-		}
 	}
 
 	maxSize := cfg.MaxMemTableSize
@@ -56,7 +155,6 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 
 	eng := &Engine{
 		activeMem:    NewMemTableWithSize(maxSize),
-		wal:          wal,
 		flusher:      NewFlusher(cfg.DataDir),
 		compactor:    NewCompactor(cfg.DataDir),
 		nextVersion:  1,
@@ -65,7 +163,151 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		sparseIndex:  index.NewSparseIndex(),
 	}
 
+	// Load existing segments from disk
+	if err := eng.loadSegments(); err != nil {
+		return nil, fmt.Errorf("engine: load segments: %w", err)
+	}
+
+	// Open or create WAL
+	walPath := filepath.Join(cfg.DataDir, "wal.log")
+	wal, records, err := OpenWAL(walPath)
+	if err != nil {
+		wal, err = CreateWAL(walPath)
+		if err != nil {
+			return nil, fmt.Errorf("engine: create wal: %w", err)
+		}
+	} else {
+		// Replay WAL records to recover data
+		if err := eng.replayWALRecords(records); err != nil {
+			_ = wal.Close()
+			return nil, fmt.Errorf("engine: replay wal: %w", err)
+		}
+	}
+	eng.wal = wal
+
 	return eng, nil
+}
+
+// replayWALRecords 将 WAL 回放记录应用到 MemTable。
+func (e *Engine) replayWALRecords(records []RawRecord) error {
+	var lastFlushedVersion uint64
+	var lastColumnMeta []ColumnMeta
+
+	// First pass: find the last checkpoint to determine lastFlushedVersion
+	for _, rec := range records {
+		if rec.Type == walTypeCheckpoint {
+			version, colMeta, err := deserializeCheckpointRecord(rec.Payload)
+			if err != nil {
+				continue
+			}
+			if version > lastFlushedVersion {
+				lastFlushedVersion = version
+				lastColumnMeta = colMeta
+			}
+		}
+	}
+
+	// Restore column meta from checkpoint if not already set
+	if len(lastColumnMeta) > 0 && len(e.columnMeta) == 0 {
+		e.columnMeta = make([]ColumnMeta, len(lastColumnMeta))
+		copy(e.columnMeta, lastColumnMeta)
+	}
+
+	// Second pass: apply write records with version > lastFlushedVersion
+	var maxVersion uint64
+	for _, rec := range records {
+		if rec.Type == walTypeWrite {
+			key, version, columns, err := deserializeWriteRecord(rec.Payload)
+			if err != nil {
+				continue
+			}
+			if version <= lastFlushedVersion {
+				continue
+			}
+			row := Row{
+				Version: version,
+				Columns: columns,
+			}
+			_, _, _ = e.activeMem.Put(key, row)
+			if version > maxVersion {
+				maxVersion = version
+			}
+		}
+	}
+
+	// Update nextVersion to be greater than any version seen
+	if maxVersion >= e.nextVersion {
+		e.nextVersion = maxVersion + 1
+	}
+
+	return nil
+}
+
+// loadSegments 从磁盘加载已有的 Segment 文件。
+func (e *Engine) loadSegments() error {
+	entries, err := os.ReadDir(e.flusher.dataDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("engine: read data dir: %w", err)
+	}
+
+	var maxSegID uint64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "segment_") || !strings.HasSuffix(name, ".widb") {
+			continue
+		}
+
+		filePath := filepath.Join(e.flusher.dataDir, name)
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		seg, err := DeserializeSegment(data)
+		if err != nil {
+			continue
+		}
+		seg.FilePath = filePath
+
+		// Extract segment ID from filename: segment_<id>.widb
+		idStr := name[len("segment_") : len(name)-len(".widb")]
+		var segID uint64
+		if _, err := fmt.Sscanf(idStr, "%d", &segID); err == nil {
+			seg.ID = segID
+		}
+
+		// Derive MinKey/MaxKey from sorted keys
+		if len(seg.Keys) > 0 {
+			seg.MinKey = seg.Keys[0]
+			seg.MaxKey = seg.Keys[len(seg.Keys)-1]
+		}
+
+		e.segments = append(e.segments, seg)
+		e.segmentLevels = append(e.segmentLevels, 0)
+
+		if seg.ID > maxSegID {
+			maxSegID = seg.ID
+		}
+	}
+
+	// Register indexes for loaded segments
+	for i, seg := range e.segments {
+		e.registerSegmentIndexes(seg, e.segmentLevels[i])
+	}
+
+	// Update flusher and compactor nextID to avoid ID collisions
+	if maxSegID > 0 {
+		e.flusher.nextID = maxSegID
+		e.compactor.nextID = maxSegID
+	}
+
+	return nil
 }
 
 // Write 向引擎写入一行数据。
@@ -73,11 +315,26 @@ func (e *Engine) Write(key string, values map[string]common.Value) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	version := e.nextVersion
+
+	// Write to WAL first (write-ahead logging)
+	payload, err := serializeWriteRecord(key, version, values)
+	if err != nil {
+		return fmt.Errorf("engine write: serialize wal: %w", err)
+	}
+	if err := e.wal.AppendWrite(payload); err != nil {
+		return fmt.Errorf("engine write: wal append: %w", err)
+	}
+	if err := e.wal.Sync(); err != nil {
+		return fmt.Errorf("engine write: wal sync: %w", err)
+	}
+
+	e.nextVersion++
+
 	row := Row{
-		Version: e.nextVersion,
+		Version: version,
 		Columns: values,
 	}
-	e.nextVersion++
 
 	if e.activeMem.ShouldFlush() {
 		if err := e.rotateMemTable(); err != nil {
@@ -85,7 +342,7 @@ func (e *Engine) Write(key string, values map[string]common.Value) error {
 		}
 	}
 
-	_, _, err := e.activeMem.Put(key, row)
+	_, _, err = e.activeMem.Put(key, row)
 	if err != nil {
 		return fmt.Errorf("engine write: %w", err)
 	}
@@ -190,6 +447,11 @@ func (e *Engine) Scan(start, end string) []struct {
 func (e *Engine) Flush(cols []ColumnMeta) error {
 	e.mu.Lock()
 
+	var flushVersion uint64
+	if e.nextVersion > 0 {
+		flushVersion = e.nextVersion - 1
+	}
+
 	if e.activeMem.Len() > 0 {
 		e.activeMem.Freeze()
 		e.immutable = append(e.immutable, e.activeMem)
@@ -206,6 +468,10 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 
 	e.mu.Unlock()
 
+	if len(immutable) == 0 {
+		return nil
+	}
+
 	for _, mem := range immutable {
 		seg, err := e.flusher.Flush(mem, cols)
 		if err != nil {
@@ -217,6 +483,22 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 		e.segmentLevels = append(e.segmentLevels, 0)
 		e.registerSegmentIndexes(seg, 0)
 		e.mu.Unlock()
+	}
+
+	// Write checkpoint after successful flush
+	e.mu.Lock()
+	colMeta := e.columnMeta
+	e.mu.Unlock()
+
+	checkpointPayload, err := serializeCheckpointRecord(flushVersion, colMeta)
+	if err != nil {
+		return fmt.Errorf("engine flush: serialize checkpoint: %w", err)
+	}
+	if err := e.wal.AppendCheckpoint(checkpointPayload); err != nil {
+		return fmt.Errorf("engine flush: write checkpoint: %w", err)
+	}
+	if err := e.wal.Sync(); err != nil {
+		return fmt.Errorf("engine flush: sync checkpoint: %w", err)
 	}
 
 	return nil
@@ -277,6 +559,11 @@ func (e *Engine) L0SegmentCount() int {
 // Compact 执行 Tiered Compaction，将 L0 合并到 L1。
 func (e *Engine) Compact(cols []ColumnMeta) error {
 	e.mu.Lock()
+
+	// Sync compactor nextID with flusher to avoid segment ID conflicts
+	if e.flusher.nextID > e.compactor.nextID {
+		e.compactor.nextID = e.flusher.nextID
+	}
 
 	l0Segments, l0Indices := e.collectL0Segments()
 	if len(l0Segments) == 0 {

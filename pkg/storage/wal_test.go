@@ -305,8 +305,16 @@ func TestWALCorruptedCRC(t *testing.T) {
 		t.Fatalf("failed to write corrupted file: %v", err)
 	}
 
-	_, _, err = OpenWAL(path)
-	if err == nil {
-		t.Fatal("expected error for corrupted CRC")
+	// With crash-resilient replay, corrupted records are skipped
+	// and valid records before the corruption are returned.
+	recovered, recs, err := OpenWAL(path)
+	if err != nil {
+		t.Fatalf("OpenWAL should not fail on corrupted CRC: %v", err)
+	}
+	defer func() { _ = recovered.Close() }()
+
+	// The corrupted record should be skipped, so 0 valid records
+	if len(recs) != 0 {
+		t.Errorf("expected 0 valid records after CRC corruption, got %d", len(recs))
 	}
 }

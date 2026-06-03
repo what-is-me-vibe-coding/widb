@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -23,6 +24,7 @@ type ColumnMeta struct {
 
 // Flusher 负责将 MemTable 刷盘为 Segment 文件。
 type Flusher struct {
+	mu      sync.Mutex
 	dataDir string
 	nextID  uint64
 }
@@ -34,6 +36,9 @@ func NewFlusher(dataDir string) *Flusher {
 
 // Flush 将 MemTable 转换为 Segment 文件，返回生成的 Segment。
 func (f *Flusher) Flush(mem *MemTable, cols []ColumnMeta) (*Segment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	rows := mem.All()
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("flusher: empty memtable")

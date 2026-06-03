@@ -7,8 +7,6 @@ import (
 	"io"
 	"os"
 	"sync"
-
-	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
 const (
@@ -67,16 +65,27 @@ func OpenWAL(path string) (*WAL, []RawRecord, error) {
 		return nil, nil, fmt.Errorf("wal open: %w", err)
 	}
 
-	records, fileSize, err := replayWAL(f)
+	records, validOffset, err := replayWAL(f)
 	if err != nil {
 		_ = f.Close()
 		return nil, nil, fmt.Errorf("wal replay: %w", err)
 	}
 
+	// Truncate file at the last valid record position to remove
+	// any partial/corrupted data, then seek to the end for appending.
+	if err := f.Truncate(validOffset); err != nil {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("wal truncate: %w", err)
+	}
+	if _, err := f.Seek(validOffset, io.SeekStart); err != nil {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("wal seek: %w", err)
+	}
+
 	w := &WAL{
 		file:    f,
 		path:    path,
-		offset:  fileSize,
+		offset:  validOffset,
 		maxSize: walDefaultMaxSize,
 	}
 
@@ -141,6 +150,25 @@ func (w *WAL) Close() error {
 	return w.file.Close()
 }
 
+// Truncate 关闭当前 WAL 文件并创建新的空文件，用于清空已持久化的记录。
+func (w *WAL) Truncate() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if err := w.file.Close(); err != nil {
+		return fmt.Errorf("wal truncate close: %w", err)
+	}
+
+	f, err := os.Create(w.path)
+	if err != nil {
+		return fmt.Errorf("wal truncate create: %w", err)
+	}
+
+	w.file = f
+	w.offset = 0
+	return nil
+}
+
 // maybeRotate 在未持有锁时检查是否需要切分 WAL 文件。
 func (w *WAL) maybeRotate() error {
 	if w.offset < w.maxSize {
@@ -182,29 +210,31 @@ func encodeRecord(tp byte, payload []byte) []byte {
 	return buf
 }
 
-// replayWAL 从文件中回放所有有效记录，返回记录列表和文件大小。
+// replayWAL 从文件中回放所有有效记录，返回记录列表和最后一条有效记录的偏移量。
+// 遇到部分写入或损坏记录时停止回放（不返回错误），以支持崩溃恢复场景。
 func replayWAL(f *os.File) ([]RawRecord, int64, error) {
 	var records []RawRecord
 	header := make([]byte, walHeaderSize)
+	var lastValidOffset int64
 
 	for {
 		_, err := io.ReadFull(f, header)
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			break
+			break // 正常结束或部分头部（崩溃期间写入）
 		}
 		if err != nil {
-			return nil, 0, fmt.Errorf("wal replay read header: %w", err)
+			break // I/O 错误，停止回放
 		}
 
 		totalLen := binary.LittleEndian.Uint32(header)
 		if totalLen < walTypeSize+walCRCSize || totalLen > uint32(maxRecordPayload+walTypeSize+walCRCSize) {
-			return nil, 0, fmt.Errorf("%w: invalid record length %d", common.ErrCorruptedData, totalLen)
+			break // 无效记录长度，停止回放
 		}
 
 		bodyLen := int(totalLen)
 		body := make([]byte, bodyLen)
 		if _, err := io.ReadFull(f, body); err != nil {
-			return nil, 0, fmt.Errorf("wal replay read body: %w", err)
+			break // 部分消息体（崩溃期间写入），停止回放
 		}
 
 		tp := body[0]
@@ -215,19 +245,15 @@ func replayWAL(f *os.File) ([]RawRecord, int64, error) {
 		computedCRC := crc32.Checksum(body[:1+payloadLen], crcTable)
 
 		if storedCRC != computedCRC {
-			return nil, 0, fmt.Errorf("%w: crc mismatch at record %d", common.ErrCorruptedData, len(records))
+			break // CRC 不匹配，停止回放
 		}
 
 		records = append(records, RawRecord{
 			Type:    tp,
 			Payload: payload,
 		})
+		lastValidOffset += int64(walHeaderSize + bodyLen)
 	}
 
-	offset, err := f.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return nil, 0, fmt.Errorf("wal replay seek: %w", err)
-	}
-
-	return records, offset, nil
+	return records, lastValidOffset, nil
 }
