@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,7 @@ func findLastCheckpoint(records []RawRecord) (uint64, []ColumnMeta) {
 		if rec.Type == walTypeCheckpoint {
 			version, colMeta, err := deserializeCheckpointRecord(rec.Payload)
 			if err != nil {
+				log.Printf("engine: failed to deserialize checkpoint record: %v", err)
 				continue
 			}
 			if version > lastFlushedVersion {
@@ -143,6 +145,7 @@ func applyWriteRecords(records []RawRecord, lastFlushedVersion uint64, mem *MemT
 		if rec.Type == walTypeWrite {
 			key, version, columns, err := deserializeWriteRecord(rec.Payload)
 			if err != nil {
+				log.Printf("engine: failed to deserialize write record: %v", err)
 				continue
 			}
 			if version <= lastFlushedVersion {
@@ -196,11 +199,13 @@ func (e *Engine) parseSegmentEntry(entry os.DirEntry) (*Segment, uint64, bool) {
 	filePath := filepath.Join(e.flusher.dataDir, name)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
+		log.Printf("engine: failed to read segment file %s: %v", name, err)
 		return nil, 0, false
 	}
 
 	seg, err := DeserializeSegment(data)
 	if err != nil {
+		log.Printf("engine: failed to deserialize segment file %s: %v", name, err)
 		return nil, 0, false
 	}
 	seg.FilePath = filePath

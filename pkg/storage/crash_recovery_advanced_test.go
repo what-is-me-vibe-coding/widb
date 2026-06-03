@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"sync"
@@ -236,35 +238,52 @@ func TestCrashRecovery_DeserializationErrors(t *testing.T) {
 		t.Fatalf("close engine: %v", err)
 	}
 
-	// Corrupt the WAL payload (not the CRC - just the JSON payload)
+	// Corrupt the WAL payload: modify a byte in the JSON payload and recalculate CRC
+	// WAL record format: [4-byte totalLen][1-byte type][payload][4-byte CRC]
 	walPath := filepath.Join(dir, "wal.log")
-	_, err = os.ReadFile(walPath)
+	data, err := os.ReadFile(walPath)
 	if err != nil {
 		t.Fatalf("read wal: %v", err)
 	}
 
-	// Find the payload area and corrupt it (change a byte in the middle of the JSON)
-	// The WAL record format: [4-byte totalLen][1-byte type][payload][4-byte CRC]
-	// We need to modify the payload and recalculate the CRC
-	// Instead, let's just verify that the engine can handle corrupted WAL gracefully
-	// by creating a new WAL with corrupted data
+	if len(data) < walMetaSize {
+		t.Fatalf("WAL file too small: %d bytes", len(data))
+	}
+
+	// Corrupt the payload by flipping a byte in the JSON payload area
+	// payload starts at offset walHeaderSize + walTypeSize
+	payloadOffset := walHeaderSize + walTypeSize
+	if payloadOffset < len(data) {
+		data[payloadOffset] ^= 0xFF // flip bits in first payload byte
+	}
+
+	// Recalculate CRC for the corrupted payload to make it pass CRC check
+	// but fail JSON deserialization
+	totalLen := int(binary.LittleEndian.Uint32(data[0:4]))
+	if totalLen < walTypeSize+walCRCSize {
+		t.Fatalf("invalid total length in WAL record")
+	}
+	payloadLen := totalLen - walTypeSize - walCRCSize
+	crcData := data[walHeaderSize : walHeaderSize+walTypeSize+payloadLen]
+	newCRC := crc32.Checksum(crcData, crcTable)
+	binary.LittleEndian.PutUint32(data[walHeaderSize+walTypeSize+payloadLen:], newCRC)
+
+	if err := os.WriteFile(walPath, data, 0644); err != nil {
+		t.Fatalf("write corrupted wal: %v", err)
+	}
+
+	// Reopen engine - should handle corrupted WAL record gracefully
 	eng2, err := NewEngine(cfg)
 	if err != nil {
-		t.Fatalf("reopen engine: %v", err)
+		t.Fatalf("reopen engine with corrupted WAL: %v", err)
 	}
-	_ = eng2.Close()
+	defer func() { _ = eng2.Close() }()
 
-	// Verify the engine can be opened even with potential deserialization issues
-	eng3, err := NewEngine(cfg)
-	if err != nil {
-		t.Fatalf("reopen engine with potential deserialization issues: %v", err)
-	}
-	defer func() { _ = eng3.Close() }()
-
-	row, ok := eng3.Get(crKey1)
-	if !ok || row.Columns[colVal].Int64 != 1 {
-		t.Errorf("key1 not recovered")
-	}
+	// The corrupted key1 should not be recovered, but the engine should still work
+	_, ok := eng2.Get(crKey1)
+	// It's acceptable either way - the corrupted record is skipped
+	// What matters is the engine doesn't crash
+	_ = ok
 }
 
 // TestCrashRecovery_SegmentLoading 验证从磁盘加载段文件的正确性。

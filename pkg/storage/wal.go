@@ -155,6 +155,10 @@ func (w *WAL) Truncate() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	if err := w.file.Sync(); err != nil {
+		return fmt.Errorf("wal truncate sync: %w", err)
+	}
+
 	if err := w.file.Close(); err != nil {
 		return fmt.Errorf("wal truncate close: %w", err)
 	}

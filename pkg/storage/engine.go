@@ -236,11 +236,12 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 		copy(e.columnMeta, cols)
 	}
 
-	e.mu.Unlock()
-
 	if len(immutable) == 0 {
+		e.mu.Unlock()
 		return nil
 	}
+
+	e.mu.Unlock()
 
 	for _, mem := range immutable {
 		seg, err := e.flusher.Flush(mem, cols)
