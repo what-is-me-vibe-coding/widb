@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
@@ -205,7 +206,7 @@ func TestNewServerDefaultConfig(t *testing.T) {
 		DataDir:  filepath.Join(dir, "data"),
 	}
 
-	srv, err := NewServer(cfg)
+	srv, err := NewServer(cfg, WithMetricsRegistry(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatalf("NewServer 失败: %v", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -32,7 +33,8 @@ func newTestServer(t *testing.T) *Server {
 		DataDir:  dir,
 	}
 
-	srv, err := NewServer(cfg)
+	registry := prometheus.NewRegistry()
+	srv, err := NewServer(cfg, WithMetricsRegistry(registry))
 	if err != nil {
 		t.Fatalf("NewServer 失败: %v", err)
 	}

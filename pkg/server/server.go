@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
@@ -35,6 +36,8 @@ type Server struct {
 	analyzer  *query.Analyzer
 	optimizer *query.Optimizer
 	executor  *query.Executor
+	metrics   *Metrics
+	registry  prometheus.Registerer
 
 	tcpListener  net.Listener
 	httpServer   *http.Server
@@ -70,7 +73,7 @@ func (sa *storageAdapter) SparseIndex() *index.SparseIndex {
 }
 
 // NewServer 创建一个新的服务器实例，初始化所有组件。
-func NewServer(cfg Config) (*Server, error) {
+func NewServer(cfg Config, opts ...Option) (*Server, error) {
 	if cfg.MaxMemTableSize <= 0 {
 		cfg.MaxMemTableSize = 64 * 1024 * 1024
 	}
@@ -98,7 +101,27 @@ func NewServer(cfg Config) (*Server, error) {
 		done:      make(chan struct{}),
 	}
 
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	// 如果未通过选项设置 metrics，使用默认注册器
+	if s.metrics == nil {
+		s.metrics = NewMetrics(prometheus.DefaultRegisterer)
+	}
+
 	return s, nil
+}
+
+// Option 是服务器配置选项函数。
+type Option func(*Server)
+
+// WithMetricsRegistry 设置自定义 Prometheus 注册器（用于测试隔离）。
+func WithMetricsRegistry(reg prometheus.Registerer) Option {
+	return func(s *Server) {
+		s.metrics = NewMetrics(reg)
+		s.registry = reg
+	}
 }
 
 // Start 启动 TCP 和 HTTP 监听。
@@ -302,13 +325,20 @@ func (s *Server) handlePing() (*Packet, error) {
 
 // handleQuery 执行 SQL 查询。
 func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
+	start := time.Now()
+	defer func() {
+		s.metrics.QueryDuration.WithLabelValues("sql").Observe(time.Since(start).Seconds())
+	}()
+
 	stmt, err := s.parser.Parse(req.SQL)
 	if err != nil {
+		s.metrics.QueriesTotal.WithLabelValues("parse_error").Inc()
 		return &Response{Code: -1, Message: fmt.Sprintf("SQL 解析错误: %v", err)}, nil
 	}
 
 	plan, err := s.analyzer.Analyze(stmt)
 	if err != nil {
+		s.metrics.QueriesTotal.WithLabelValues("analyze_error").Inc()
 		return &Response{Code: -1, Message: fmt.Sprintf("SQL 分析错误: %v", err)}, nil
 	}
 
@@ -316,19 +346,24 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 
 	chunks, err := s.executor.Execute(optimized)
 	if err != nil {
+		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
 		return &Response{Code: -1, Message: fmt.Sprintf("SQL 执行错误: %v", err)}, nil
 	}
 
 	data := chunksToRows(chunks)
 	totalRows := countRows(chunks)
 
+	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
 	return &Response{Code: 0, Data: data, Rows: totalRows}, nil
 }
 
 // handleWrite 批量写入数据。
 func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
+	start := time.Now()
+
 	tbl, err := s.catalog.GetTable(req.Table)
 	if err != nil {
+		s.metrics.WritesTotal.WithLabelValues("table_not_found").Inc()
 		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
 	}
 
@@ -336,15 +371,19 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 	for _, row := range req.Rows {
 		key, values, convErr := s.convertWriteRow(tbl, row)
 		if convErr != nil {
+			s.metrics.WritesTotal.WithLabelValues("convert_error").Inc()
 			return &Response{Code: -1, Message: fmt.Sprintf("行数据转换错误: %v", convErr)}, nil
 		}
 
 		if writeErr := s.storage.Write(key, values); writeErr != nil {
+			s.metrics.WritesTotal.WithLabelValues("write_error").Inc()
 			return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", writeErr)}, nil
 		}
 		written++
 	}
 
+	s.metrics.WritesTotal.WithLabelValues("success").Add(float64(written))
+	s.metrics.WriteDuration.WithLabelValues("success").Observe(time.Since(start).Seconds())
 	return &Response{Code: 0, Rows: written}, nil
 }
 
