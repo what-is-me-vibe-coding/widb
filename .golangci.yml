@@ -79,6 +79,7 @@ issues:
         - gocognit
         - errcheck
         - gosec
+        - goconst
     # doc.go 文件允许 package 注释
     - path: doc\.go
       linters:

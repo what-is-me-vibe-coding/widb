@@ -12,6 +12,7 @@ const (
 	testFuncMin      = "min"
 	testFuncMax      = "max"
 	testFuncAvg      = "avg"
+	testFuncAbs      = "abs"
 	testAggCountStar = "COUNT(*)"
 	testAggAVG       = "AVG"
 	testAggSumAge    = "SUM(age)"

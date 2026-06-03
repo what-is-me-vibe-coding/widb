@@ -246,7 +246,7 @@ func TestParseAggFunc(t *testing.T) {
 		expected AggregateFunc
 	}{
 		{"count", testFuncCount, AggCount},
-		{"sum", "sum", AggSum},
+		{"sum", aggNameSum, AggSum},
 		{"min", testFuncMin, AggMin},
 		{"max", testFuncMax, AggMax},
 		{"avg", testFuncAvg, AggAvg},
