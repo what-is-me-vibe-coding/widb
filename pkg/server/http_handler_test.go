@@ -42,27 +42,24 @@ func TestHTTPHealthWrongMethod(t *testing.T) {
 
 func TestHTTPMetrics(t *testing.T) {
 	srv := newTestServer(t)
+	mux := srv.registerHTTPHandlers()
+
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	w := httptest.NewRecorder()
-	srv.httpMetrics(w, req)
+	mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("状态码 = %d, 期望 %d", w.Code, http.StatusOK)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "test_db_memtable_size") {
-		t.Error("metrics 应包含 test_db_memtable_size")
+	if !strings.Contains(body, "widb_queries_total") {
+		t.Error("metrics 应包含 widb_queries_total")
 	}
-}
-
-func TestHTTPMetricsWrongMethod(t *testing.T) {
-	srv := newTestServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/metrics", nil)
-	w := httptest.NewRecorder()
-	srv.httpMetrics(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("状态码 = %d, 期望 %d", w.Code, http.StatusMethodNotAllowed)
+	if !strings.Contains(body, "widb_writes_total") {
+		t.Error("metrics 应包含 widb_writes_total")
+	}
+	if !strings.Contains(body, "widb_memtable_size_bytes") {
+		t.Error("metrics 应包含 widb_memtable_size_bytes")
 	}
 }
 
@@ -219,5 +216,49 @@ func TestRegisterHTTPHandlers(t *testing.T) {
 				t.Errorf("路由 %s 未注册", tt.path)
 			}
 		})
+	}
+}
+
+// --- Metrics 集成测试 ---
+
+func TestMetricsRecordedOnQuery(t *testing.T) {
+	srv := newTestServerWithTable(t)
+	mux := srv.registerHTTPHandlers()
+
+	// 执行一次查询
+	body := `{"sql":"SELECT * FROM users"}`
+	req := httptest.NewRequest(http.MethodPost, "/query", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	// 检查 metrics 端点是否记录了查询指标
+	metricsReq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsW := httptest.NewRecorder()
+	mux.ServeHTTP(metricsW, metricsReq)
+
+	metricsBody := metricsW.Body.String()
+	if !strings.Contains(metricsBody, "widb_queries_total") {
+		t.Error("metrics 应记录 widb_queries_total")
+	}
+}
+
+func TestMetricsRecordedOnWrite(t *testing.T) {
+	srv := newTestServerWithTable(t)
+	mux := srv.registerHTTPHandlers()
+
+	// 执行一次写入
+	body := `{"table":"users","rows":[{"id":1,"name":"alice"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/write", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	// 检查 metrics 端点是否记录了写入指标
+	metricsReq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsW := httptest.NewRecorder()
+	mux.ServeHTTP(metricsW, metricsReq)
+
+	metricsBody := metricsW.Body.String()
+	if !strings.Contains(metricsBody, "widb_writes_total") {
+		t.Error("metrics 应记录 widb_writes_total")
 	}
 }

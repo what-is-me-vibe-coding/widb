@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/server"
 )
 
@@ -26,7 +27,7 @@ func TestServerCreateAndStart(t *testing.T) {
 		MaxMemTableSize: 1024 * 1024,
 	}
 
-	srv, err := server.NewServer(cfg)
+	srv, err := server.NewServer(cfg, server.WithMetricsRegistry(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatalf("创建服务器失败: %v", err)
 	}
@@ -48,7 +49,7 @@ func TestServerInvalidDataDir(t *testing.T) {
 		MaxMemTableSize: 1024 * 1024,
 	}
 
-	_, err := server.NewServer(cfg)
+	_, err := server.NewServer(cfg, server.WithMetricsRegistry(prometheus.NewRegistry()))
 	if err != nil {
 		t.Logf("预期内的错误: %v", err)
 	}
