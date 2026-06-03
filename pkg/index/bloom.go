@@ -86,14 +86,6 @@ func (bi *BloomIndex) MayContain(segID uint64, key []byte) bool {
 	return result
 }
 
-// GetFilter 获取指定 Segment 的布隆过滤器实例。
-func (bi *BloomIndex) GetFilter(segID uint64) (*bloom.BloomFilter, bool) {
-	bi.mu.RLock()
-	defer bi.mu.RUnlock()
-	filter, ok := bi.blooms[segID]
-	return filter, ok
-}
-
 // Stats 返回布隆过滤器的命中/未命中统计。
 func (bi *BloomIndex) Stats() (hit, miss uint64) {
 	return atomic.LoadUint64(&bi.hitCnt), atomic.LoadUint64(&bi.missCnt)

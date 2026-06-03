@@ -76,8 +76,8 @@ func (si *SparseIndex) RegisterColumnStat(segID uint64, colID uint32, minVal, ma
 	}
 
 	if len(minVal) > 0 && len(maxVal) > 0 {
-		css.MinValue = BytesToValue(minVal, dataType)
-		css.MaxValue = BytesToValue(maxVal, dataType)
+		css.MinValue = bytesToValue(minVal, dataType)
+		css.MaxValue = bytesToValue(maxVal, dataType)
 		css.HasValues = true
 	}
 
@@ -200,8 +200,7 @@ func (si *SparseIndex) Clear() {
 	si.stats = make(map[colStatKey]ColumnSparseStat)
 }
 
-// BytesToValue 将字节数组转换为 Value，根据数据类型解析。
-func BytesToValue(b []byte, dataType common.DataType) common.Value {
+func bytesToValue(b []byte, dataType common.DataType) common.Value {
 	switch dataType {
 	case common.TypeInt64:
 		if len(b) >= 8 {
