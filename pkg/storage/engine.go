@@ -40,15 +40,6 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		return nil, fmt.Errorf("engine: create data dir: %w", err)
 	}
 
-	walPath := filepath.Join(cfg.DataDir, "wal.log")
-	wal, _, err := OpenWAL(walPath)
-	if err != nil {
-		wal, err = CreateWAL(walPath)
-		if err != nil {
-			return nil, fmt.Errorf("engine: create wal: %w", err)
-		}
-	}
-
 	maxSize := cfg.MaxMemTableSize
 	if maxSize <= 0 {
 		maxSize = memTableDefaultSize
@@ -56,7 +47,6 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 
 	eng := &Engine{
 		activeMem:    NewMemTableWithSize(maxSize),
-		wal:          wal,
 		flusher:      NewFlusher(cfg.DataDir),
 		compactor:    NewCompactor(cfg.DataDir),
 		nextVersion:  1,
@@ -64,6 +54,28 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		bloomIndex:   index.NewBloomIndex(),
 		sparseIndex:  index.NewSparseIndex(),
 	}
+
+	// Load existing segments from disk
+	if err := eng.loadSegments(); err != nil {
+		return nil, fmt.Errorf("engine: load segments: %w", err)
+	}
+
+	// Open or create WAL
+	walPath := filepath.Join(cfg.DataDir, "wal.log")
+	wal, records, err := OpenWAL(walPath)
+	if err != nil {
+		wal, err = CreateWAL(walPath)
+		if err != nil {
+			return nil, fmt.Errorf("engine: create wal: %w", err)
+		}
+	} else {
+		// Replay WAL records to recover data
+		if err := eng.replayWALRecords(records); err != nil {
+			_ = wal.Close()
+			return nil, fmt.Errorf("engine: replay wal: %w", err)
+		}
+	}
+	eng.wal = wal
 
 	return eng, nil
 }
@@ -73,11 +85,26 @@ func (e *Engine) Write(key string, values map[string]common.Value) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	version := e.nextVersion
+
+	// Write to WAL first (write-ahead logging)
+	payload, err := serializeWriteRecord(key, version, values)
+	if err != nil {
+		return fmt.Errorf("engine write: serialize wal: %w", err)
+	}
+	if err := e.wal.AppendWrite(payload); err != nil {
+		return fmt.Errorf("engine write: wal append: %w", err)
+	}
+	if err := e.wal.Sync(); err != nil {
+		return fmt.Errorf("engine write: wal sync: %w", err)
+	}
+
+	e.nextVersion++
+
 	row := Row{
-		Version: e.nextVersion,
+		Version: version,
 		Columns: values,
 	}
-	e.nextVersion++
 
 	if e.activeMem.ShouldFlush() {
 		if err := e.rotateMemTable(); err != nil {
@@ -85,7 +112,7 @@ func (e *Engine) Write(key string, values map[string]common.Value) error {
 		}
 	}
 
-	_, _, err := e.activeMem.Put(key, row)
+	_, _, err = e.activeMem.Put(key, row)
 	if err != nil {
 		return fmt.Errorf("engine write: %w", err)
 	}
@@ -190,6 +217,11 @@ func (e *Engine) Scan(start, end string) []struct {
 func (e *Engine) Flush(cols []ColumnMeta) error {
 	e.mu.Lock()
 
+	var flushVersion uint64
+	if e.nextVersion > 0 {
+		flushVersion = e.nextVersion - 1
+	}
+
 	if e.activeMem.Len() > 0 {
 		e.activeMem.Freeze()
 		e.immutable = append(e.immutable, e.activeMem)
@@ -202,6 +234,11 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 	if len(e.columnMeta) == 0 && len(cols) > 0 {
 		e.columnMeta = make([]ColumnMeta, len(cols))
 		copy(e.columnMeta, cols)
+	}
+
+	if len(immutable) == 0 {
+		e.mu.Unlock()
+		return nil
 	}
 
 	e.mu.Unlock()
@@ -217,6 +254,22 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 		e.segmentLevels = append(e.segmentLevels, 0)
 		e.registerSegmentIndexes(seg, 0)
 		e.mu.Unlock()
+	}
+
+	// Write checkpoint after successful flush
+	e.mu.Lock()
+	colMeta := e.columnMeta
+	e.mu.Unlock()
+
+	checkpointPayload, err := serializeCheckpointRecord(flushVersion, colMeta)
+	if err != nil {
+		return fmt.Errorf("engine flush: serialize checkpoint: %w", err)
+	}
+	if err := e.wal.AppendCheckpoint(checkpointPayload); err != nil {
+		return fmt.Errorf("engine flush: write checkpoint: %w", err)
+	}
+	if err := e.wal.Sync(); err != nil {
+		return fmt.Errorf("engine flush: sync checkpoint: %w", err)
 	}
 
 	return nil
@@ -277,6 +330,11 @@ func (e *Engine) L0SegmentCount() int {
 // Compact 执行 Tiered Compaction，将 L0 合并到 L1。
 func (e *Engine) Compact(cols []ColumnMeta) error {
 	e.mu.Lock()
+
+	// Sync compactor nextID with flusher to avoid segment ID conflicts
+	if e.flusher.nextID > e.compactor.nextID {
+		e.compactor.nextID = e.flusher.nextID
+	}
 
 	l0Segments, l0Indices := e.collectL0Segments()
 	if len(l0Segments) == 0 {

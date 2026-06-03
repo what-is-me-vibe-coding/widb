@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
@@ -17,6 +18,7 @@ const (
 
 // Compactor 负责将多个 Segment 合并为更少的 Segment。
 type Compactor struct {
+	mu      sync.Mutex
 	dataDir string
 	nextID  uint64
 }
@@ -28,6 +30,9 @@ func NewCompactor(dataDir string) *Compactor {
 
 // Compact 将输入的 segments 合并为一个新的 Segment。
 func (c *Compactor) Compact(segments []*Segment, cols []ColumnMeta) (*Segment, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("compactor: no segments to compact")
 	}
