@@ -62,7 +62,7 @@ func TestASTBinaryOp(t *testing.T) {
 }
 
 func TestASTUnaryOp(t *testing.T) {
-	if OpNot.String() != "NOT " {
+	if OpNot.String() != strNot {
 		t.Errorf("expected 'NOT ', got %q", OpNot.String())
 	}
 	if OpNeg.String() != "-" {

@@ -54,7 +54,7 @@ func TestToFloat64(t *testing.T) {
 		v    common.Value
 		want float64
 	}{
-		{"float64", common.NewFloat64(3.14), 3.14},
+		{testTypeFloat64, common.NewFloat64(3.14), 3.14},
 		{"int64", common.NewInt64(42), 42.0},
 		{"null_returns_zero", common.NewNull(), 0},
 		{"string_returns_zero", common.NewString("x"), 0},
@@ -85,18 +85,18 @@ func TestBuildScanSchema(t *testing.T) {
 	}{
 		{
 			name:     "existing_columns",
-			colNames: []string{"id", "name"},
+			colNames: []string{"id", testColName},
 			want: []ColumnDef{
 				{Name: "id", Type: common.TypeInt64, Nullable: false},
-				{Name: "name", Type: common.TypeString, Nullable: true},
+				{Name: testColName, Type: common.TypeString, Nullable: true},
 			},
 		},
 		{
 			name:     "nonexistent_column_gets_null_type",
-			colNames: []string{"id", "nonexistent"},
+			colNames: []string{"id", testColNonexistent},
 			want: []ColumnDef{
 				{Name: "id", Type: common.TypeInt64, Nullable: false},
-				{Name: "nonexistent", Type: common.TypeNull, Nullable: true},
+				{Name: testColNonexistent, Type: common.TypeNull, Nullable: true},
 			},
 		},
 		{
@@ -143,12 +143,12 @@ func TestResolveBinaryExpr(t *testing.T) {
 		},
 		{
 			name:    "left_invalid_column",
-			expr:    &BinaryExpr{Op: OpEq, Left: &ColumnExpr{Name: "nonexistent"}, Right: &LiteralExpr{Value: common.NewInt64(1)}},
+			expr:    &BinaryExpr{Op: OpEq, Left: &ColumnExpr{Name: testColNonexistent}, Right: &LiteralExpr{Value: common.NewInt64(1)}},
 			wantErr: true,
 		},
 		{
 			name:    "right_invalid_column",
-			expr:    &BinaryExpr{Op: OpEq, Left: &LiteralExpr{Value: common.NewInt64(1)}, Right: &ColumnExpr{Name: "nonexistent"}},
+			expr:    &BinaryExpr{Op: OpEq, Left: &LiteralExpr{Value: common.NewInt64(1)}, Right: &ColumnExpr{Name: testColNonexistent}},
 			wantErr: true,
 		},
 	}
@@ -217,7 +217,7 @@ func TestResolveUnaryExpr(t *testing.T) {
 		},
 		{
 			name:    "invalid_inner_column",
-			expr:    &UnaryExpr{Op: OpNot, Expr: &ColumnExpr{Name: "nonexistent"}},
+			expr:    &UnaryExpr{Op: OpNot, Expr: &ColumnExpr{Name: testColNonexistent}},
 			wantErr: true,
 		},
 	}
@@ -241,7 +241,7 @@ func TestLiteralExprString(t *testing.T) {
 	}{
 		{"null", &LiteralExpr{Value: common.NewNull()}, "NULL"},
 		{"string", &LiteralExpr{Value: common.NewString("hi")}, "'hi'"},
-		{"float64", &LiteralExpr{Value: common.NewFloat64(2.5)}, "2.5"},
+		{testTypeFloat64, &LiteralExpr{Value: common.NewFloat64(2.5)}, "2.5"},
 		{"int64_uses_default_branch", &LiteralExpr{Value: common.NewInt64(42)}, "42"},
 		{"bool_uses_default_branch", &LiteralExpr{Value: common.NewBool(true)}, "true"},
 	}
@@ -273,7 +273,7 @@ func TestSelectStatementString(t *testing.T) {
 			name: "with_from",
 			stmt: &SelectStatement{
 				Columns: []SelectColumn{{Expr: &ColumnExpr{Name: "id"}}},
-				From:    &TableRef{Name: "users"},
+				From:    &TableRef{Name: testTableUsers},
 			},
 			want: "SELECT id FROM users",
 		},
@@ -281,7 +281,7 @@ func TestSelectStatementString(t *testing.T) {
 			name: "with_from_and_where",
 			stmt: &SelectStatement{
 				Columns: []SelectColumn{{Expr: &ColumnExpr{Name: "id"}}},
-				From:    &TableRef{Name: "users"},
+				From:    &TableRef{Name: testTableUsers},
 				Where:   &BinaryExpr{Op: OpEq, Left: &ColumnExpr{Name: "id"}, Right: &LiteralExpr{Value: common.NewInt64(1)}},
 			},
 			want: "SELECT id FROM users WHERE (id = 1)",
@@ -289,9 +289,9 @@ func TestSelectStatementString(t *testing.T) {
 		{
 			name: "with_group_by",
 			stmt: &SelectStatement{
-				Columns: []SelectColumn{{Expr: &ColumnExpr{Name: "age"}}},
-				From:    &TableRef{Name: "users"},
-				GroupBy: []Expression{&ColumnExpr{Name: "age"}},
+				Columns: []SelectColumn{{Expr: &ColumnExpr{Name: testColAge}}},
+				From:    &TableRef{Name: testTableUsers},
+				GroupBy: []Expression{&ColumnExpr{Name: testColAge}},
 			},
 			want: "SELECT age FROM users GROUP BY age",
 		},
@@ -299,7 +299,7 @@ func TestSelectStatementString(t *testing.T) {
 			name: "with_limit",
 			stmt: &SelectStatement{
 				Columns: []SelectColumn{{Expr: &StarExpr{}}},
-				From:    &TableRef{Name: "users"},
+				From:    &TableRef{Name: testTableUsers},
 				Limit:   &LimitClause{Count: 10},
 			},
 			want: "SELECT * FROM users LIMIT 10",
@@ -307,10 +307,10 @@ func TestSelectStatementString(t *testing.T) {
 		{
 			name: "full_select",
 			stmt: &SelectStatement{
-				Columns: []SelectColumn{{Expr: &ColumnExpr{Name: "age"}}, {Expr: &FuncExpr{Name: "count", Args: []Expression{&StarExpr{}}}}},
-				From:    &TableRef{Name: "users"},
-				Where:   &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: "age"}, Right: &LiteralExpr{Value: common.NewInt64(20)}},
-				GroupBy: []Expression{&ColumnExpr{Name: "age"}},
+				Columns: []SelectColumn{{Expr: &ColumnExpr{Name: testColAge}}, {Expr: &FuncExpr{Name: testFuncCount, Args: []Expression{&StarExpr{}}}}},
+				From:    &TableRef{Name: testTableUsers},
+				Where:   &BinaryExpr{Op: OpGt, Left: &ColumnExpr{Name: testColAge}, Right: &LiteralExpr{Value: common.NewInt64(20)}},
+				GroupBy: []Expression{&ColumnExpr{Name: testColAge}},
 				Limit:   &LimitClause{Offset: 5, Count: 10},
 			},
 			want: "SELECT age, count(*) FROM users WHERE (age > 20) GROUP BY age LIMIT 5, 10",
@@ -362,11 +362,11 @@ func TestCreateTableStatementString(t *testing.T) {
 		{
 			name: "with_if_not_exists_and_primary_key",
 			stmt: &CreateTableStatement{
-				Table:       "users",
+				Table:       testTableUsers,
 				IfNotExists: true,
 				Columns: []ColumnDef{
 					{Name: "id", Type: common.TypeInt64, Nullable: false},
-					{Name: "name", Type: common.TypeString, Nullable: true},
+					{Name: testColName, Type: common.TypeString, Nullable: true},
 				},
 				PrimaryKey: []string{"id"},
 			},
@@ -411,7 +411,7 @@ func TestUnaryOpString(t *testing.T) {
 		op   UnaryOp
 		want string
 	}{
-		{"not", OpNot, "NOT "},
+		{"not", OpNot, strNot},
 		{"neg", OpNeg, "-"},
 		{"unknown_default", UnaryOp(99), "?"},
 	}

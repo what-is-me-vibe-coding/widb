@@ -207,7 +207,7 @@ func TestInterfaceToValue(t *testing.T) {
 		{"int64_从int", 42, common.TypeInt64, false},
 		{"float64值", 3.14, common.TypeFloat64, false},
 		{"float64_从int", 42, common.TypeFloat64, false},
-		{"string值", "hello", common.TypeString, false},
+		{"string值", testStrHello, common.TypeString, false},
 		{"timestamp值", "2024-01-01T00:00:00Z", common.TypeTimestamp, false},
 		{"bool类型错误", "true", common.TypeBool, true},
 		{"int64类型错误", "42", common.TypeInt64, true},

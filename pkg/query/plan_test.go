@@ -224,7 +224,7 @@ func TestInferAggReturnType(t *testing.T) {
 		agg      AggregateExpr
 		expected common.DataType
 	}{
-		{"count", AggregateExpr{Func: AggCount, Arg: nil}, common.TypeInt64},
+		{testFuncCount, AggregateExpr{Func: AggCount, Arg: nil}, common.TypeInt64},
 		{"sum literal", AggregateExpr{Func: AggSum, Arg: &LiteralExpr{Value: common.NewInt64(1)}}, common.TypeInt64},
 		{"sum column", AggregateExpr{Func: AggSum, Arg: &ColumnExpr{Name: testColScore, typ: common.TypeFloat64}}, common.TypeFloat64},
 	}

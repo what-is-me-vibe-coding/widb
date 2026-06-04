@@ -63,7 +63,7 @@ func TestOpenWALPermissionDenied(t *testing.T) {
 	if err := os.Chmod(path, 0444); err != nil {
 		t.Fatalf("Chmod failed: %v", err)
 	}
-	defer os.Chmod(path, 0644) // restore for cleanup
+	defer func() { _ = os.Chmod(path, 0644) }() // restore for cleanup
 
 	_, _, err = OpenWAL(path)
 	if err == nil {

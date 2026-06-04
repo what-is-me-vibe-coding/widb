@@ -19,6 +19,9 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
 
+// msgPong is the message returned by the ping handler.
+const msgPong = "pong"
+
 // Config 是服务器配置参数。
 type Config struct {
 	TCPAddr         string
@@ -336,7 +339,7 @@ func (s *Server) handleWritePacket(pkt *Packet) (*Packet, error) {
 
 // handlePing 处理心跳请求。
 func (s *Server) handlePing() (*Packet, error) {
-	resp := &Response{Code: 0, Message: "pong"}
+	resp := &Response{Code: 0, Message: msgPong}
 	payload, err := json.Marshal(resp)
 	if err != nil {
 		return nil, fmt.Errorf("序列化心跳响应: %w", err)

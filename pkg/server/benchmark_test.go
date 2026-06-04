@@ -215,7 +215,7 @@ func newBenchServerWithTable(b *testing.B) *Server {
 	err := srv.catalog.CreateTable(benchTableName, []catalog.ColumnDef{
 		{Name: "id", Type: common.TypeInt64, Nullable: false},
 		{Name: benchColName, Type: common.TypeString, Nullable: true},
-		{Name: "score", Type: common.TypeFloat64, Nullable: true},
+		{Name: testColScore, Type: common.TypeFloat64, Nullable: true},
 	}, []string{"id"}, catalog.TableOptions{})
 	if err != nil {
 		b.Fatalf("CreateTable 失败: %v", err)

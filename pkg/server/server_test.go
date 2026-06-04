@@ -50,7 +50,7 @@ func newTestServerWithTable(t *testing.T) *Server {
 	err := srv.catalog.CreateTable(testTable, []catalog.ColumnDef{
 		{Name: "id", Type: common.TypeInt64, Nullable: false},
 		{Name: testColName, Type: common.TypeString, Nullable: true},
-		{Name: "score", Type: common.TypeFloat64, Nullable: true},
+		{Name: testColScore, Type: common.TypeFloat64, Nullable: true},
 	}, []string{"id"}, catalog.TableOptions{})
 	if err != nil {
 		t.Fatalf("CreateTable 失败: %v", err)
@@ -157,7 +157,7 @@ func TestTCPPing(t *testing.T) {
 	if response.Code != 0 {
 		t.Errorf("响应 Code = %d, 期望 0", response.Code)
 	}
-	if response.Message != "pong" {
+	if response.Message != msgPong {
 		t.Errorf("响应 Message = %q, 期望 'pong'", response.Message)
 	}
 }

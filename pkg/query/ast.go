@@ -323,6 +323,9 @@ func (op BinaryOp) String() string {
 // UnaryOp 表示一元运算符。
 type UnaryOp int
 
+// strNot is the string representation of the NOT unary operator.
+const strNot = "NOT "
+
 // UnaryOp 常量定义。
 const (
 	OpNot UnaryOp = iota
@@ -332,7 +335,7 @@ const (
 func (op UnaryOp) String() string {
 	switch op {
 	case OpNot:
-		return "NOT "
+		return strNot
 	case OpNeg:
 		return "-"
 	default:

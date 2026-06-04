@@ -162,7 +162,7 @@ func TestHandleTCPConn_WritePacket(t *testing.T) {
 	writePayload, _ := json.Marshal(WriteRequest{
 		Table: testTable,
 		Rows: []map[string]interface{}{
-			{"id": float64(42), testColName: "hello", "score": 95.5},
+			{"id": float64(42), testColName: testStrHello, "score": 95.5},
 		},
 	})
 	writePkt := NewPacket(PacketWrite, writePayload)
@@ -282,7 +282,7 @@ func TestHandleTCPConn_PingThenQuery(t *testing.T) {
 	if err := json.Unmarshal(pingResp.Payload, &pr); err != nil {
 		t.Fatalf("unmarshal ping response failed: %v", err)
 	}
-	if pr.Code != 0 || pr.Message != "pong" {
+	if pr.Code != 0 || pr.Message != msgPong {
 		t.Errorf("ping response Code=%d Message=%q, want Code=0 Message='pong'", pr.Code, pr.Message)
 	}
 

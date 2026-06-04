@@ -431,7 +431,7 @@ func TestParseCreateTableColumnTypes(t *testing.T) {
 	}{
 		{"int64", "CREATE TABLE t (c INT64 NOT NULL)", common.TypeInt64},
 		{"bigint", "CREATE TABLE t (c BIGINT NOT NULL)", common.TypeInt64},
-		{"float64", "CREATE TABLE t (c FLOAT64 NOT NULL)", common.TypeFloat64},
+		{testTypeFloat64, "CREATE TABLE t (c FLOAT64 NOT NULL)", common.TypeFloat64},
 		{"double", "CREATE TABLE t (c DOUBLE NOT NULL)", common.TypeFloat64},
 		{"string", "CREATE TABLE t (c STRING NOT NULL)", common.TypeString},
 		{"varchar", "CREATE TABLE t (c VARCHAR(255) NOT NULL)", common.TypeString},

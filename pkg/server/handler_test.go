@@ -18,6 +18,8 @@ const (
 	testName       = "alice"
 	testTableName  = "test"
 	testListenAddr = "127.0.0.1:0"
+	testColScore   = "score"
+	testStrHello   = "hello"
 	testColName    = "name"
 )
 
