@@ -472,3 +472,25 @@ func TestExecutorUnaryNegNull(t *testing.T) {
 		}
 	}
 }
+
+// TestToFloat64 测试 toFloat64 辅助函数。
+func TestToFloat64(t *testing.T) {
+	tests := []struct {
+		name string
+		val  common.Value
+		want float64
+	}{
+		{"float64值直接返回", common.NewFloat64(3.14), 3.14},
+		{"int64值转换为float64", common.NewInt64(42), 42.0},
+		{"其他类型返回0", common.NewString("hello"), 0},
+		{"null类型返回0", common.NewNull(), 0},
+		{"bool类型返回0", common.NewBool(true), 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := toFloat64(tt.val); got != tt.want {
+				t.Errorf("toFloat64(%v) = %v, want %v", tt.val, got, tt.want)
+			}
+		})
+	}
+}

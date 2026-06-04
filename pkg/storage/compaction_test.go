@@ -230,3 +230,91 @@ func TestEngineCompactAndShouldCompact(t *testing.T) {
 		t.Errorf("should not compact with 1 L0 segment, L0 count=%d", eng.L0SegmentCount())
 	}
 }
+
+// TestCompactorWithNullValues 测试 Compactor 合并包含 NULL 值的 Segment
+func TestCompactorWithNullValues(t *testing.T) {
+	dir, err := os.MkdirTemp("", "compactor_null_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	cols := []ColumnMeta{
+		{ID: 0, Name: colVal, Type: common.TypeInt64},
+		{ID: 1, Name: colName, Type: common.TypeString},
+	}
+
+	eng := setupEngine(t, dir, 64<<20)
+
+	// 第一批：包含 NULL 值
+	_ = eng.Write("k1", map[string]common.Value{
+		colVal:  common.NewInt64(100),
+		colName: common.NewString("alice"),
+	})
+	_ = eng.Write("k2", map[string]common.Value{
+		colVal: common.NewInt64(200),
+		// colName 缺失 -> NULL
+	})
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	// 第二批：包含 NULL 值
+	_ = eng.Write("k3", map[string]common.Value{
+		// colVal 缺失 -> NULL
+		colName: common.NewString("charlie"),
+	})
+	_ = eng.Write("k4", map[string]common.Value{
+		colVal:  common.NewInt64(400),
+		colName: common.NewString("dave"),
+	})
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	segments := eng.Segments()
+	compactor := NewCompactor(dir)
+	newSeg, err := compactor.Compact(segments, cols)
+	if err != nil {
+		t.Fatalf("Compact with null values failed: %v", err)
+	}
+
+	verifyCompactedSegment(t, newSeg, 4, 2)
+}
+
+// TestCompactorWithDifferentDataTypes 测试 Compactor 合并包含不同数据类型的 Segment
+func TestCompactorWithDifferentDataTypes(t *testing.T) {
+	dir, err := os.MkdirTemp("", "compactor_types_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	cols := []ColumnMeta{
+		{ID: 0, Name: "col_0", Type: common.TypeInt64},
+		{ID: 1, Name: "col_1", Type: common.TypeFloat64},
+		{ID: 2, Name: "col_2", Type: common.TypeBool},
+		{ID: 3, Name: "col_3", Type: common.TypeString},
+		{ID: 4, Name: "col_4", Type: common.TypeTimestamp},
+	}
+
+	eng := setupEngine(t, dir, 64<<20)
+	writeRows(t, eng, cols, 20, 0)
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	writeRows(t, eng, cols, 20, 20)
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	segments := eng.Segments()
+	compactor := NewCompactor(dir)
+	newSeg, err := compactor.Compact(segments, cols)
+	if err != nil {
+		t.Fatalf("Compact with different types failed: %v", err)
+	}
+
+	verifyCompactedSegment(t, newSeg, 40, 5)
+}

@@ -182,6 +182,119 @@ func TestHandleTCPConn_ServerShutdown(t *testing.T) {
 	}
 }
 
+// --- handleTCPConn 覆盖率提升测试 ---
+
+func TestHandleTCPConn_WritePacketWithValidData(t *testing.T) {
+	// 测试 TCP 写入包携带有效数据的情况
+	srv := newTestServerWithTable(t)
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start 失败: %v", err)
+	}
+	defer func() { _ = srv.Stop() }()
+
+	time.Sleep(50 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", srv.tcpListener.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("连接 TCP 失败: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// 发送写入请求包
+	writePayload, _ := json.Marshal(WriteRequest{
+		Table: testTable,
+		Rows: []map[string]interface{}{
+			{"id": float64(1), testColName: "alice"},
+			{"id": float64(2), testColName: "bob"},
+		},
+	})
+	writePkt := NewPacket(PacketWrite, writePayload)
+	if _, err := conn.Write(writePkt.Encode()); err != nil {
+		t.Fatalf("写入包发送失败: %v", err)
+	}
+
+	resp, err := DecodePacket(bufio.NewReader(conn))
+	if err != nil {
+		t.Fatalf("读取写入响应失败: %v", err)
+	}
+
+	var writeResp Response
+	if err := json.Unmarshal(resp.Payload, &writeResp); err != nil {
+		t.Fatalf("解析写入响应失败: %v", err)
+	}
+	if writeResp.Code != 0 {
+		t.Errorf("写入响应 Code = %d, Message = %q", writeResp.Code, writeResp.Message)
+	}
+	if writeResp.Rows != 2 {
+		t.Errorf("写入行数 = %d, 期望 2", writeResp.Rows)
+	}
+}
+
+func TestHandleTCPConn_MultiplePacketsInSequence(t *testing.T) {
+	// 测试同一 TCP 连接上连续发送多个包
+	srv := newTestServerWithTable(t)
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start 失败: %v", err)
+	}
+	defer func() { _ = srv.Stop() }()
+
+	time.Sleep(50 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", srv.tcpListener.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("连接 TCP 失败: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// 先发送 Ping
+	pingPkt := NewPacket(PacketPing, nil)
+	if _, err := conn.Write(pingPkt.Encode()); err != nil {
+		t.Fatalf("写入 Ping 包失败: %v", err)
+	}
+	resp1, err := DecodePacket(bufio.NewReader(conn))
+	if err != nil {
+		t.Fatalf("读取 Ping 响应失败: %v", err)
+	}
+	if resp1.Type != PacketResponse {
+		t.Errorf("Ping 响应类型 = %d, 期望 %d", resp1.Type, PacketResponse)
+	}
+
+	// 再发送查询
+	queryPayload, _ := json.Marshal(QueryRequest{SQL: testSelectAll})
+	queryPkt := NewPacket(PacketQuery, queryPayload)
+	if _, err := conn.Write(queryPkt.Encode()); err != nil {
+		t.Fatalf("写入查询包失败: %v", err)
+	}
+	resp2, err := DecodePacket(bufio.NewReader(conn))
+	if err != nil {
+		t.Fatalf("读取查询响应失败: %v", err)
+	}
+	if resp2.Type != PacketResponse {
+		t.Errorf("查询响应类型 = %d, 期望 %d", resp2.Type, PacketResponse)
+	}
+
+	// 最后发送写入
+	writePayload, _ := json.Marshal(WriteRequest{
+		Table: testTable,
+		Rows:  []map[string]interface{}{{"id": float64(42), testColName: "charlie"}},
+	})
+	writePkt := NewPacket(PacketWrite, writePayload)
+	if _, err := conn.Write(writePkt.Encode()); err != nil {
+		t.Fatalf("写入包发送失败: %v", err)
+	}
+	resp3, err := DecodePacket(bufio.NewReader(conn))
+	if err != nil {
+		t.Fatalf("读取写入响应失败: %v", err)
+	}
+	var writeResp Response
+	if err := json.Unmarshal(resp3.Payload, &writeResp); err != nil {
+		t.Fatalf("解析写入响应失败: %v", err)
+	}
+	if writeResp.Code != 0 {
+		t.Errorf("写入响应 Code = %d, Message = %q", writeResp.Code, writeResp.Message)
+	}
+}
+
 // --- serveHTTP tests ---
 
 func TestServeHTTP_GracefulShutdown(t *testing.T) {
@@ -222,6 +335,41 @@ func TestServeHTTP_GracefulShutdown(t *testing.T) {
 	_, err = http.Get(baseURL + "/health")
 	if err == nil {
 		t.Error("expected error after server stop, got nil")
+	}
+}
+
+// --- serveHTTP 服务器错误测试 ---
+
+func TestServeHTTP_ServerError(t *testing.T) {
+	// 当 httpListener 被直接关闭时，Serve 会返回非 ErrServerClosed 的错误，
+	// 触发 serveHTTP 中 select 的 default 分支。
+	dir := t.TempDir()
+	cfg := Config{
+		TCPAddr:  testListenAddr,
+		HTTPAddr: testListenAddr,
+		DataDir:  dir,
+	}
+	registry := prometheus.NewRegistry()
+	srv, err := NewServer(cfg, WithMetricsRegistry(registry))
+	if err != nil {
+		t.Fatalf("NewServer 失败: %v", err)
+	}
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start 失败: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// 直接关闭 httpListener，使 Serve 返回 "use of closed network connection" 错误
+	// 该错误不是 http.ErrServerClosed，因此会进入 default 分支
+	_ = srv.httpListener.Close()
+
+	// 等待 serveHTTP goroutine 处理完错误并退出
+	time.Sleep(200 * time.Millisecond)
+
+	// 服务器应该仍然可以正常关闭（Stop 不会因为 serveHTTP 已退出而死锁）
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop 失败: %v", err)
 	}
 }
 

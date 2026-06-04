@@ -405,3 +405,77 @@ func verifySegmentRoundTrip(t *testing.T, seg *Segment) {
 			len(deserialized.Footer.ColumnStats), len(seg.Footer.ColumnStats))
 	}
 }
+
+// TestFlusherFlushWithNullValues 测试 Flusher 处理包含 NULL 值的 MemTable
+func TestFlusherFlushWithNullValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	flusher := NewFlusher(tmpDir)
+
+	mem := NewMemTable()
+	// 第一行有完整值，第二行某些列为 NULL，第三行某些列为 NULL
+	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
+		colVal:    common.NewInt64(100),
+		colName:   common.NewString("alice"),
+		colActive: common.NewBool(true),
+	}})
+	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
+		colVal: common.NewInt64(200),
+		// colName 缺失 -> NULL
+		colActive: common.NewBool(false),
+	}})
+	_, _, _ = mem.Put("k3", Row{Version: 1, Columns: map[string]common.Value{
+		// colVal 缺失 -> NULL
+		colName: common.NewString("charlie"),
+		// colActive 缺失 -> NULL
+	}})
+
+	cols := []ColumnMeta{
+		{ID: 0, Name: colVal, Type: common.TypeInt64},
+		{ID: 1, Name: colName, Type: common.TypeString},
+		{ID: 2, Name: colActive, Type: common.TypeBool},
+	}
+
+	seg, err := flusher.Flush(mem, cols)
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	if seg.RowCount != 3 {
+		t.Errorf("expected rowCount=3, got %d", seg.RowCount)
+	}
+
+	verifySegmentRoundTrip(t, seg)
+}
+
+// TestFlusherFlushTimestampValues 测试 Flusher 处理包含 Timestamp 值的 MemTable
+func TestFlusherFlushTimestampValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	flusher := NewFlusher(tmpDir)
+
+	now := time.Now()
+	mem := NewMemTable()
+	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
+		"ts": common.NewTimestamp(now),
+	}})
+	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
+		"ts": common.NewTimestamp(now.Add(time.Hour)),
+	}})
+	_, _, _ = mem.Put("k3", Row{Version: 1, Columns: map[string]common.Value{
+		"ts": common.NewTimestamp(now.Add(2 * time.Hour)),
+	}})
+
+	cols := []ColumnMeta{
+		{ID: 0, Name: "ts", Type: common.TypeTimestamp},
+	}
+
+	seg, err := flusher.Flush(mem, cols)
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	if seg.RowCount != 3 {
+		t.Errorf("expected rowCount=3, got %d", seg.RowCount)
+	}
+
+	verifySegmentRoundTrip(t, seg)
+}

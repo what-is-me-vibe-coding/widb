@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -384,5 +385,114 @@ func TestEngineLoadSegmentsAllCorrupt(t *testing.T) {
 	_, err := NewEngine(EngineConfig{DataDir: dir})
 	if err == nil {
 		t.Error("expected error when all segment files are corrupt")
+	}
+}
+
+// TestEngineWriteTriggersMemTableRotation 测试 Write 触发 MemTable 轮转
+func TestEngineWriteTriggersMemTableRotation(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir:         t.TempDir(),
+		MaxMemTableSize: 1, // 极小的阈值，第一次写入就触发轮转
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	// 写入足够数据以触发 MemTable 轮转
+	for i := 0; i < 5; i++ {
+		key := fmt.Sprintf("key_%d", i)
+		vals := map[string]common.Value{
+			colVal: common.NewString("a long string to increase memtable size and trigger rotation"),
+		}
+		if err := eng.Write(key, vals); err != nil {
+			t.Fatalf("write %s: %v", key, err)
+		}
+	}
+
+	// 验证写入成功
+	row, ok := eng.Get("key_0")
+	if !ok {
+		t.Fatal("key_0 not found")
+	}
+	if v, exists := row.Columns[colVal]; !exists || v.Str == "" {
+		t.Errorf("expected non-empty val, got %v", v)
+	}
+}
+
+// TestEngineWriteWALSyncError 测试 Write 在 WAL 同步失败时的行为
+func TestEngineWriteWALSyncError(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	// 关闭 WAL 以触发后续写入错误
+	_ = eng.wal.Close()
+
+	// 写入应该返回错误（WAL 已关闭）
+	err = eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(1)})
+	if err == nil {
+		t.Error("expected error when writing with closed WAL")
+	}
+}
+
+// TestEngineWriteMultipleVersions 测试 Write 递增版本号
+func TestEngineWriteMultipleVersions(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	// 写入多条记录，验证版本号递增
+	for i := 0; i < 5; i++ {
+		key := fmt.Sprintf("key_%d", i)
+		if err := eng.Write(key, map[string]common.Value{colVal: common.NewInt64(int64(i))}); err != nil {
+			t.Fatalf("write %s: %v", key, err)
+		}
+	}
+
+	// 验证最后一条记录的版本号
+	row, ok := eng.Get("key_4")
+	if !ok {
+		t.Fatal("key_4 not found")
+	}
+	if row.Version != 5 {
+		t.Errorf("expected version 5, got %d", row.Version)
+	}
+}
+
+// TestEngineWriteOverwriteKey 测试 Write 覆盖已有键
+func TestEngineWriteOverwriteKey(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	// 写入初始值
+	if err := eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(100)}); err != nil {
+		t.Fatalf("write 1: %v", err)
+	}
+
+	// 覆盖写入
+	if err := eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(200)}); err != nil {
+		t.Fatalf("write 2: %v", err)
+	}
+
+	// 验证值为最新写入
+	row, ok := eng.Get("key1")
+	if !ok {
+		t.Fatal("key1 not found")
+	}
+	if row.Columns[colVal].Int64 != 200 {
+		t.Errorf("expected 200, got %d", row.Columns[colVal].Int64)
 	}
 }

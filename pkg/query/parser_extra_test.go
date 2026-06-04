@@ -179,3 +179,120 @@ func TestPreprocessSQL(t *testing.T) {
 		}
 	}
 }
+
+// TestParseSelectWithORExpr 测试 OR 表达式解析（覆盖 convertBinaryExpr）。
+func TestParseSelectWithORExpr(t *testing.T) {
+	p := NewParser()
+	stmt, err := p.Parse("SELECT id FROM t WHERE a = 1 OR b = 2")
+	if err != nil {
+		t.Fatalf("Parse OR: %v", err)
+	}
+	sel := stmt.(*SelectStatement)
+	orExpr, ok := sel.Where.(*BinaryExpr)
+	if !ok || orExpr.Op != OpOr {
+		t.Fatalf("expected OR BinaryExpr, got %v", sel.Where)
+	}
+}
+
+// TestParseSelectWithANDExpr 测试 AND 表达式解析（覆盖 convertBinaryExpr）。
+func TestParseSelectWithANDExpr(t *testing.T) {
+	p := NewParser()
+	stmt, err := p.Parse("SELECT id FROM t WHERE a = 1 AND b = 2")
+	if err != nil {
+		t.Fatalf("Parse AND: %v", err)
+	}
+	sel := stmt.(*SelectStatement)
+	andExpr, ok := sel.Where.(*BinaryExpr)
+	if !ok || andExpr.Op != OpAnd {
+		t.Fatalf("expected AND BinaryExpr, got %v", sel.Where)
+	}
+}
+
+// TestParseSelectWithFloatVal 测试浮点数字面量解析（覆盖 convertSQLVal FloatVal 分支）。
+func TestParseSelectWithFloatVal(t *testing.T) {
+	p := NewParser()
+	stmt, err := p.Parse("SELECT 3.14")
+	if err != nil {
+		t.Fatalf("Parse float val: %v", err)
+	}
+	sel := stmt.(*SelectStatement)
+	lit, ok := sel.Columns[0].Expr.(*LiteralExpr)
+	if !ok || lit.Value.Typ != common.TypeFloat64 || lit.Value.Float64 != 3.14 {
+		t.Errorf("expected float64 3.14, got %v", sel.Columns[0].Expr)
+	}
+}
+
+// TestParseSelectWithStrVal 测试字符串字面量解析（覆盖 convertSQLVal StrVal 分支）。
+func TestParseSelectWithStrVal(t *testing.T) {
+	p := NewParser()
+	stmt, err := p.Parse("SELECT 'hello'")
+	if err != nil {
+		t.Fatalf("Parse string val: %v", err)
+	}
+	sel := stmt.(*SelectStatement)
+	lit, ok := sel.Columns[0].Expr.(*LiteralExpr)
+	if !ok || lit.Value.Typ != common.TypeString || lit.Value.Str != "hello" {
+		t.Errorf("expected string 'hello', got %v", sel.Columns[0].Expr)
+	}
+}
+
+// TestParseSelectWithNeComparison 测试 != 比较运算符解析（覆盖 convertComparisonExpr）。
+func TestParseSelectWithNeComparison(t *testing.T) {
+	p := NewParser()
+	stmt, err := p.Parse("SELECT id FROM t WHERE age != 30")
+	if err != nil {
+		t.Fatalf("Parse != comparison: %v", err)
+	}
+	sel := stmt.(*SelectStatement)
+	binExpr, ok := sel.Where.(*BinaryExpr)
+	if !ok || binExpr.Op != OpNe {
+		t.Fatalf("expected OpNe, got %v", sel.Where)
+	}
+}
+
+// TestParseSelectWithLeComparison 测试 <= 比较运算符解析（覆盖 convertComparisonExpr）。
+func TestParseSelectWithLeComparison(t *testing.T) {
+	p := NewParser()
+	stmt, err := p.Parse("SELECT id FROM t WHERE age <= 30")
+	if err != nil {
+		t.Fatalf("Parse <= comparison: %v", err)
+	}
+	sel := stmt.(*SelectStatement)
+	binExpr, ok := sel.Where.(*BinaryExpr)
+	if !ok || binExpr.Op != OpLe {
+		t.Fatalf("expected OpLe, got %v", sel.Where)
+	}
+}
+
+// TestParseSelectWithGeComparison 测试 >= 比较运算符解析（覆盖 convertComparisonExpr）。
+func TestParseSelectWithGeComparison(t *testing.T) {
+	p := NewParser()
+	stmt, err := p.Parse("SELECT id FROM t WHERE age >= 30")
+	if err != nil {
+		t.Fatalf("Parse >= comparison: %v", err)
+	}
+	sel := stmt.(*SelectStatement)
+	binExpr, ok := sel.Where.(*BinaryExpr)
+	if !ok || binExpr.Op != OpGe {
+		t.Fatalf("expected OpGe, got %v", sel.Where)
+	}
+}
+
+// TestParseLimitWithOffset 测试 LIMIT 带偏移量解析（覆盖 parseUint64 的 offset 分支）。
+func TestParseLimitWithOffset(t *testing.T) {
+	p := NewParser()
+	stmt, err := p.Parse("SELECT id FROM t LIMIT 5, 10")
+	if err != nil {
+		t.Fatalf("Parse LIMIT with offset: %v", err)
+	}
+	sel := stmt.(*SelectStatement)
+	if sel.Limit == nil {
+		t.Fatal("expected LIMIT clause")
+	}
+	if sel.Limit.Offset != 5 {
+		t.Errorf("expected offset 5, got %d", sel.Limit.Offset)
+	}
+	if sel.Limit.Count != 10 {
+		t.Errorf("expected count 10, got %d", sel.Limit.Count)
+	}
+}

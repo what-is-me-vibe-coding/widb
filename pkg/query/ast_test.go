@@ -68,6 +68,11 @@ func TestASTUnaryOp(t *testing.T) {
 	if OpNeg.String() != "-" {
 		t.Errorf("expected '-', got %q", OpNeg.String())
 	}
+	// 测试未知 UnaryOp 的默认分支
+	unknownOp := UnaryOp(99)
+	if unknownOp.String() != "?" {
+		t.Errorf("expected '?' for unknown UnaryOp, got %q", unknownOp.String())
+	}
 }
 
 func TestASTLiteralExpr(t *testing.T) {

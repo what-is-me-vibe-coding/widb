@@ -420,3 +420,59 @@ func TestCompressReduceSize(t *testing.T) {
 	}
 	t.Logf("compression ratio: %d/%d = %.2f%%", len(compressed), len(data), float64(len(compressed))*100/float64(len(data)))
 }
+
+// TestCompressEmptyData 测试压缩空数据
+func TestCompressEmptyData(t *testing.T) {
+	compressed := Compress([]byte{})
+	if compressed != nil {
+		t.Errorf("Compress([]byte{}) = %v, want nil", compressed)
+	}
+}
+
+// TestDecompressEmptyData 测试解压空数据
+func TestDecompressEmptyData(t *testing.T) {
+	result, err := Decompress(nil)
+	if err != nil {
+		t.Fatalf("Decompress(nil) failed: %v", err)
+	}
+	if result != nil {
+		t.Errorf("Decompress(nil) = %v, want nil", result)
+	}
+
+	result, err = Decompress([]byte{})
+	if err != nil {
+		t.Fatalf("Decompress([]byte{}) failed: %v", err)
+	}
+	if result != nil {
+		t.Errorf("Decompress([]byte{}) = %v, want nil", result)
+	}
+}
+
+// TestCompressLargeData 测试压缩和解压大数据
+func TestCompressLargeData(t *testing.T) {
+	// 创建 1MB 的重复数据
+	data := bytes.Repeat([]byte("large data block for compression test "), 30000)
+	compressed := Compress(data)
+	if len(compressed) == 0 {
+		t.Fatal("Compress returned empty data for large input")
+	}
+
+	decompressed, err := Decompress(compressed)
+	if err != nil {
+		t.Fatalf("Decompress large data failed: %v", err)
+	}
+
+	if !bytes.Equal(decompressed, data) {
+		t.Errorf("round-trip mismatch for large data: got %d bytes, want %d bytes", len(decompressed), len(data))
+	}
+
+	t.Logf("large data: original=%d, compressed=%d, ratio=%.2f%%", len(data), len(compressed), float64(len(compressed))*100/float64(len(data)))
+}
+
+// TestDecompressInvalidData 测试解压无效数据（应返回错误）
+func TestDecompressInvalidData(t *testing.T) {
+	_, err := Decompress([]byte{0xFF, 0xFE, 0xFD, 0xFC, 0xFB})
+	if err == nil {
+		t.Fatal("expected error for invalid compressed data")
+	}
+}

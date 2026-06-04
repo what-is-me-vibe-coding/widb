@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
@@ -305,6 +307,70 @@ func TestCatalogSnapshot(t *testing.T) {
 	_, err := c.GetTable(tableUsers)
 	if err != nil {
 		t.Error("modifying snapshot should not affect original catalog")
+	}
+}
+
+// ---- LoadCatalog 测试 ----
+
+func TestLoadCatalog_EmptyPath(t *testing.T) {
+	// 空路径应返回新的空 Catalog
+	c, err := LoadCatalog("")
+	if err != nil {
+		t.Fatalf("LoadCatalog(空路径) 不应返回错误: %v", err)
+	}
+	if c == nil {
+		t.Fatal("LoadCatalog(空路径) 返回 nil")
+	}
+	if c.Version() != 1 {
+		t.Errorf("version = %d, 期望 1", c.Version())
+	}
+	if len(c.Snapshot().Tables) != 0 {
+		t.Errorf("tables 数量 = %d, 期望 0", len(c.Snapshot().Tables))
+	}
+}
+
+func TestLoadCatalog_ValidFilePath(t *testing.T) {
+	// 先创建并持久化一个 Catalog，然后通过 LoadCatalog 加载
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+
+	c1 := NewCatalog(path)
+	err := c1.CreateTable(tableUsers, []ColumnDef{
+		{Name: "id", Type: common.TypeInt64},
+		{Name: colName, Type: common.TypeString},
+	}, []string{"id"}, TableOptions{})
+	if err != nil {
+		t.Fatalf("CreateTable 失败: %v", err)
+	}
+
+	// 从文件加载
+	c2, err := LoadCatalog(path)
+	if err != nil {
+		t.Fatalf("LoadCatalog(有效路径) 不应返回错误: %v", err)
+	}
+	tbl, err := c2.GetTable(tableUsers)
+	if err != nil {
+		t.Fatalf("GetTable 失败: %v", err)
+	}
+	if tbl.Name != tableUsers {
+		t.Errorf("表名 = %q, 期望 %q", tbl.Name, tableUsers)
+	}
+	if len(tbl.Columns) != 2 {
+		t.Errorf("列数 = %d, 期望 2", len(tbl.Columns))
+	}
+}
+
+func TestLoadCatalog_CorruptedFile(t *testing.T) {
+	// 损坏的 JSON 文件应导致 LoadCatalog 返回错误
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+	if err := os.WriteFile(path, []byte("{invalid json!!!"), 0644); err != nil {
+		t.Fatalf("WriteFile 失败: %v", err)
+	}
+
+	_, err := LoadCatalog(path)
+	if err == nil {
+		t.Error("LoadCatalog(损坏文件) 应返回错误")
 	}
 }
 
