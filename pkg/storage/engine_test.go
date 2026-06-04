@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"testing"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
@@ -186,5 +187,202 @@ func TestEngineConcurrentWrite(t *testing.T) {
 
 	for i := 0; i < n; i++ {
 		<-done
+	}
+}
+
+func TestNewEngineWithInvalidDataDir(t *testing.T) {
+	// Use a path that cannot be created as a directory
+	_, err := NewEngine(EngineConfig{
+		DataDir: "/dev/null/invalid/path",
+	})
+	if err == nil {
+		t.Error("expected error for invalid data dir")
+	}
+}
+
+func TestNewEngineWithExistingWAL(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create an engine, write some data, then close it
+	eng, err := NewEngine(EngineConfig{DataDir: dir})
+	if err != nil {
+		t.Fatalf("first NewEngine: %v", err)
+	}
+	_ = eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(42)})
+	_ = eng.Flush([]ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}})
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close first engine: %v", err)
+	}
+
+	// Reopen the engine - should recover from existing WAL
+	eng2, err := NewEngine(EngineConfig{DataDir: dir})
+	if err != nil {
+		t.Fatalf("second NewEngine: %v", err)
+	}
+	defer func() { _ = eng2.Close() }()
+
+	// Verify the segment was loaded from disk
+	if eng2.SegmentCount() < 1 {
+		t.Errorf("expected at least 1 segment, got %d", eng2.SegmentCount())
+	}
+}
+
+func TestEngineWriteWithClosedWAL(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	// Close the WAL manually to simulate error
+	_ = eng.wal.Close()
+
+	// Writing after WAL is closed should return an error
+	err = eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(1)})
+	if err == nil {
+		t.Error("expected error when writing with closed WAL")
+	}
+}
+
+func TestEngineCloseAlreadyClosedWAL(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	// Close the WAL first
+	_ = eng.wal.Close()
+
+	// Closing the engine should return an error since WAL is already closed
+	err = eng.Close()
+	if err == nil {
+		t.Error("expected error when closing engine with already-closed WAL")
+	}
+}
+
+func TestEngineFindSegmentByIDNonExistent(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	seg := eng.findSegmentByID(99999)
+	if seg != nil {
+		t.Error("expected nil for non-existent segment ID")
+	}
+}
+
+func TestEngineRotateMemTableEmpty(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	// rotateMemTable on empty memtable should return nil without adding immutable
+	err = eng.rotateMemTable()
+	if err != nil {
+		t.Fatalf("expected no error for empty memtable rotation, got: %v", err)
+	}
+	if len(eng.immutable) != 0 {
+		t.Errorf("expected 0 immutable memtables, got %d", len(eng.immutable))
+	}
+}
+
+func TestEngineLoadSegmentsFromDisk(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create an engine, write data, flush, and close
+	eng, err := NewEngine(EngineConfig{DataDir: dir})
+	if err != nil {
+		t.Fatalf("first NewEngine: %v", err)
+	}
+	_ = eng.Write("a", map[string]common.Value{colVal: common.NewInt64(1)})
+	_ = eng.Write("b", map[string]common.Value{colVal: common.NewInt64(2)})
+	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
+	if err := eng.Flush(cols); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Reopen - should load segments from disk
+	eng2, err := NewEngine(EngineConfig{DataDir: dir})
+	if err != nil {
+		t.Fatalf("second NewEngine: %v", err)
+	}
+	defer func() { _ = eng2.Close() }()
+
+	if eng2.SegmentCount() < 1 {
+		t.Errorf("expected at least 1 segment after reload, got %d", eng2.SegmentCount())
+	}
+
+	// Verify data can be read from loaded segments
+	row, ok := eng2.Get("a")
+	if !ok {
+		t.Error("key 'a' not found after reload")
+	} else if row.Columns[colVal].Int64 != 1 {
+		t.Errorf("key 'a': expected 1, got %d", row.Columns[colVal].Int64)
+	}
+}
+
+func TestEngineLoadSegmentsCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a valid segment file first by using the engine
+	eng, err := NewEngine(EngineConfig{DataDir: dir})
+	if err != nil {
+		t.Fatalf("first NewEngine: %v", err)
+	}
+	_ = eng.Write("a", map[string]common.Value{colVal: common.NewInt64(1)})
+	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
+	if err := eng.Flush(cols); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Now also create a corrupt segment file alongside the valid one
+	corruptPath := dir + "/segment_999.widb"
+	if err := os.WriteFile(corruptPath, []byte("corrupt data that is long enough"), 0644); err != nil {
+		t.Fatalf("write corrupt file: %v", err)
+	}
+
+	// Opening engine should succeed - the valid segment loads, the corrupt one is skipped
+	eng2, err := NewEngine(EngineConfig{DataDir: dir})
+	if err != nil {
+		t.Fatalf("NewEngine with corrupt segment alongside valid one: %v", err)
+	}
+	defer func() { _ = eng2.Close() }()
+
+	// The valid segment should still be loaded
+	if eng2.SegmentCount() < 1 {
+		t.Errorf("expected at least 1 valid segment, got %d", eng2.SegmentCount())
+	}
+}
+
+func TestEngineLoadSegmentsAllCorrupt(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create only corrupt segment files - all fail to load
+	corruptPath := dir + "/segment_1.widb"
+	if err := os.WriteFile(corruptPath, []byte("corrupt"), 0644); err != nil {
+		t.Fatalf("write corrupt file: %v", err)
+	}
+
+	// When all segment files fail, loadSegments should return an error
+	_, err := NewEngine(EngineConfig{DataDir: dir})
+	if err == nil {
+		t.Error("expected error when all segment files are corrupt")
 	}
 }

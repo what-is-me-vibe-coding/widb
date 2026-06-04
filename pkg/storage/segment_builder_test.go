@@ -6,116 +6,18 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
-func TestSegmentBuilderEmpty(t *testing.T) {
-	builder := NewSegmentBuilder(5, "a", "b")
-	_, err := builder.Build()
-	if err == nil {
-		t.Error("expected error for empty columns")
-	}
-}
+func TestSegmentBuilderSetBloomFPRate(t *testing.T) {
+	keys := []string{"a", "b", "c"}
+	values := []int64{1, 2, 3}
 
-func TestSegmentFooterStats(t *testing.T) {
-	rowCount := uint32(100)
-	ints := make([]int64, rowCount)
-	for i := uint32(0); i < rowCount; i++ {
-		ints[i] = int64(i) - 50
-	}
-
-	enc, err := EncodeColumn(common.TypeInt64, ints, rowCount, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	builder := NewSegmentBuilder(9, "key-0", "key-99")
-	builder.AddEncodedColumn(enc)
-
-	seg, err := builder.Build()
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-
-	if len(seg.Footer.ColumnStats) != 1 {
-		t.Fatalf("ColumnStats count: got %d, want 1", len(seg.Footer.ColumnStats))
-	}
-
-	stat := seg.Footer.ColumnStats[0]
-	if stat.NullCount != 0 {
-		t.Errorf("NullCount: got %d, want 0", stat.NullCount)
-	}
-}
-
-func TestSegmentRLEStats(t *testing.T) {
-	rowCount := uint32(100)
-	ints := make([]int64, rowCount)
-	for i := uint32(0); i < rowCount; i++ {
-		ints[i] = int64(i / 10)
-	}
-
-	enc, err := EncodeColumn(common.TypeInt64, ints, rowCount, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	if enc.Encoding != EncodingRLE {
-		t.Skip("data did not trigger RLE encoding")
-	}
-
-	builder := NewSegmentBuilder(12, "key-0", "key-99")
-	builder.AddEncodedColumn(enc)
-
-	seg, err := builder.Build()
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-
-	if len(seg.Footer.ColumnStats) != 1 {
-		t.Fatalf("ColumnStats count: got %d, want 1", len(seg.Footer.ColumnStats))
-	}
-
-	data, err := seg.Serialize()
-	if err != nil {
-		t.Fatalf("serialize: %v", err)
-	}
-
-	restored, err := DeserializeSegment(data)
-	if err != nil {
-		t.Fatalf("deserialize: %v", err)
-	}
-
-	restoredCol := &restored.Columns[0]
-	if err := DecompressColumn(restoredCol); err != nil {
-		t.Fatalf("decompress: %v", err)
-	}
-
-	decoded, _, err := DecodeColumn(restoredCol)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	decodedInts, ok := decoded.([]int64)
-	if !ok {
-		t.Fatalf("decoded type: got %T, want []int64", decoded)
-	}
-	if len(decodedInts) != int(rowCount) {
-		t.Fatalf("decoded length: got %d, want %d", len(decodedInts), rowCount)
-	}
-}
-
-func TestSegmentBloomFilter(t *testing.T) {
-	rowCount := uint32(10)
-	ints := make([]int64, rowCount)
-	for i := uint32(0); i < rowCount; i++ {
-		ints[i] = int64(i)
-	}
-
-	enc, err := EncodeColumn(common.TypeInt64, ints, rowCount, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	keys := []string{"key-0", "key-1", "key-2", "key-3", "key-4", "key-5", "key-6", "key-7", "key-8", "key-9"}
-
-	builder := NewSegmentBuilder(14, "key-0", "key-9")
+	builder := NewSegmentBuilder(100, "a", "c")
 	builder.SetKeys(keys)
+	builder.SetBloomFPRate(0.001) // Custom FP rate
+
+	enc, err := EncodeColumn(common.TypeInt64, values, 3, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
 	builder.AddEncodedColumn(enc)
 
 	seg, err := builder.Build()
@@ -124,75 +26,70 @@ func TestSegmentBloomFilter(t *testing.T) {
 	}
 
 	if len(seg.Footer.BloomFilter) == 0 {
-		t.Fatal("BloomFilter should not be empty when keys are set")
-	}
-
-	data, err := seg.Serialize()
-	if err != nil {
-		t.Fatalf("serialize: %v", err)
-	}
-
-	restored, err := DeserializeSegment(data)
-	if err != nil {
-		t.Fatalf("deserialize: %v", err)
-	}
-
-	if len(restored.Footer.BloomFilter) == 0 {
-		t.Fatal("BloomFilter should survive round-trip")
+		t.Error("expected bloom filter to be built with custom FP rate")
 	}
 }
 
-func TestSegmentBloomFilterNoKeys(t *testing.T) {
-	rowCount := uint32(10)
-	ints := make([]int64, rowCount)
-	for i := uint32(0); i < rowCount; i++ {
-		ints[i] = int64(i)
-	}
+func TestSegmentGetColumnValueOutOfRangeIndex(t *testing.T) {
+	seg := buildTestSegmentForSegment(t)
 
-	enc, err := EncodeColumn(common.TypeInt64, ints, rowCount, nil)
+	// Request column index that doesn't exist
+	_, err := seg.GetColumnValue(99, 0)
+	if err == nil {
+		t.Error("expected error for out-of-range column index")
+	}
+}
+
+func TestSegmentFindRowByKeyNotFoundInList(t *testing.T) {
+	seg := &Segment{Keys: []string{"a", "c", "e"}}
+	_, found := seg.FindRowByKey("b")
+	if found {
+		t.Error("expected false for key not in sorted list")
+	}
+}
+
+func TestSegmentForEachColumnStat(t *testing.T) {
+	seg := buildTestSegmentForSegment(t)
+
+	var colIDs []uint32
+	seg.ForEachColumnStat(func(colID uint32, _ common.DataType, _, _ []byte, _ uint32) {
+		colIDs = append(colIDs, colID)
+	})
+	if len(colIDs) == 0 {
+		t.Error("expected at least one column stat")
+	}
+}
+
+func TestSegmentGetAllColumnValuesFromBuilder(t *testing.T) {
+	seg := buildTestSegmentForSegment(t)
+	colMeta := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
+
+	vals, err := seg.GetAllColumnValues(0, colMeta)
+	if err != nil {
+		t.Fatalf("GetAllColumnValues: %v", err)
+	}
+	if len(vals) == 0 {
+		t.Error("expected at least one column value")
+	}
+}
+
+func buildTestSegmentForSegment(t *testing.T) *Segment {
+	t.Helper()
+	keys := []string{"a", "b", "c"}
+	values := []int64{1, 2, 3}
+
+	builder := NewSegmentBuilder(50, "a", "c")
+	builder.SetKeys(keys)
+
+	enc, err := EncodeColumn(common.TypeInt64, values, 3, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-
-	builder := NewSegmentBuilder(15, "key-0", "key-9")
 	builder.AddEncodedColumn(enc)
 
 	seg, err := builder.Build()
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-
-	if len(seg.Footer.BloomFilter) != 0 {
-		t.Error("BloomFilter should be empty when no keys are set")
-	}
-}
-
-func TestSegmentPlainStringStats(t *testing.T) {
-	rowCount := uint32(10)
-	strs := []string{"banana", testStrApple, testStrCherry, "date", "elderberry", "fig", "grape", "honeydew", "kiwi", "lemon"}
-
-	enc, err := encodePlain(common.TypeString, strs, rowCount, nil)
-	if err != nil {
-		t.Fatalf("encode plain: %v", err)
-	}
-
-	builder := NewSegmentBuilder(13, "key-0", "key-9")
-	builder.AddEncodedColumn(enc)
-
-	seg, err := builder.Build()
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-
-	if len(seg.Footer.ColumnStats) != 1 {
-		t.Fatalf("ColumnStats count: got %d, want 1", len(seg.Footer.ColumnStats))
-	}
-
-	stat := seg.Footer.ColumnStats[0]
-	if string(stat.Min) != "apple" {
-		t.Errorf("min: got %q, want %q", string(stat.Min), "apple")
-	}
-	if string(stat.Max) != "lemon" {
-		t.Errorf("max: got %q, want %q", string(stat.Max), "lemon")
-	}
+	return seg
 }

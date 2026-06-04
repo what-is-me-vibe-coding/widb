@@ -256,3 +256,173 @@ func TestCompactorCompactToLevel(t *testing.T) {
 		t.Errorf("expected 20 rows, got %d", newSeg.RowCount)
 	}
 }
+
+func TestCompactorWithFloat64Column(t *testing.T) {
+	dir, err := os.MkdirTemp("", "compactor_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	cols := []ColumnMeta{{ID: 0, Name: "score", Type: common.TypeFloat64}}
+	eng := setupEngine(t, dir, 64<<20)
+	writeRows(t, eng, cols, 20, 0)
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	segments := eng.Segments()
+	compactor := NewCompactor(dir)
+	newSeg, err := compactor.Compact(segments, cols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newSeg.RowCount != 20 {
+		t.Errorf("expected 20 rows, got %d", newSeg.RowCount)
+	}
+}
+
+func TestCompactorWithBoolColumn(t *testing.T) {
+	dir, err := os.MkdirTemp("", "compactor_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	cols := []ColumnMeta{{ID: 0, Name: "active", Type: common.TypeBool}}
+	eng := setupEngine(t, dir, 64<<20)
+	writeRows(t, eng, cols, 20, 0)
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	segments := eng.Segments()
+	compactor := NewCompactor(dir)
+	newSeg, err := compactor.Compact(segments, cols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newSeg.RowCount != 20 {
+		t.Errorf("expected 20 rows, got %d", newSeg.RowCount)
+	}
+}
+
+func TestCompactorWithStringColumn(t *testing.T) {
+	dir, err := os.MkdirTemp("", "compactor_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	cols := []ColumnMeta{{ID: 0, Name: "name", Type: common.TypeString}}
+	eng := setupEngine(t, dir, 64<<20)
+	writeRows(t, eng, cols, 20, 0)
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	segments := eng.Segments()
+	compactor := NewCompactor(dir)
+	newSeg, err := compactor.Compact(segments, cols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newSeg.RowCount != 20 {
+		t.Errorf("expected 20 rows, got %d", newSeg.RowCount)
+	}
+}
+
+func TestCompactorWithTimestampColumn(t *testing.T) {
+	dir, err := os.MkdirTemp("", "compactor_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	cols := []ColumnMeta{{ID: 0, Name: "ts", Type: common.TypeTimestamp}}
+	eng := setupEngine(t, dir, 64<<20)
+	writeRows(t, eng, cols, 20, 0)
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	segments := eng.Segments()
+	compactor := NewCompactor(dir)
+	newSeg, err := compactor.Compact(segments, cols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newSeg.RowCount != 20 {
+		t.Errorf("expected 20 rows, got %d", newSeg.RowCount)
+	}
+}
+
+func TestCompactorWithMissingColumn(t *testing.T) {
+	dir, err := os.MkdirTemp("", "compactor_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	// Write data with one column, then compact with a different column name
+	cols := []ColumnMeta{{ID: 0, Name: col0Name, Type: common.TypeInt64}}
+	eng := setupEngine(t, dir, 64<<20)
+	writeRows(t, eng, cols, 10, 0)
+	if err := eng.Flush(cols); err != nil {
+		t.Fatal(err)
+	}
+
+	segments := eng.Segments()
+	compactor := NewCompactor(dir)
+
+	// Compact with a different column name - should result in null values
+	compactCols := []ColumnMeta{{ID: 0, Name: "missing_col", Type: common.TypeInt64}}
+	newSeg, err := compactor.Compact(segments, compactCols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newSeg.RowCount != 10 {
+		t.Errorf("expected 10 rows, got %d", newSeg.RowCount)
+	}
+}
+
+func TestExtractValueWithNulls(t *testing.T) {
+	nulls := common.NewBitmap(4)
+	nulls.Set(1)
+	nulls.Set(3)
+
+	cd := columnData{
+		data:  []int64{10, 20, 30, 40},
+		nulls: nulls,
+		typ:   common.TypeInt64,
+	}
+
+	val := extractValue(cd, 0)
+	if val.Int64 != 10 {
+		t.Errorf("expected 10, got %d", val.Int64)
+	}
+
+	val = extractValue(cd, 1)
+	if !val.IsNull() {
+		t.Errorf("expected null at row 1, got %v", val)
+	}
+
+	val = extractValue(cd, 3)
+	if !val.IsNull() {
+		t.Errorf("expected null at row 3, got %v", val)
+	}
+}
+
+func TestExtractValueOutOfRange(t *testing.T) {
+	cd := columnData{
+		data:  []int64{10},
+		nulls: nil,
+		typ:   common.TypeInt64,
+	}
+
+	// Row index out of range
+	val := extractValue(cd, 99)
+	if !val.IsNull() {
+		t.Errorf("expected null for out-of-range row, got %v", val)
+	}
+}

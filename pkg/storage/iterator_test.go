@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"container/heap"
 	"sort"
 	"testing"
 
@@ -327,6 +328,113 @@ func TestMergeIteratorStress(t *testing.T) {
 	lastVal := results[len(results)-1].Value.Columns[colVal].Int64
 	if lastVal < 4000 {
 		t.Errorf("expected last value from highest-priority iterator (>=4000), got %d", lastVal)
+	}
+}
+
+func TestMemTableIteratorEntryBeforeNext(t *testing.T) {
+	mem := NewMemTable()
+	_, _, _ = mem.Put("a", Row{Columns: map[string]common.Value{colVal: common.NewInt64(1)}})
+
+	it := newMemTableIterator(mem, "a", "a")
+
+	// Entry() before Next() should return zero value
+	entry := it.Entry()
+	if entry.Key != "" || entry.Value.Columns != nil {
+		t.Errorf("expected zero ScanEntry before Next(), got key=%q value=%v", entry.Key, entry.Value)
+	}
+}
+
+func TestMemTableIteratorClose(_ *testing.T) {
+	mem := NewMemTable()
+	_, _, _ = mem.Put("a", Row{Columns: map[string]common.Value{colVal: common.NewInt64(1)}})
+
+	it := newMemTableIterator(mem, "a", "a")
+	// Close should not panic
+	it.Close()
+}
+
+func TestSegmentIteratorEntryBeforeNext(t *testing.T) {
+	seg := buildTestSegment(t, []string{"a", "b"}, []int64{1, 2})
+	colMeta := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
+
+	it := newSegmentIterator(seg, colMeta, "a", "b")
+
+	// Entry() before Next() should return zero value
+	entry := it.Entry()
+	if entry.Key != "" || entry.Value.Columns != nil {
+		t.Errorf("expected zero ScanEntry before Next(), got key=%q", entry.Key)
+	}
+}
+
+func TestSegmentIteratorClose(t *testing.T) {
+	seg := buildTestSegment(t, []string{"a"}, []int64{1})
+	colMeta := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
+
+	it := newSegmentIterator(seg, colMeta, "a", "a")
+	it.Close()
+}
+
+func TestMergeIteratorEntryBeforeNext(t *testing.T) {
+	entries := []ScanEntry{
+		{Key: "a", Value: Row{Columns: map[string]common.Value{colVal: common.NewInt64(1)}}},
+	}
+	it := newSliceIterator(entries)
+	mi := NewMergeIterator(it)
+	defer mi.Close()
+
+	// Entry() before Next() should return zero value
+	entry := mi.Entry()
+	if entry.Key != "" {
+		t.Errorf("expected zero ScanEntry before Next(), got key=%q", entry.Key)
+	}
+}
+
+func TestMergeIteratorPush(t *testing.T) {
+	// Test heap Push operation by creating a mergeHeap and pushing entries
+	h := make(mergeHeap, 0)
+	heap.Push(&h, &mergeHeapEntry{key: "c", index: 0})
+	heap.Push(&h, &mergeHeapEntry{key: "a", index: 1})
+	heap.Push(&h, &mergeHeapEntry{key: "b", index: 2})
+
+	if h.Len() != 3 {
+		t.Fatalf("expected heap length 3, got %d", h.Len())
+	}
+
+	// Pop should return entries in sorted order (min-heap by key)
+	first := heap.Pop(&h).(*mergeHeapEntry)
+	if first.key != "a" {
+		t.Errorf("expected first pop key 'a', got %q", first.key)
+	}
+	second := heap.Pop(&h).(*mergeHeapEntry)
+	if second.key != "b" {
+		t.Errorf("expected second pop key 'b', got %q", second.key)
+	}
+	third := heap.Pop(&h).(*mergeHeapEntry)
+	if third.key != "c" {
+		t.Errorf("expected third pop key 'c', got %q", third.key)
+	}
+}
+
+func TestSliceIteratorEntryOutOfRange(t *testing.T) {
+	entries := []ScanEntry{
+		{Key: "a", Value: Row{Columns: map[string]common.Value{colVal: common.NewInt64(1)}}},
+	}
+	it := newSliceIterator(entries)
+
+	// Entry() before Next() should return zero value
+	entry := it.Entry()
+	if entry.Key != "" {
+		t.Errorf("expected zero ScanEntry before Next(), got key=%q", entry.Key)
+	}
+
+	// Advance past all entries
+	it.Next()
+	it.Next()
+
+	// Entry() after all entries should return zero value
+	entry = it.Entry()
+	if entry.Key != "" {
+		t.Errorf("expected zero ScanEntry after all entries, got key=%q", entry.Key)
 	}
 }
 

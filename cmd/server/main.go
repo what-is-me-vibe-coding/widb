@@ -12,7 +12,7 @@ import (
 )
 
 // run 启动服务器并等待终止信号，用于支持测试。
-func run(tcpAddr, httpAddr, dataDir string, maxMemTableSize int64) error {
+func run(tcpAddr, httpAddr, dataDir string, maxMemTableSize int64, opts ...server.Option) error {
 	cfg := server.Config{
 		TCPAddr:         tcpAddr,
 		HTTPAddr:        httpAddr,
@@ -20,7 +20,7 @@ func run(tcpAddr, httpAddr, dataDir string, maxMemTableSize int64) error {
 		MaxMemTableSize: maxMemTableSize,
 	}
 
-	srv, err := server.NewServer(cfg)
+	srv, err := server.NewServer(cfg, opts...)
 	if err != nil {
 		return err
 	}
@@ -38,14 +38,26 @@ func run(tcpAddr, httpAddr, dataDir string, maxMemTableSize int64) error {
 	return srv.Stop()
 }
 
-func main() {
-	tcpAddr := flag.String("tcp", "0.0.0.0:9000", "TCP 监听地址")
-	httpAddr := flag.String("http", "0.0.0.0:8080", "HTTP 监听地址")
-	dataDir := flag.String("data", "./data", "数据目录")
-	maxMemTableSize := flag.Int64("max-memtable", 64*1024*1024, "MemTable 最大字节数")
-	flag.Parse()
+// runMainWithArgs 解析命令行参数并启动服务器，返回退出码。
+// 使用自定义 FlagSet 以支持在测试中多次调用。
+func runMainWithArgs(args []string) int {
+	fs := flag.NewFlagSet("test-db", flag.ContinueOnError)
+	tcpAddr := fs.String("tcp", "0.0.0.0:9000", "TCP 监听地址")
+	httpAddr := fs.String("http", "0.0.0.0:8080", "HTTP 监听地址")
+	dataDir := fs.String("data", "./data", "数据目录")
+	maxMemTableSize := fs.Int64("max-memtable", 64*1024*1024, "MemTable 最大字节数")
+
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	if err := run(*tcpAddr, *httpAddr, *dataDir, *maxMemTableSize); err != nil {
-		log.Fatalf("服务器错误: %v", err)
+		log.Printf("服务器错误: %v", err)
+		return 1
 	}
+	return 0
+}
+
+func main() {
+	os.Exit(runMainWithArgs(os.Args[1:]))
 }
