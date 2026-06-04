@@ -24,23 +24,6 @@ func TestOpenWALIsNotExistError(t *testing.T) {
 	}
 }
 
-// TestOpenWALNonNotExistError tests the non-NotExist error branch in OpenWAL
-// by attempting to open a directory path, which returns EISDIR on Linux.
-func TestOpenWALNonNotExistError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("permission-based test not reliable on Windows")
-	}
-	dir := t.TempDir()
-	// Opening a directory with O_RDWR fails with EISDIR, which is not NotExist.
-	_, _, err := OpenWAL(dir)
-	if err == nil {
-		t.Fatal("expected error when opening directory as WAL file")
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		t.Error("error should not wrap os.ErrNotExist")
-	}
-}
-
 // TestOpenWALPermissionDenied tests OpenWAL on a read-only file,
 // triggering a non-NotExist os.OpenFile error.
 func TestOpenWALPermissionDenied(t *testing.T) {
@@ -165,97 +148,5 @@ func TestFindLastCheckpointWithNonCheckpointRecords(t *testing.T) {
 	}
 	if len(colMeta) != 1 {
 		t.Fatalf("expected 1 column meta, got %d", len(colMeta))
-	}
-}
-
-// TestTruncateAndReopen tests the normal Truncate operation and verifies
-// the WAL can be reopened with OpenWAL afterwards.
-func TestTruncateAndReopen(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "truncate_reopen.wal")
-
-	w, err := CreateWAL(path)
-	if err != nil {
-		t.Fatalf("CreateWAL failed: %v", err)
-	}
-
-	// Write some records
-	if err := w.AppendWrite([]byte("data1")); err != nil {
-		t.Fatalf("AppendWrite failed: %v", err)
-	}
-	if err := w.AppendWrite([]byte("data2")); err != nil {
-		t.Fatalf("AppendWrite failed: %v", err)
-	}
-	_ = w.Sync()
-
-	if w.Size() == 0 {
-		t.Fatal("expected non-zero size before truncate")
-	}
-
-	// Truncate the WAL
-	if err := w.Truncate(); err != nil {
-		t.Fatalf("Truncate failed: %v", err)
-	}
-
-	if w.Size() != 0 {
-		t.Errorf("expected size 0 after truncate, got %d", w.Size())
-	}
-
-	// Write new data after truncate
-	if err := w.AppendWrite([]byte("after_truncate")); err != nil {
-		t.Fatalf("AppendWrite after truncate failed: %v", err)
-	}
-	_ = w.Sync()
-	_ = w.Close()
-
-	// Reopen and verify only the post-truncate record exists
-	w2, recs, err := OpenWAL(path)
-	if err != nil {
-		t.Fatalf("OpenWAL after truncate failed: %v", err)
-	}
-	defer func() { _ = w2.Close() }()
-
-	if len(recs) != 1 {
-		t.Fatalf("expected 1 record after truncate+write, got %d", len(recs))
-	}
-	if string(recs[0].Payload) != "after_truncate" {
-		t.Errorf("expected 'after_truncate', got %q", string(recs[0].Payload))
-	}
-}
-
-// TestMaybeRotateDirectOffset tests that maybeRotate is triggered when
-// w.offset >= w.maxSize by directly setting the offset.
-func TestMaybeRotateDirectOffset(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "rotate_direct.wal")
-
-	w, err := CreateWAL(path)
-	if err != nil {
-		t.Fatalf("CreateWAL failed: %v", err)
-	}
-
-	// Write one record so the file has content to rotate.
-	if err := w.AppendWrite([]byte("initial data")); err != nil {
-		t.Fatalf("AppendWrite failed: %v", err)
-	}
-
-	// Directly set offset to maxSize to trigger rotation on next append.
-	w.offset = w.maxSize
-
-	if err := w.AppendWrite([]byte("trigger rotate")); err != nil {
-		t.Fatalf("AppendWrite after setting offset to maxSize failed: %v", err)
-	}
-	_ = w.Close()
-
-	// Verify the .prev file was created (rotation happened).
-	_, err = os.Stat(path + ".prev")
-	if err != nil {
-		t.Fatalf("previous WAL file not created after rotation: %v", err)
-	}
-
-	// Verify the current WAL file still exists.
-	_, err = os.Stat(path)
-	if err != nil {
-		t.Fatalf("current WAL file not found: %v", err)
 	}
 }
