@@ -260,6 +260,127 @@ func TestFlusherFlushMissingColumn(t *testing.T) {
 	}
 }
 
+func TestFlusherWriteSegmentInvalidDir(t *testing.T) {
+	// Use a path where a file exists as a directory name, causing MkdirAll to fail
+	tmpFile, err := os.CreateTemp("", "flusher-blocker-*")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	tmpPath := tmpFile.Name()
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	// Use the file path as dataDir - MkdirAll will fail because it's a file
+	flusher := NewFlusher(tmpPath + "/subdir")
+
+	seg := &Segment{ID: 1}
+	_, err = flusher.writeSegment(seg)
+	if err == nil {
+		t.Error("expected error when writing segment to invalid directory")
+	}
+}
+
+func TestFlusherBuildEncodedColumnString(t *testing.T) {
+	tmpDir := t.TempDir()
+	flusher := NewFlusher(tmpDir)
+
+	mem := NewMemTable()
+	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
+		colName: common.NewString("hello"),
+	}})
+	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
+		colName: common.NewString("world"),
+	}})
+
+	cols := []ColumnMeta{
+		{ID: 0, Name: colName, Type: common.TypeString},
+	}
+
+	seg, err := flusher.Flush(mem, cols)
+	if err != nil {
+		t.Fatalf("flush string column: %v", err)
+	}
+
+	if seg.RowCount != 2 {
+		t.Errorf("expected rowCount=2, got %d", seg.RowCount)
+	}
+
+	verifySegmentRoundTrip(t, seg)
+}
+
+func TestFlusherBuildEncodedColumnBool(t *testing.T) {
+	tmpDir := t.TempDir()
+	flusher := NewFlusher(tmpDir)
+
+	mem := NewMemTable()
+	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
+		colActive: common.NewBool(true),
+	}})
+	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
+		colActive: common.NewBool(false),
+	}})
+
+	cols := []ColumnMeta{
+		{ID: 0, Name: colActive, Type: common.TypeBool},
+	}
+
+	seg, err := flusher.Flush(mem, cols)
+	if err != nil {
+		t.Fatalf("flush bool column: %v", err)
+	}
+
+	verifySegmentRoundTrip(t, seg)
+}
+
+func TestFlusherBuildEncodedColumnFloat64(t *testing.T) {
+	tmpDir := t.TempDir()
+	flusher := NewFlusher(tmpDir)
+
+	mem := NewMemTable()
+	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
+		colScore: common.NewFloat64(3.14),
+	}})
+	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
+		colScore: common.NewFloat64(2.71),
+	}})
+
+	cols := []ColumnMeta{
+		{ID: 0, Name: colScore, Type: common.TypeFloat64},
+	}
+
+	seg, err := flusher.Flush(mem, cols)
+	if err != nil {
+		t.Fatalf("flush float64 column: %v", err)
+	}
+
+	verifySegmentRoundTrip(t, seg)
+}
+
+func TestFlusherBuildEncodedColumnTimestamp(t *testing.T) {
+	tmpDir := t.TempDir()
+	flusher := NewFlusher(tmpDir)
+
+	now := time.Now()
+	mem := NewMemTable()
+	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
+		"ts": common.NewTimestamp(now),
+	}})
+	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
+		"ts": common.NewTimestamp(now.Add(time.Hour)),
+	}})
+
+	cols := []ColumnMeta{
+		{ID: 0, Name: "ts", Type: common.TypeTimestamp},
+	}
+
+	seg, err := flusher.Flush(mem, cols)
+	if err != nil {
+		t.Fatalf("flush timestamp column: %v", err)
+	}
+
+	verifySegmentRoundTrip(t, seg)
+}
+
 func verifySegmentRoundTrip(t *testing.T, seg *Segment) {
 	t.Helper()
 

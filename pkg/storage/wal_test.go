@@ -318,3 +318,141 @@ func TestWALCorruptedCRC(t *testing.T) {
 		t.Errorf("expected 0 valid records after CRC corruption, got %d", len(recs))
 	}
 }
+
+func TestOpenWALWithExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	// Create and write some records
+	w, err := CreateWAL(path)
+	if err != nil {
+		t.Fatalf("CreateWAL failed: %v", err)
+	}
+	_ = w.AppendWrite([]byte("record1"))
+	_ = w.AppendWrite([]byte("record2"))
+	_ = w.AppendCheckpoint([]byte("checkpoint1"))
+	_ = w.Sync()
+	_ = w.Close()
+
+	// Open existing WAL file
+	recovered, recs, err := OpenWAL(path)
+	if err != nil {
+		t.Fatalf("OpenWAL failed: %v", err)
+	}
+	defer func() { _ = recovered.Close() }()
+
+	if len(recs) != 3 {
+		t.Fatalf("expected 3 records, got %d", len(recs))
+	}
+
+	if recs[0].Type != walTypeWrite || string(recs[0].Payload) != "record1" {
+		t.Errorf("record 0: unexpected type=%d payload=%q", recs[0].Type, recs[0].Payload)
+	}
+	if recs[2].Type != walTypeCheckpoint {
+		t.Errorf("record 2: expected checkpoint type, got %d", recs[2].Type)
+	}
+
+	// Verify the WAL can still be appended to
+	if err := recovered.AppendWrite([]byte("record3")); err != nil {
+		t.Fatalf("AppendWrite after OpenWAL failed: %v", err)
+	}
+}
+
+func TestCreateWALInvalidDir(t *testing.T) {
+	// Try to create WAL in a non-existent directory
+	_, err := CreateWAL("/nonexistent/dir/test.wal")
+	if err == nil {
+		t.Error("expected error creating WAL in invalid directory")
+	}
+}
+
+func TestWALMaybeRotate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	w, err := CreateWAL(path)
+	if err != nil {
+		t.Fatalf("CreateWAL failed: %v", err)
+	}
+
+	// Set a very small max size to trigger rotation quickly
+	w.maxSize = walMetaSize + 50
+
+	// Write enough data to trigger rotation
+	for i := 0; i < 5; i++ {
+		if err := w.AppendWrite([]byte("test data for rotation")); err != nil {
+			t.Fatalf("AppendWrite #%d failed: %v", i, err)
+		}
+	}
+
+	_ = w.Close()
+
+	// Verify the .prev file was created (rotation happened)
+	_, err = os.Stat(path + ".prev")
+	if err != nil {
+		t.Fatalf("previous WAL file not created after rotation: %v", err)
+	}
+
+	// Verify the current WAL file still exists
+	_, err = os.Stat(path)
+	if err != nil {
+		t.Fatalf("current WAL file not found: %v", err)
+	}
+}
+
+func TestWALTruncate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	w, err := CreateWAL(path)
+	if err != nil {
+		t.Fatalf("CreateWAL failed: %v", err)
+	}
+
+	// Write some data
+	_ = w.AppendWrite([]byte("data to be truncated"))
+	_ = w.Sync()
+
+	if w.Size() == 0 {
+		t.Fatal("expected non-zero size before truncate")
+	}
+
+	// Truncate the WAL
+	if err := w.Truncate(); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	if w.Size() != 0 {
+		t.Errorf("expected size 0 after truncate, got %d", w.Size())
+	}
+
+	// Verify we can still write after truncation
+	if err := w.AppendWrite([]byte("after truncate")); err != nil {
+		t.Fatalf("AppendWrite after truncate failed: %v", err)
+	}
+
+	_ = w.Close()
+}
+
+func TestWALSize(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	w, err := CreateWAL(path)
+	if err != nil {
+		t.Fatalf("CreateWAL failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	initialSize := w.Size()
+	if initialSize != 0 {
+		t.Errorf("expected initial size 0, got %d", initialSize)
+	}
+
+	_ = w.AppendWrite([]byte("test"))
+
+	afterSize := w.Size()
+	if afterSize <= initialSize {
+		t.Errorf("expected size to increase after write, got %d", afterSize)
+	}
+}
