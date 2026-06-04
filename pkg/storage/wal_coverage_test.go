@@ -27,7 +27,7 @@ func TestOpenWALIsNotExistError(t *testing.T) {
 // TestOpenWALPermissionDenied tests OpenWAL on a read-only file,
 // triggering a non-NotExist os.OpenFile error.
 func TestOpenWALPermissionDenied(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == skipWindows {
 		t.Skip("permission-based test not reliable on Windows")
 	}
 	if os.Getuid() == 0 {
