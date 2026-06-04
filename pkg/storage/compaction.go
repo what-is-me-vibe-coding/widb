@@ -23,6 +23,15 @@ type Compactor struct {
 	nextID  uint64
 }
 
+// SetNextID updates the compactor's nextID if the given id is larger.
+func (c *Compactor) SetNextID(id uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if id > c.nextID {
+		c.nextID = id
+	}
+}
+
 // NewCompactor 创建一个 Compactor 实例。
 func NewCompactor(dataDir string) *Compactor {
 	return &Compactor{dataDir: dataDir}

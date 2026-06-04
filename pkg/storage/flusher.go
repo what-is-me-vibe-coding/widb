@@ -29,6 +29,13 @@ type Flusher struct {
 	nextID  uint64
 }
 
+// NextID returns the next segment ID under the flusher's mutex.
+func (f *Flusher) NextID() uint64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.nextID
+}
+
 // NewFlusher 创建一个 Flusher 实例。
 func NewFlusher(dataDir string) *Flusher {
 	return &Flusher{dataDir: dataDir}

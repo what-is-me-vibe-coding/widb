@@ -332,9 +332,7 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 	e.mu.Lock()
 
 	// Sync compactor nextID with flusher to avoid segment ID conflicts
-	if e.flusher.nextID > e.compactor.nextID {
-		e.compactor.nextID = e.flusher.nextID
-	}
+	e.compactor.SetNextID(e.flusher.NextID())
 
 	l0Segments, l0Indices := e.collectL0Segments()
 	if len(l0Segments) == 0 {
