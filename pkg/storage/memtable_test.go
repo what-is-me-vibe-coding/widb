@@ -231,7 +231,7 @@ func TestMemTableSize(t *testing.T) {
 	row := Row{
 		Version: 1,
 		Columns: map[string]common.Value{
-			colName: common.NewString("hello"),
+			colName: common.NewString(testStrHello),
 		},
 	}
 

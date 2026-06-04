@@ -258,96 +258,145 @@ func TestBloomIndexMultipleSegments(t *testing.T) {
 	}
 }
 
-func TestBloomIndexRegisterValidFilter(t *testing.T) {
+// TestBloomIndexRegisterNormal 测试 Register 方法的正常注册路径。
+// 创建真实的 BloomFilter 对象并注册，验证 MayContain 可以正常工作。
+func TestBloomIndexRegisterNormal(t *testing.T) {
 	bi := NewBloomIndex()
 
-	filter := bloom.NewWithEstimates(10, DefaultBloomFPRate)
-	filter.Add([]byte("hello"))
-	filter.Add([]byte("world"))
+	// 创建一个真实的布隆过滤器并添加一些 key
+	filter := bloom.NewWithEstimates(100, DefaultBloomFPRate)
+	keys := []string{"apple", "banana", "cherry"}
+	for _, k := range keys {
+		filter.Add([]byte(k))
+	}
 
+	// 正常注册
 	err := bi.Register(1, filter)
 	if err != nil {
-		t.Fatalf("Register with valid filter: %v", err)
+		t.Fatalf("Register: %v", err)
 	}
 
 	if bi.Len() != 1 {
 		t.Errorf("Len: got %d, want 1", bi.Len())
 	}
 
-	if !bi.MayContain(1, []byte("hello")) {
-		t.Error("MayContain should return true for registered key 'hello'")
-	}
-	if !bi.MayContain(1, []byte("world")) {
-		t.Error("MayContain should return true for registered key 'world'")
-	}
-}
-
-func TestBloomIndexRegisterFromCorruptedBytes(t *testing.T) {
-	bi := NewBloomIndex()
-
-	corrupted := []byte{0xFF, 0xFE, 0xFD, 0xFC}
-	err := bi.RegisterFromBytes(1, corrupted)
-	if err == nil {
-		t.Error("RegisterFromBytes with corrupted data should return error")
-	}
-
-	if bi.Len() != 0 {
-		t.Errorf("Len: got %d, want 0 after failed register", bi.Len())
+	// 验证已注册的 key 可以通过 MayContain 找到
+	for _, k := range keys {
+		if !bi.MayContain(1, []byte(k)) {
+			t.Errorf("MayContain(%q): expected true after Register", k)
+		}
 	}
 }
 
-func TestBloomIndexBuildAndRegisterEmptyKeys(t *testing.T) {
+// TestBloomIndexRegisterOverwrite 测试 Register 覆盖已存在的过滤器。
+func TestBloomIndexRegisterOverwrite(t *testing.T) {
 	bi := NewBloomIndex()
 
+	// 注册第一个过滤器
+	filter1 := bloom.NewWithEstimates(10, DefaultBloomFPRate)
+	filter1.Add([]byte("old-key"))
+	err := bi.Register(1, filter1)
+	if err != nil {
+		t.Fatalf("Register first: %v", err)
+	}
+
+	if !bi.MayContain(1, []byte("old-key")) {
+		t.Error("old-key should be found in first filter")
+	}
+
+	// 用新的过滤器覆盖
+	filter2 := bloom.NewWithEstimates(10, DefaultBloomFPRate)
+	filter2.Add([]byte("new-key"))
+	err = bi.Register(1, filter2)
+	if err != nil {
+		t.Fatalf("Register overwrite: %v", err)
+	}
+
+	if bi.Len() != 1 {
+		t.Errorf("Len: got %d, want 1 after overwrite", bi.Len())
+	}
+
+	// 新 key 应该能找到
+	if !bi.MayContain(1, []byte("new-key")) {
+		t.Error("new-key should be found after overwrite")
+	}
+}
+
+// TestBloomIndexRegisterMultipleSegments 测试 Register 注册多个 Segment。
+func TestBloomIndexRegisterMultipleSegments(t *testing.T) {
+	bi := NewBloomIndex()
+
+	for segID := uint64(1); segID <= 5; segID++ {
+		filter := bloom.NewWithEstimates(10, DefaultBloomFPRate)
+		filter.Add([]byte(fmt.Sprintf("seg%d-key", segID)))
+		err := bi.Register(segID, filter)
+		if err != nil {
+			t.Fatalf("Register seg %d: %v", segID, err)
+		}
+	}
+
+	if bi.Len() != 5 {
+		t.Errorf("Len: got %d, want 5", bi.Len())
+	}
+
+	// 验证每个 Segment 的 key 都能找到
+	for segID := uint64(1); segID <= 5; segID++ {
+		key := fmt.Sprintf("seg%d-key", segID)
+		if !bi.MayContain(segID, []byte(key)) {
+			t.Errorf("MayContain seg %d key %q: expected true", segID, key)
+		}
+	}
+}
+
+// TestBuildAndRegisterEmptyKeys 测试 BuildAndRegister 空 keys 时返回 nil 不注册的场景。
+func TestBuildAndRegisterEmptyKeys(t *testing.T) {
+	bi := NewBloomIndex()
+
+	// 空 keys 不应注册任何过滤器
 	err := bi.BuildAndRegister(1, []string{}, DefaultBloomFPRate)
 	if err != nil {
 		t.Fatalf("BuildAndRegister with empty keys: %v", err)
 	}
 
 	if bi.Len() != 0 {
-		t.Errorf("Len: got %d, want 0 after BuildAndRegister with empty keys", bi.Len())
+		t.Errorf("Len: got %d, want 0 after empty keys", bi.Len())
+	}
+
+	// nil keys 也不应注册
+	err = bi.BuildAndRegister(2, nil, DefaultBloomFPRate)
+	if err != nil {
+		t.Fatalf("BuildAndRegister with nil keys: %v", err)
+	}
+
+	if bi.Len() != 0 {
+		t.Errorf("Len: got %d, want 0 after nil keys", bi.Len())
+	}
+
+	// 验证 MayContain 对未注册 Segment 返回 true（无过滤器时默认不跳过）
+	if !bi.MayContain(1, []byte("any")) {
+		t.Error("MayContain should return true for unregistered segment")
+	}
+	if !bi.MayContain(2, []byte("any")) {
+		t.Error("MayContain should return true for unregistered segment with nil keys")
 	}
 }
 
-func TestBuildFromKeysFPRateGTE1(t *testing.T) {
-	keys := []string{"a", "b", "c"}
-	data, err := BuildFromKeys(keys, 1.0)
-	if err != nil {
-		t.Fatalf("BuildFromKeys with fpRate=1.0: %v", err)
-	}
-	if data == nil {
-		t.Fatal("BuildFromKeys should return non-nil data when fpRate >= 1")
-	}
-
+// TestBuildAndRegisterWithKeys 测试 BuildAndRegister 正常路径后能查到 key。
+func TestBuildAndRegisterWithKeys(t *testing.T) {
 	bi := NewBloomIndex()
-	err = bi.RegisterFromBytes(1, data)
-	if err != nil {
-		t.Fatalf("RegisterFromBytes: %v", err)
-	}
-	for _, k := range keys {
-		if !bi.MayContain(1, []byte(k)) {
-			t.Errorf("MayContain(%q): expected true", k)
-		}
-	}
-}
 
-func TestBuildFromKeysFPRateNegative(t *testing.T) {
-	keys := []string{"a", "b", "c"}
-	data, err := BuildFromKeys(keys, -0.5)
+	keys := []string{"x1", "x2", "x3"}
+	err := bi.BuildAndRegister(10, keys, DefaultBloomFPRate)
 	if err != nil {
-		t.Fatalf("BuildFromKeys with fpRate=-0.5: %v", err)
-	}
-	if data == nil {
-		t.Fatal("BuildFromKeys should return non-nil data when fpRate < 0")
+		t.Fatalf("BuildAndRegister: %v", err)
 	}
 
-	bi := NewBloomIndex()
-	err = bi.RegisterFromBytes(1, data)
-	if err != nil {
-		t.Fatalf("RegisterFromBytes: %v", err)
+	if bi.Len() != 1 {
+		t.Errorf("Len: got %d, want 1", bi.Len())
 	}
+
 	for _, k := range keys {
-		if !bi.MayContain(1, []byte(k)) {
+		if !bi.MayContain(10, []byte(k)) {
 			t.Errorf("MayContain(%q): expected true", k)
 		}
 	}

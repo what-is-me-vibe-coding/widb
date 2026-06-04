@@ -202,7 +202,7 @@ func TestColumnVectorSetValue(t *testing.T) {
 		{"Int64", common.TypeInt64, common.NewInt64(42)},
 		{testNameFloat64, common.TypeFloat64, common.NewFloat64(3.14)},
 		{testNameBool, common.TypeBool, common.NewBool(true)},
-		{testNameString, common.TypeString, common.NewString("hello")},
+		{testNameString, common.TypeString, common.NewString(testStrHello)},
 		{testNameTimestamp, common.TypeTimestamp, common.NewTimestamp(time.Now())},
 		{"Null", common.TypeInt64, common.NewNull()},
 	}

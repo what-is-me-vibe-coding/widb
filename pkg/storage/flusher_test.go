@@ -247,7 +247,7 @@ func TestFlusherFlushMissingColumn(t *testing.T) {
 	}})
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "missing_col", Type: common.TypeInt64},
+		{ID: 0, Name: testColMissing, Type: common.TypeInt64},
 	}
 
 	seg, err := flusher.Flush(mem, cols)
@@ -286,7 +286,7 @@ func TestFlusherBuildEncodedColumnString(t *testing.T) {
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
-		colName: common.NewString("hello"),
+		colName: common.NewString(testStrHello),
 	}})
 	_, _, _ = mem.Put("k2", Row{Version: 1, Columns: map[string]common.Value{
 		colName: common.NewString("world"),

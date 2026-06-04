@@ -141,7 +141,7 @@ func TestCrashRecovery_MultipleDataTypes(t *testing.T) {
 	// Write with different data types
 	_ = eng.Write("int_key", map[string]common.Value{colVal: common.NewInt64(42)})
 	_ = eng.Write("float_key", map[string]common.Value{colVal: common.NewFloat64(3.14)})
-	_ = eng.Write("string_key", map[string]common.Value{colVal: common.NewString("hello")})
+	_ = eng.Write("string_key", map[string]common.Value{colVal: common.NewString(testStrHello)})
 	_ = eng.Write("bool_key", map[string]common.Value{colVal: common.NewBool(true)})
 
 	if err := eng.Close(); err != nil {

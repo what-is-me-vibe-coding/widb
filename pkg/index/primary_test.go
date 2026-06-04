@@ -252,3 +252,60 @@ func sliceEqual(a, b []uint64) bool {
 	}
 	return true
 }
+
+// TestRangeOverlap 测试 rangeOverlap 函数的各种范围重叠情况。
+func TestRangeOverlap(t *testing.T) {
+	tests := []struct {
+		name   string
+		start  string
+		end    string
+		minKey string
+		maxKey string
+		want   bool
+	}{
+		{name: "完全重叠", start: "a", end: "z", minKey: "a", maxKey: "z", want: true},
+		{name: "查询范围在Segment内部", start: "c", end: "h", minKey: "a", maxKey: "z", want: true},
+		{name: "Segment范围在查询内部", start: "a", end: "z", minKey: "c", maxKey: "h", want: true},
+		{name: "左边界重叠", start: "a", end: "c", minKey: "c", maxKey: "z", want: true},
+		{name: "右边界重叠", start: "h", end: "z", minKey: "a", maxKey: "h", want: true},
+		{name: "查询左部与Segment右部重叠", start: "d", end: "f", minKey: "a", maxKey: "e", want: true},
+		{name: "查询右部与Segment左部重叠", start: "a", end: "e", minKey: "c", maxKey: "h", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rangeOverlap(tt.start, tt.end, tt.minKey, tt.maxKey)
+			if got != tt.want {
+				t.Errorf("rangeOverlap(%q, %q, %q, %q) = %v, want %v",
+					tt.start, tt.end, tt.minKey, tt.maxKey, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRangeOverlap_NoOverlapAndEdge(t *testing.T) {
+	tests := []struct {
+		name   string
+		start  string
+		end    string
+		minKey string
+		maxKey string
+		want   bool
+	}{
+		{name: "查询在Segment左侧无重叠", start: "a", end: "b", minKey: "c", maxKey: "z", want: false},
+		{name: "查询在Segment右侧无重叠", start: "m", end: "z", minKey: "a", maxKey: "f", want: false},
+		{name: "严格不相邻无重叠", start: "a", end: "b", minKey: "d", maxKey: "e", want: false},
+		{name: "Segment范围为空", start: "a", end: "z", minKey: "", maxKey: "", want: false},
+		{name: "单点重叠", start: "e", end: "e", minKey: "e", maxKey: "e", want: true},
+		{name: "单点在Segment范围内", start: "e", end: "e", minKey: "a", maxKey: "z", want: true},
+		{name: "单点不在Segment范围内", start: "0", end: "0", minKey: "a", maxKey: "z", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rangeOverlap(tt.start, tt.end, tt.minKey, tt.maxKey)
+			if got != tt.want {
+				t.Errorf("rangeOverlap(%q, %q, %q, %q) = %v, want %v",
+					tt.start, tt.end, tt.minKey, tt.maxKey, got, tt.want)
+			}
+		})
+	}
+}
