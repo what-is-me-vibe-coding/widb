@@ -107,11 +107,7 @@ func TestLoadFromFile_NilTablesMap(t *testing.T) {
 	}
 }
 
-func TestSaveAndLoad_RoundTripMultipleTables(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "catalog.json")
-
-	// Build a Database with multiple tables.
+func buildMultiTableDB() *Database {
 	db := NewDatabase()
 	db.Tables["users"] = &Table{
 		Name:       "users",
@@ -135,8 +131,14 @@ func TestSaveAndLoad_RoundTripMultipleTables(t *testing.T) {
 		Version: 1,
 	}
 	db.Version = 3
+	return db
+}
 
-	// Save and reload.
+func TestSaveAndLoad_RoundTripMultipleTables(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+	db := buildMultiTableDB()
+
 	if err := saveToFile(path, db); err != nil {
 		t.Fatalf("saveToFile() error = %v", err)
 	}
@@ -145,53 +147,75 @@ func TestSaveAndLoad_RoundTripMultipleTables(t *testing.T) {
 		t.Fatalf("loadFromFile() error = %v", err)
 	}
 
-	// Verify top-level fields.
 	if loaded.Version != 3 {
 		t.Errorf("version = %d, want 3", loaded.Version)
 	}
 	if len(loaded.Tables) != 2 {
 		t.Fatalf("tables count = %d, want 2", len(loaded.Tables))
 	}
+}
 
-	// Verify users table.
-	users, ok := loaded.Tables["users"]
-	if !ok {
+func TestSaveAndLoad_UsersTable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+	db := buildMultiTableDB()
+
+	if err := saveToFile(path, db); err != nil {
+		t.Fatalf("saveToFile: %v", err)
+	}
+	loaded, err := loadFromFile(path)
+	if err != nil {
+		t.Fatalf("loadFromFile: %v", err)
+	}
+
+	users := loaded.Tables["users"]
+	if users == nil {
 		t.Fatal("users table not found")
 	}
 	if users.Name != "users" {
-		t.Errorf("users.Name = %q, want %q", users.Name, "users")
+		t.Errorf("Name = %q, want %q", users.Name, "users")
 	}
 	if len(users.Columns) != 2 {
-		t.Errorf("users columns count = %d, want 2", len(users.Columns))
+		t.Errorf("columns = %d, want 2", len(users.Columns))
 	}
 	if len(users.PrimaryKey) != 1 || users.PrimaryKey[0] != "id" {
-		t.Errorf("users primary key = %v, want [id]", users.PrimaryKey)
+		t.Errorf("primary key = %v, want [id]", users.PrimaryKey)
 	}
 	if len(users.SegmentList) != 2 {
-		t.Fatalf("users segment count = %d, want 2", len(users.SegmentList))
+		t.Fatalf("segments = %d, want 2", len(users.SegmentList))
 	}
-	if users.SegmentList[0].ID != 1 {
-		t.Errorf("users segment[0].ID = %d, want 1", users.SegmentList[0].ID)
-	}
-	if users.SegmentList[1].ID != 2 {
-		t.Errorf("users segment[1].ID = %d, want 2", users.SegmentList[1].ID)
+	if users.SegmentList[0].ID != 1 || users.SegmentList[1].ID != 2 {
+		t.Errorf("segment IDs = %d,%d, want 1,2", users.SegmentList[0].ID, users.SegmentList[1].ID)
 	}
 	if users.Options.MaxSegmentSize != 4096 {
-		t.Errorf("users MaxSegmentSize = %d, want 4096", users.Options.MaxSegmentSize)
+		t.Errorf("MaxSegmentSize = %d, want 4096", users.Options.MaxSegmentSize)
+	}
+}
+
+func TestSaveAndLoad_OrdersTable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+	db := buildMultiTableDB()
+
+	if err := saveToFile(path, db); err != nil {
+		t.Fatalf("saveToFile: %v", err)
+	}
+	loaded, err := loadFromFile(path)
+	if err != nil {
+		t.Fatalf("loadFromFile: %v", err)
 	}
 
-	// Verify orders table.
-	orders, ok := loaded.Tables["orders"]
-	if !ok {
+	orders := loaded.Tables["orders"]
+	if orders == nil {
 		t.Fatal("orders table not found")
 	}
 	if len(orders.Columns) != 2 {
-		t.Errorf("orders columns count = %d, want 2", len(orders.Columns))
+		t.Errorf("columns = %d, want 2", len(orders.Columns))
 	}
 	if len(orders.SegmentList) != 1 {
-		t.Errorf("orders segment count = %d, want 1", len(orders.SegmentList))
+		t.Errorf("segments = %d, want 1", len(orders.SegmentList))
 	}
 	if orders.SegmentList[0].ID != 10 {
-		t.Errorf("orders segment[0].ID = %d, want 10", orders.SegmentList[0].ID)
+		t.Errorf("segment ID = %d, want 10", orders.SegmentList[0].ID)
 	}
 }
