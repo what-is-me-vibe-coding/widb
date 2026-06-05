@@ -43,8 +43,10 @@ func TestSaveToFileReadOnlyDir(t *testing.T) {
 	}
 }
 
-// TestSaveToFileWriteToReadOnlyPath 测试写入只读文件时的错误路径
-func TestSaveToFileWriteToReadOnlyPath(t *testing.T) {
+// TestSaveToFileWriteToReadOnlyDir 测试写入只读目录时的错误路径
+// saveToFile 使用原子 rename 模式（先写临时文件再 rename），只读文件权限不会阻止 rename 替换文件，
+// 因此改为测试只读目录场景，确保 MkdirAll 或临时文件写入失败。
+func TestSaveToFileWriteToReadOnlyDir(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("权限测试在 Windows 上不可靠")
 	}
@@ -53,9 +55,13 @@ func TestSaveToFileWriteToReadOnlyPath(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, testCatalogFile)
+	readonlyDir := filepath.Join(dir, "readonly")
+	if err := os.Mkdir(readonlyDir, 0555); err != nil {
+		t.Fatalf("Mkdir 失败: %v", err)
+	}
+	defer func() { _ = os.Chmod(readonlyDir, 0755) }()
 
-	// 先创建并写入有效数据
+	path := filepath.Join(readonlyDir, "sub", testCatalogFile)
 	db := NewDatabase()
 	db.Tables[testTableT1] = &Table{
 		Name:       testTableT1,
@@ -63,20 +69,10 @@ func TestSaveToFileWriteToReadOnlyPath(t *testing.T) {
 		PrimaryKey: []string{"id"},
 		Version:    1,
 	}
-	if err := saveToFile(path, db); err != nil {
-		t.Fatalf("第一次 saveToFile 失败: %v", err)
-	}
 
-	// 将文件设为只读
-	if err := os.Chmod(path, 0444); err != nil {
-		t.Fatalf("Chmod 失败: %v", err)
-	}
-	defer func() { _ = os.Chmod(path, 0644) }() // 恢复权限以便清理
-
-	// 尝试再次保存应失败
 	err := saveToFile(path, db)
 	if err == nil {
-		t.Error("saveToFile 应在只读文件下返回错误")
+		t.Error("saveToFile 应在只读目录下返回错误")
 	}
 }
 
