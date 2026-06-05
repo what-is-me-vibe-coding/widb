@@ -15,6 +15,7 @@ const (
 	walTypeWrite      byte = 1
 	walTypeCommit     byte = 2
 	walTypeCheckpoint byte = 3
+	walTypeBatchWrite byte = 4
 
 	walHeaderSize = 4 // 4 字节记录长度
 	walTypeSize   = 1
@@ -37,6 +38,12 @@ type WAL struct {
 
 // RawRecord 表示从 WAL 文件中回放的一条原始记录。
 type RawRecord struct {
+	Type    byte
+	Payload []byte
+}
+
+// BatchRecord 是批量写入的单条记录。
+type BatchRecord struct {
 	Type    byte
 	Payload []byte
 }
@@ -111,6 +118,29 @@ func (w *WAL) Append(tp byte, payload []byte) error {
 		return fmt.Errorf("wal write: %w", err)
 	}
 	w.offset += int64(n)
+	return nil
+}
+
+// AppendBatch 批量追加多条记录，在单次锁获取内写入，减少锁竞争。
+func (w *WAL) AppendBatch(records []BatchRecord) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if err := w.maybeRotate(); err != nil {
+		return err
+	}
+
+	for _, rec := range records {
+		if len(rec.Payload) > maxRecordPayload {
+			return fmt.Errorf("wal append batch: payload too large (%d bytes)", len(rec.Payload))
+		}
+		buf := encodeRecord(rec.Type, rec.Payload)
+		n, err := w.file.Write(buf)
+		if err != nil {
+			return fmt.Errorf("wal write batch: %w", err)
+		}
+		w.offset += int64(n)
+	}
 	return nil
 }
 

@@ -137,7 +137,6 @@ func (e *Engine) Get(key string) (Row, bool) {
 
 	return e.getFromSegments(key)
 }
-
 func (e *Engine) getFromSegments(key string) (Row, bool) {
 	segIDs := e.primaryIndex.Lookup(key)
 	if len(segIDs) == 0 {
@@ -181,7 +180,6 @@ func (e *Engine) getFromSegments(key string) (Row, bool) {
 
 	return Row{}, false
 }
-
 func (e *Engine) findSegmentByID(segID uint64) *Segment {
 	for _, seg := range e.segments {
 		if seg.ID == segID {
@@ -274,7 +272,6 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 
 	return nil
 }
-
 func (e *Engine) registerSegmentIndexes(seg *Segment, level int) {
 	segMeta := index.SegmentMeta{
 		ID:     seg.ID,
@@ -290,7 +287,6 @@ func (e *Engine) registerSegmentIndexes(seg *Segment, level int) {
 
 	e.sparseIndex.LoadFromSegment(seg, seg.MinKey, seg.MaxKey, level)
 }
-
 func (e *Engine) unregisterSegmentIndexes(segID uint64) {
 	_ = e.primaryIndex.UnregisterSegment(segID)
 	e.bloomIndex.Unregister(segID)
@@ -435,18 +431,15 @@ func (e *Engine) ColumnMeta() []ColumnMeta {
 	copy(result, e.columnMeta)
 	return result
 }
-
 func (e *Engine) rotateMemTable() error {
 	if e.activeMem.Len() == 0 {
 		return nil
 	}
-
 	e.activeMem.Freeze()
 	e.immutable = append(e.immutable, e.activeMem)
 	e.activeMem = NewMemTableWithSize(e.activeMem.maxSize)
 	return nil
 }
-
 func (e *Engine) l0Count() int {
 	count := 0
 	for _, lvl := range e.segmentLevels {
@@ -456,7 +449,6 @@ func (e *Engine) l0Count() int {
 	}
 	return count
 }
-
 func (e *Engine) collectL0Segments() ([]*Segment, []int) {
 	var segments []*Segment
 	var indices []int
@@ -468,7 +460,6 @@ func (e *Engine) collectL0Segments() ([]*Segment, []int) {
 	}
 	return segments, indices
 }
-
 func (e *Engine) collectL1Segments() ([]*Segment, []int) {
 	var segments []*Segment
 	var indices []int

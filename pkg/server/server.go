@@ -391,24 +391,24 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
 	}
 
-	written := 0
+	writeRows := make([]storage.WriteRow, 0, len(req.Rows))
 	for _, row := range req.Rows {
 		key, values, convErr := s.convertWriteRow(tbl, row)
 		if convErr != nil {
 			s.metrics.WritesTotal.WithLabelValues("convert_error").Inc()
 			return &Response{Code: -1, Message: fmt.Sprintf("行数据转换错误: %v", convErr)}, nil
 		}
-
-		if writeErr := s.storage.Write(key, values); writeErr != nil {
-			s.metrics.WritesTotal.WithLabelValues("write_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", writeErr)}, nil
-		}
-		written++
+		writeRows = append(writeRows, storage.WriteRow{Key: key, Values: values})
 	}
 
-	s.metrics.WritesTotal.WithLabelValues("success").Add(float64(written))
+	if err := s.storage.WriteBatch(writeRows); err != nil {
+		s.metrics.WritesTotal.WithLabelValues("write_error").Inc()
+		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
+	}
+
+	s.metrics.WritesTotal.WithLabelValues("success").Add(float64(len(writeRows)))
 	s.metrics.WriteDuration.WithLabelValues("success").Observe(time.Since(start).Seconds())
-	return &Response{Code: 0, Rows: written}, nil
+	return &Response{Code: 0, Rows: len(writeRows)}, nil
 }
 
 // convertWriteRow 将 JSON 行数据转换为存储引擎需要的格式。

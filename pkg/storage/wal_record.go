@@ -148,30 +148,63 @@ func applyWriteRecords(records []RawRecord, lastFlushedVersion uint64, mem *MemT
 	var maxVersion uint64
 	var failedCount int
 	for _, rec := range records {
-		if rec.Type == walTypeWrite {
-			key, version, columns, err := deserializeWriteRecord(rec.Payload)
-			if err != nil {
-				log.Printf("engine: failed to deserialize write record: %v", err)
-				failedCount++
-				continue
-			}
-			if version <= lastFlushedVersion {
-				continue
-			}
-			row := Row{
-				Version: version,
-				Columns: columns,
-			}
-			_, _, _ = mem.Put(key, row)
-			if version > maxVersion {
-				maxVersion = version
-			}
+		v, ok := applySingleRecord(rec, lastFlushedVersion, mem)
+		if !ok {
+			failedCount++
+			continue
+		}
+		if v > maxVersion {
+			maxVersion = v
 		}
 	}
 	if failedCount > 0 {
 		log.Printf("engine: warning: %d write records failed to deserialize during recovery", failedCount)
 	}
 	return maxVersion, failedCount
+}
+
+// applySingleRecord 应用单条 WAL 写入记录到 memtable，返回最大版本号和是否成功。
+func applySingleRecord(rec RawRecord, lastFlushedVersion uint64, mem *MemTable) (uint64, bool) {
+	switch rec.Type {
+	case walTypeWrite:
+		return applySingleWriteRecord(rec.Payload, lastFlushedVersion, mem)
+	case walTypeBatchWrite:
+		return applyBatchWriteRecord(rec.Payload, lastFlushedVersion, mem)
+	default:
+		return 0, true
+	}
+}
+
+func applySingleWriteRecord(payload []byte, lastFlushedVersion uint64, mem *MemTable) (uint64, bool) {
+	key, version, columns, err := deserializeWriteRecord(payload)
+	if err != nil {
+		log.Printf("engine: failed to deserialize write record: %v", err)
+		return 0, false
+	}
+	if version <= lastFlushedVersion {
+		return 0, true
+	}
+	_, _, _ = mem.Put(key, Row{Version: version, Columns: columns})
+	return version, true
+}
+
+func applyBatchWriteRecord(payload []byte, lastFlushedVersion uint64, mem *MemTable) (uint64, bool) {
+	batchRows, err := deserializeBatchWriteRecord(payload)
+	if err != nil {
+		log.Printf("engine: failed to deserialize batch write record: %v", err)
+		return 0, false
+	}
+	var maxVersion uint64
+	for _, br := range batchRows {
+		if br.Version <= lastFlushedVersion {
+			continue
+		}
+		_, _, _ = mem.Put(br.Key, Row{Version: br.Version, Columns: br.Values})
+		if br.Version > maxVersion {
+			maxVersion = br.Version
+		}
+	}
+	return maxVersion, true
 }
 
 // replayWALRecords 将 WAL 回放记录应用到 MemTable。

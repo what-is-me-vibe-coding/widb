@@ -115,6 +115,45 @@ func BenchmarkEngineWrite(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func BenchmarkEngineWriteBatch(b *testing.B) {
+	dir, err := os.MkdirTemp("", "bench-engine-batch-*")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	eng, err := NewEngine(EngineConfig{
+		DataDir:         dir,
+		MaxMemTableSize: 64 * 1024 * 1024,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	const batchSize = 100
+	batch := make([]WriteRow, batchSize)
+	for i := range batch {
+		batch[i] = WriteRow{
+			Key: fmt.Sprintf("key_%016d", i),
+			Values: map[string]common.Value{
+				benchColName:  common.NewString(benchValName),
+				benchColScore: common.NewFloat64(95.5),
+			},
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// 更新 key 以避免覆盖
+		for j := range batch {
+			batch[j].Key = fmt.Sprintf("key_%016d_%d", i, j)
+		}
+		_ = eng.WriteBatch(batch)
+	}
+	b.ReportAllocs()
+}
+
 func BenchmarkEngineWriteParallel(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-engine-parallel-*")
 	if err != nil {
