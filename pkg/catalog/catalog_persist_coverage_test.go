@@ -10,7 +10,7 @@ import (
 )
 
 func TestSaveToFile_MkdirAllError(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		t.Skip("permission-based test not reliable on Windows")
 	}
 	dir := t.TempDir()
@@ -20,7 +20,7 @@ func TestSaveToFile_MkdirAllError(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	path := filepath.Join(blocker, "sub", "catalog.json")
+	path := filepath.Join(blocker, "sub", testCatalogFile)
 	db := NewDatabase()
 	err := saveToFile(path, db)
 	if err == nil {
@@ -29,12 +29,12 @@ func TestSaveToFile_MkdirAllError(t *testing.T) {
 }
 
 func TestSaveToFile_RenameError(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		t.Skip("rename-based test not reliable on Windows")
 	}
 	dir := t.TempDir()
 	// Create the target file as a directory to make Rename fail.
-	path := filepath.Join(dir, "catalog.json")
+	path := filepath.Join(dir, testCatalogFile)
 	if err := os.Mkdir(path, 0755); err != nil {
 		t.Fatalf("Mkdir: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestSaveToFile_RenameError(t *testing.T) {
 
 func TestLoadFromFile_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "catalog.json")
+	path := filepath.Join(dir, testCatalogFile)
 	if err := os.WriteFile(path, []byte{}, 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestLoadFromFile_EmptyFile(t *testing.T) {
 
 func TestLoadFromFile_CorruptedJSON(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "catalog.json")
+	path := filepath.Join(dir, testCatalogFile)
 	if err := os.WriteFile(path, []byte("{invalid json!!!"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestLoadFromFile_CorruptedJSON(t *testing.T) {
 
 func TestLoadFromFile_NilTablesMap(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "catalog.json")
+	path := filepath.Join(dir, testCatalogFile)
 	// Write JSON with a null Tables map — after unmarshal, db.Tables will be nil
 	// and loadFromFile should initialize it.
 	content := `{"Version":5,"Tables":null,"CreatedAt":"2025-01-01T00:00:00Z"}`
@@ -109,9 +109,9 @@ func TestLoadFromFile_NilTablesMap(t *testing.T) {
 
 func buildMultiTableDB() *Database {
 	db := NewDatabase()
-	db.Tables["users"] = &Table{
-		Name:       "users",
-		Columns:    []ColumnDef{{Name: "id", Type: common.TypeInt64}, {Name: "name", Type: common.TypeString}},
+	db.Tables[tableUsers] = &Table{
+		Name:       tableUsers,
+		Columns:    []ColumnDef{{Name: "id", Type: common.TypeInt64}, {Name: colName, Type: common.TypeString}},
 		PrimaryKey: []string{"id"},
 		SegmentList: []SegmentRef{
 			{ID: 1, Level: 0, MinKey: "a", MaxKey: "z", Size: 1024, RowCount: 50},
@@ -120,10 +120,10 @@ func buildMultiTableDB() *Database {
 		Options: TableOptions{MaxSegmentSize: 4096},
 		Version: 1,
 	}
-	db.Tables["orders"] = &Table{
-		Name:       "orders",
-		Columns:    []ColumnDef{{Name: "order_id", Type: common.TypeInt64}, {Name: "user_id", Type: common.TypeInt64}},
-		PrimaryKey: []string{"order_id"},
+	db.Tables[testTableOrders] = &Table{
+		Name:       testTableOrders,
+		Columns:    []ColumnDef{{Name: testColOrderID, Type: common.TypeInt64}, {Name: "user_id", Type: common.TypeInt64}},
+		PrimaryKey: []string{testColOrderID},
 		SegmentList: []SegmentRef{
 			{ID: 10, Level: 0, MinKey: "1", MaxKey: "999", Size: 512, RowCount: 20},
 		},
@@ -136,7 +136,7 @@ func buildMultiTableDB() *Database {
 
 func TestSaveAndLoad_RoundTripMultipleTables(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "catalog.json")
+	path := filepath.Join(dir, testCatalogFile)
 	db := buildMultiTableDB()
 
 	if err := saveToFile(path, db); err != nil {
@@ -157,7 +157,7 @@ func TestSaveAndLoad_RoundTripMultipleTables(t *testing.T) {
 
 func TestSaveAndLoad_UsersTable(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "catalog.json")
+	path := filepath.Join(dir, testCatalogFile)
 	db := buildMultiTableDB()
 
 	if err := saveToFile(path, db); err != nil {
@@ -168,12 +168,12 @@ func TestSaveAndLoad_UsersTable(t *testing.T) {
 		t.Fatalf("loadFromFile: %v", err)
 	}
 
-	users := loaded.Tables["users"]
+	users := loaded.Tables[tableUsers]
 	if users == nil {
 		t.Fatal("users table not found")
 	}
-	if users.Name != "users" {
-		t.Errorf("Name = %q, want %q", users.Name, "users")
+	if users.Name != tableUsers {
+		t.Errorf("Name = %q, want %q", users.Name, tableUsers)
 	}
 	if len(users.Columns) != 2 {
 		t.Errorf("columns = %d, want 2", len(users.Columns))
@@ -194,7 +194,7 @@ func TestSaveAndLoad_UsersTable(t *testing.T) {
 
 func TestSaveAndLoad_OrdersTable(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "catalog.json")
+	path := filepath.Join(dir, testCatalogFile)
 	db := buildMultiTableDB()
 
 	if err := saveToFile(path, db); err != nil {
@@ -205,7 +205,7 @@ func TestSaveAndLoad_OrdersTable(t *testing.T) {
 		t.Fatalf("loadFromFile: %v", err)
 	}
 
-	orders := loaded.Tables["orders"]
+	orders := loaded.Tables[testTableOrders]
 	if orders == nil {
 		t.Fatal("orders table not found")
 	}

@@ -124,9 +124,9 @@ func TestCompactorBuildSegmentMkdirAllError(t *testing.T) {
 	compactor.nextID = 1
 
 	rows := []memRow{
-		{Key: "k1", Value: Row{Columns: map[string]common.Value{
-			colVal: common.NewInt64(1),
-		}}},
+		{Key: "k1", Values: []common.Value{
+			common.NewInt64(1),
+		}},
 	}
 
 	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
@@ -151,9 +151,9 @@ func TestCompactorBuildSegmentWriteFileError(t *testing.T) {
 	}
 
 	rows := []memRow{
-		{Key: "k1", Value: Row{Columns: map[string]common.Value{
-			colVal: common.NewInt64(1),
-		}}},
+		{Key: "k1", Values: []common.Value{
+			common.NewInt64(1),
+		}},
 	}
 
 	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
@@ -240,9 +240,9 @@ func TestCompactorBuildSegmentTypeMismatch(t *testing.T) {
 
 	// 列定义是 INT64，但行数据中是 STRING
 	rows := []memRow{
-		{Key: "k1", Value: Row{Columns: map[string]common.Value{
-			colVal: common.NewString("wrong_type"),
-		}}},
+		{Key: "k1", Values: []common.Value{
+			common.NewString("wrong_type"),
+		}},
 	}
 
 	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
@@ -260,9 +260,9 @@ func TestCompactorBuildSegmentNullTypeMismatch(t *testing.T) {
 
 	// 列定义是 STRING，但行数据中是 INT64（非 null，类型不匹配）
 	rows := []memRow{
-		{Key: "k1", Value: Row{Columns: map[string]common.Value{
-			colName: common.NewInt64(42),
-		}}},
+		{Key: "k1", Values: []common.Value{
+			common.NewInt64(42),
+		}},
 	}
 
 	cols := []ColumnMeta{{ID: 0, Name: colName, Type: common.TypeString}}
