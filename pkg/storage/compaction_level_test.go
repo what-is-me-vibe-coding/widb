@@ -167,7 +167,7 @@ func TestExtractValueWithNulls(t *testing.T) {
 	nulls.Set(1)
 	nulls.Set(3)
 
-	cd := columnData{
+	cd := decodedColumn{
 		data:  []int64{10, 20, 30, 40},
 		nulls: nulls,
 		typ:   common.TypeInt64,
@@ -190,7 +190,7 @@ func TestExtractValueWithNulls(t *testing.T) {
 }
 
 func TestExtractValueOutOfRange(t *testing.T) {
-	cd := columnData{
+	cd := decodedColumn{
 		data:  []int64{10},
 		nulls: nil,
 		typ:   common.TypeInt64,

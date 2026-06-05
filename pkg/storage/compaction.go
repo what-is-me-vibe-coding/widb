@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -106,7 +105,7 @@ func (c *Compactor) readSegmentRows(seg *Segment, _ []ColumnMeta) ([]memRow, err
 
 	numCols := len(seg.Columns)
 
-	decodedCols := make([]columnData, numCols)
+	decodedCols := make([]decodedColumn, numCols)
 	for i := range seg.Columns {
 		cd, err := decodeSegmentColumn(&seg.Columns[i], i)
 		if err != nil {
@@ -138,7 +137,7 @@ func (c *Compactor) readSegmentRows(seg *Segment, _ []ColumnMeta) ([]memRow, err
 
 // decodeSegmentColumn copies and decodes a single segment column for compaction.
 // A copy is made to avoid modifying the shared segment data during concurrent reads.
-func decodeSegmentColumn(src *EncodedColumn, colIdx int) (columnData, error) {
+func decodeSegmentColumn(src *EncodedColumn, colIdx int) (decodedColumn, error) {
 	enc := &EncodedColumn{
 		Encoding: src.Encoding,
 		Type:     src.Type,
@@ -161,75 +160,13 @@ func decodeSegmentColumn(src *EncodedColumn, colIdx int) (columnData, error) {
 		copy(enc.Nulls, src.Nulls)
 	}
 	if err := DecompressColumn(enc); err != nil {
-		return columnData{}, fmt.Errorf("compactor: decompress column %d: %w", colIdx, err)
+		return decodedColumn{}, fmt.Errorf("compactor: decompress column %d: %w", colIdx, err)
 	}
 	data, nulls, err := DecodeColumn(enc)
 	if err != nil {
-		return columnData{}, fmt.Errorf("compactor: decode column %d: %w", colIdx, err)
+		return decodedColumn{}, fmt.Errorf("compactor: decode column %d: %w", colIdx, err)
 	}
-	return columnData{data: data, nulls: nulls, typ: enc.Type}, nil
-}
-
-type columnData struct {
-	data  interface{}
-	nulls *common.Bitmap
-	typ   common.DataType
-}
-
-func extractValue(cd columnData, row uint32) common.Value {
-	if cd.nulls != nil && cd.nulls.Get(row) {
-		return common.NewNull()
-	}
-
-	switch cd.typ {
-	case common.TypeInt64:
-		return extractInt64Value(cd.data, row)
-	case common.TypeFloat64:
-		return extractFloat64Value(cd.data, row)
-	case common.TypeBool:
-		return extractBoolValue(cd.data, row)
-	case common.TypeString:
-		return extractStringValue(cd.data, row)
-	case common.TypeTimestamp:
-		return extractTimestampValue(cd.data, row)
-	default:
-		return common.NewNull()
-	}
-}
-
-func extractInt64Value(data interface{}, row uint32) common.Value {
-	if ints, ok := data.([]int64); ok && row < uint32(len(ints)) {
-		return common.NewInt64(ints[row])
-	}
-	return common.NewNull()
-}
-
-func extractFloat64Value(data interface{}, row uint32) common.Value {
-	if floats, ok := data.([]float64); ok && row < uint32(len(floats)) {
-		return common.NewFloat64(floats[row])
-	}
-	return common.NewNull()
-}
-
-func extractBoolValue(data interface{}, row uint32) common.Value {
-	if bools, ok := data.([]uint64); ok && row < uint32(len(bools)) {
-		return common.NewBool(bools[row] != 0)
-	}
-	return common.NewNull()
-}
-
-func extractStringValue(data interface{}, row uint32) common.Value {
-	if strs, ok := data.([]string); ok && row < uint32(len(strs)) {
-		return common.NewString(strs[row])
-	}
-	return common.NewNull()
-}
-
-func extractTimestampValue(data interface{}, row uint32) common.Value {
-	if times, ok := data.([]int64); ok && row < uint32(len(times)) {
-		return common.NewTimestamp(time.Unix(0, times[row]))
-	}
-	return common.NewNull()
+	return decodedColumn{data: data, nulls: nulls, typ: enc.Type, encTyp: src.Encoding}, nil
 }
 
 func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, error) {
