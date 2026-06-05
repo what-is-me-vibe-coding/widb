@@ -33,7 +33,7 @@ type WAL struct {
 	path    string
 	offset  int64
 	maxSize int64
-	mu      sync.RWMutex
+	mu      sync.Mutex
 }
 
 // RawRecord 表示从 WAL 文件中回放的一条原始记录。
@@ -168,8 +168,8 @@ func (w *WAL) Sync() error {
 
 // Size 返回当前 WAL 文件的字节偏移量。
 func (w *WAL) Size() int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.offset
 }
 
