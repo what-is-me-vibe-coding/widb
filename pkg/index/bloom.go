@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/bits-and-blooms/bloom/v3"
 )
@@ -77,6 +78,32 @@ func (bi *BloomIndex) MayContain(segID uint64, key []byte) bool {
 	}
 
 	result := filter.Test(key)
+	if result {
+		atomic.AddUint64(&bi.hitCnt, 1)
+	} else {
+		atomic.AddUint64(&bi.missCnt, 1)
+	}
+
+	return result
+}
+
+// MayContainString 检查 key 是否可能存在于指定 Segment 中。
+// 与 MayContain 不同，此方法接受 string 参数，使用 unsafe.Slice 将 string
+// 转换为 []byte 而不产生堆分配。
+func (bi *BloomIndex) MayContainString(segID uint64, key string) bool {
+	bi.mu.RLock()
+	filter, ok := bi.blooms[segID]
+	bi.mu.RUnlock()
+
+	if !ok {
+		return true
+	}
+
+	// Use unsafe.Slice to convert string to []byte without allocation.
+	// The resulting slice is read-only and must not be modified.
+	b := unsafe.Slice(unsafe.StringData(key), len(key))
+
+	result := filter.Test(b)
 	if result {
 		atomic.AddUint64(&bi.hitCnt, 1)
 	} else {

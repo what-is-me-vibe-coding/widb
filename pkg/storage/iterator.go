@@ -348,16 +348,26 @@ func (e *Engine) ScanRange(start, end string) []ScanEntry {
 		return nil
 	}
 
+	// Pre-allocate results slice with estimated capacity from MemTable and segments.
+	estimatedSize := e.activeMem.Len()
+	for _, imm := range e.immutable {
+		estimatedSize += imm.Len()
+	}
+	for _, seg := range e.segments {
+		if seg.MinKey <= end && seg.MaxKey >= start {
+			estimatedSize += int(seg.RowCount)
+		}
+	}
+
 	mi := NewMergeIterator(iters...)
 	defer mi.Close()
 
-	// 预分配结果切片，减少扩容
-	results := make([]ScanEntry, 0, 64)
+	results := make([]ScanEntry, 0, estimatedSize)
 	for mi.Next() {
 		entry := mi.Entry()
 		results = append(results, ScanEntry{
 			Key:   entry.Key,
-			Value: Row{Version: entry.Value.Version, Columns: copyColumns(entry.Value.Columns)},
+			Value: entry.Value,
 		})
 	}
 
@@ -366,15 +376,4 @@ func (e *Engine) ScanRange(start, end string) []ScanEntry {
 	}
 
 	return results
-}
-
-func copyColumns(cols map[string]common.Value) map[string]common.Value {
-	if cols == nil {
-		return nil
-	}
-	result := make(map[string]common.Value, len(cols))
-	for k, v := range cols {
-		result[k] = v
-	}
-	return result
 }

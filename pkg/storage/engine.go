@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
@@ -145,14 +144,12 @@ func (e *Engine) getFromSegments(key string) (Row, bool) {
 		return Row{}, false
 	}
 
-	sortedIDs := make([]uint64, len(segIDs))
-	copy(sortedIDs, segIDs)
-	sort.Slice(sortedIDs, func(i, j int) bool {
-		return sortedIDs[i] > sortedIDs[j]
-	})
-
-	for _, segID := range sortedIDs {
-		if !e.bloomIndex.MayContain(segID, []byte(key)) {
+	// Iterate in reverse order: since segment IDs are monotonically increasing,
+	// higher IDs appear later in the slice, so reverse iteration checks
+	// newer segments first without allocating a sorted copy.
+	for i := len(segIDs) - 1; i >= 0; i-- {
+		segID := segIDs[i]
+		if !e.bloomIndex.MayContainString(segID, key) {
 			continue
 		}
 

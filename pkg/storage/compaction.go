@@ -99,7 +99,7 @@ func (c *Compactor) mergeSegments(segments []*Segment, cols []ColumnMeta) ([]mem
 	return deduped, nil
 }
 
-func (c *Compactor) readSegmentRows(seg *Segment, cols []ColumnMeta) ([]memRow, error) {
+func (c *Compactor) readSegmentRows(seg *Segment, _ []ColumnMeta) ([]memRow, error) {
 	if seg.RowCount == 0 {
 		return nil, nil
 	}
@@ -115,21 +115,11 @@ func (c *Compactor) readSegmentRows(seg *Segment, cols []ColumnMeta) ([]memRow, 
 		decodedCols[i] = cd
 	}
 
-	colNames := make([]string, numCols)
-	for i := range colNames {
-		if i < len(cols) {
-			colNames[i] = cols[i].Name
-		} else {
-			colNames[i] = fmt.Sprintf("col_%d", i)
-		}
-	}
-
 	rows := make([]memRow, 0, seg.RowCount)
 	for r := uint32(0); r < seg.RowCount; r++ {
-		values := make(map[string]common.Value)
+		values := make([]common.Value, numCols)
 		for i := range decodedCols {
-			val := extractValue(decodedCols[i], r)
-			values[colNames[i]] = val
+			values[i] = extractValue(decodedCols[i], r)
 		}
 		var key string
 		if int(r) < len(seg.Keys) {
@@ -138,8 +128,8 @@ func (c *Compactor) readSegmentRows(seg *Segment, cols []ColumnMeta) ([]memRow, 
 			key = fmt.Sprintf("row_%d", seg.ID*1000000+uint64(len(rows)))
 		}
 		rows = append(rows, memRow{
-			Key:   key,
-			Value: Row{Columns: values},
+			Key:    key,
+			Values: values,
 		})
 	}
 
@@ -256,16 +246,16 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 	}
 	builder.SetKeys(keys)
 
-	for _, colMeta := range cols {
+	for colIdx, colMeta := range cols {
 		cv := NewColumnVector(colMeta.ID, colMeta.Type, rowCount)
 		for _, row := range rows {
-			val, ok := row.Value.Columns[colMeta.Name]
-			if !ok {
+			if colIdx >= len(row.Values) {
 				if err := cv.Append(common.NewNull()); err != nil {
 					return nil, fmt.Errorf("compactor: column %s append null: %w", colMeta.Name, err)
 				}
 				continue
 			}
+			val := row.Values[colIdx]
 			if err := cv.Append(val); err != nil {
 				return nil, fmt.Errorf("compactor: column %s: %w", colMeta.Name, err)
 			}
@@ -314,6 +304,6 @@ func (c *Compactor) CleanupSegments(segments []*Segment) error {
 }
 
 type memRow struct {
-	Key   string
-	Value Row
+	Key    string
+	Values []common.Value
 }
