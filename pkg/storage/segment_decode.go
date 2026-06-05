@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -12,6 +13,63 @@ type decodedColumn struct {
 	nulls  *common.Bitmap
 	typ    common.DataType
 	encTyp EncodingType
+}
+
+// extractValue 从已解码的列数据中提取指定行的值。
+func extractValue(dc decodedColumn, row uint32) common.Value {
+	if dc.nulls != nil && dc.nulls.Get(row) {
+		return common.NewNull()
+	}
+
+	switch dc.typ {
+	case common.TypeInt64:
+		return extractInt64Value(dc.data, row)
+	case common.TypeFloat64:
+		return extractFloat64Value(dc.data, row)
+	case common.TypeBool:
+		return extractBoolValue(dc.data, row)
+	case common.TypeString:
+		return extractStringValue(dc.data, row)
+	case common.TypeTimestamp:
+		return extractTimestampValue(dc.data, row)
+	default:
+		return common.NewNull()
+	}
+}
+
+func extractInt64Value(data interface{}, row uint32) common.Value {
+	if ints, ok := data.([]int64); ok && row < uint32(len(ints)) {
+		return common.NewInt64(ints[row])
+	}
+	return common.NewNull()
+}
+
+func extractFloat64Value(data interface{}, row uint32) common.Value {
+	if floats, ok := data.([]float64); ok && row < uint32(len(floats)) {
+		return common.NewFloat64(floats[row])
+	}
+	return common.NewNull()
+}
+
+func extractBoolValue(data interface{}, row uint32) common.Value {
+	if bools, ok := data.([]uint64); ok && row < uint32(len(bools)) {
+		return common.NewBool(bools[row] != 0)
+	}
+	return common.NewNull()
+}
+
+func extractStringValue(data interface{}, row uint32) common.Value {
+	if strs, ok := data.([]string); ok && row < uint32(len(strs)) {
+		return common.NewString(strs[row])
+	}
+	return common.NewNull()
+}
+
+func extractTimestampValue(data interface{}, row uint32) common.Value {
+	if times, ok := data.([]int64); ok && row < uint32(len(times)) {
+		return common.NewTimestamp(time.Unix(0, times[row]))
+	}
+	return common.NewNull()
 }
 
 // decodeAllColumns 一次性解压并解码 Segment 的所有列，返回解码缓存。
@@ -26,20 +84,20 @@ func (s *Segment) decodeAllColumns() ([]decodedColumn, error) {
 			Type:     src.Type,
 			RowCount: src.RowCount,
 		}
+		// Data 需要深拷贝，因为 DecompressColumn 会替换 enc.Data
 		if len(src.Data) > 0 {
 			enc.Data = make([]byte, len(src.Data))
 			copy(enc.Data, src.Data)
 		}
+		// Offsets 和 Nulls 只读，无需深拷贝，直接引用原始数据
 		if len(src.Offsets) > 0 {
-			enc.Offsets = make([]uint32, len(src.Offsets))
-			copy(enc.Offsets, src.Offsets)
+			enc.Offsets = src.Offsets
 		}
 		if len(src.Dict) > 0 {
-			enc.Dict = src.Dict // Dict 是只读的，无需深拷贝
+			enc.Dict = src.Dict
 		}
 		if len(src.Nulls) > 0 {
-			enc.Nulls = make([]byte, len(src.Nulls))
-			copy(enc.Nulls, src.Nulls)
+			enc.Nulls = src.Nulls
 		}
 		if err := DecompressColumn(enc); err != nil {
 			return nil, fmt.Errorf("segment: decompress column %d: %w", i, err)
@@ -58,9 +116,7 @@ func (s *Segment) getColumnValueFromDecoded(cols []decodedColumn, colIdx uint32,
 	if int(colIdx) >= len(cols) {
 		return common.NewNull()
 	}
-	dc := &cols[colIdx]
-	cd := columnData{data: dc.data, nulls: dc.nulls, typ: dc.typ}
-	return extractValue(cd, rowIdx)
+	return extractValue(cols[colIdx], rowIdx)
 }
 
 // GetColumnValue 从指定列中提取给定行索引的值，使用副本避免修改原始数据。
@@ -96,7 +152,7 @@ func (s *Segment) GetColumnValue(colIdx uint32, rowIdx uint32) (common.Value, er
 	if err != nil {
 		return common.NewNull(), fmt.Errorf("segment: decode column %d: %w", colIdx, err)
 	}
-	cd := columnData{data: decoded, nulls: nulls, typ: enc.Type}
+	cd := decodedColumn{data: decoded, nulls: nulls, typ: enc.Type}
 	return extractValue(cd, rowIdx), nil
 }
 

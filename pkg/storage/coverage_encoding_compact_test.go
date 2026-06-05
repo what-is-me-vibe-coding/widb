@@ -94,7 +94,7 @@ func TestEncodeBitmapTypeMismatch(t *testing.T) {
 
 // TestExtractValueUnknownDataType 测试 extractValue 对未知类型的处理
 func TestExtractValueUnknownDataType(t *testing.T) {
-	cd := columnData{data: nil, nulls: nil, typ: common.DataType(99)}
+	cd := decodedColumn{data: nil, nulls: nil, typ: common.DataType(99)}
 	val := extractValue(cd, 0)
 	if val.Valid {
 		t.Error("expected null value for unknown type, got valid value")
