@@ -218,6 +218,6 @@ func readTypedValue(data []byte, typ common.DataType) (common.Value, int, error)
 		}
 		return common.Value{Typ: typ, Time: time.Unix(0, int64(binary.LittleEndian.Uint64(data[:8])))}, 8, nil
 	default:
-		return common.Value{Typ: typ}, 0, nil
+		return common.Value{}, 0, fmt.Errorf("unknown value type: %d", typ)
 	}
 }

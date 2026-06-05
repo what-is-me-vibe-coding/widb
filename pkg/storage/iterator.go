@@ -68,13 +68,15 @@ type segmentIterator struct {
 
 // newSegmentIterator creates an iterator over a Segment for the given range.
 func newSegmentIterator(seg *Segment, colMeta []ColumnMeta, start, end string) *segmentIterator {
+	decodedCols, err := seg.decodeAllColumns()
 	return &segmentIterator{
 		seg:         seg,
 		colMeta:     colMeta,
 		start:       start,
 		end:         end,
 		rowIdx:      -1,
-		decodedCols: seg.decodeAllColumns(),
+		decodedCols: decodedCols,
+		err:         err,
 	}
 }
 

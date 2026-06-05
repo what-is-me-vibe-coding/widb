@@ -16,7 +16,8 @@ type decodedColumn struct {
 
 // decodeAllColumns 一次性解压并解码 Segment 的所有列，返回解码缓存。
 // 用于范围扫描等需要读取多行的场景，避免每行重复解压解码。
-func (s *Segment) decodeAllColumns() []decodedColumn {
+// 如果任一列解压或解码失败，返回错误。
+func (s *Segment) decodeAllColumns() ([]decodedColumn, error) {
 	columns := make([]decodedColumn, len(s.Columns))
 	for i := range s.Columns {
 		src := &s.Columns[i]
@@ -41,17 +42,15 @@ func (s *Segment) decodeAllColumns() []decodedColumn {
 			copy(enc.Nulls, src.Nulls)
 		}
 		if err := DecompressColumn(enc); err != nil {
-			columns[i] = decodedColumn{typ: src.Type, encTyp: src.Encoding}
-			continue
+			return nil, fmt.Errorf("segment: decompress column %d: %w", i, err)
 		}
 		decoded, nulls, err := DecodeColumn(enc)
 		if err != nil {
-			columns[i] = decodedColumn{typ: src.Type, encTyp: src.Encoding}
-			continue
+			return nil, fmt.Errorf("segment: decode column %d: %w", i, err)
 		}
 		columns[i] = decodedColumn{data: decoded, nulls: nulls, typ: src.Type, encTyp: src.Encoding}
 	}
-	return columns
+	return columns, nil
 }
 
 // getColumnValueFromDecoded 从已解码的列缓存中提取指定行的值。

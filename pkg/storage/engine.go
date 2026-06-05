@@ -248,7 +248,10 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 		e.segments = append(e.segments, seg)
 		e.segmentMap[seg.ID] = seg
 		e.segmentLevels = append(e.segmentLevels, 0)
-		e.registerSegmentIndexes(seg, 0)
+		if err := e.registerSegmentIndexes(seg, 0); err != nil {
+			e.mu.Unlock()
+			return fmt.Errorf("engine flush: %w", err)
+		}
 		e.mu.Unlock()
 	}
 
@@ -270,20 +273,25 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 
 	return nil
 }
-func (e *Engine) registerSegmentIndexes(seg *Segment, level int) {
+func (e *Engine) registerSegmentIndexes(seg *Segment, level int) error {
 	segMeta := index.SegmentMeta{
 		ID:     seg.ID,
 		MinKey: seg.MinKey,
 		MaxKey: seg.MaxKey,
 		Level:  level,
 	}
-	_ = e.primaryIndex.RegisterSegment(segMeta)
+	if err := e.primaryIndex.RegisterSegment(segMeta); err != nil {
+		return fmt.Errorf("engine: register primary index for segment %d: %w", seg.ID, err)
+	}
 
 	if len(seg.Footer.BloomFilter) > 0 {
-		_ = e.bloomIndex.RegisterFromBytes(seg.ID, seg.Footer.BloomFilter)
+		if err := e.bloomIndex.RegisterFromBytes(seg.ID, seg.Footer.BloomFilter); err != nil {
+			return fmt.Errorf("engine: register bloom index for segment %d: %w", seg.ID, err)
+		}
 	}
 
 	e.sparseIndex.LoadFromSegment(seg, seg.MinKey, seg.MaxKey, level)
+	return nil
 }
 func (e *Engine) unregisterSegmentIndexes(segID uint64) {
 	_ = e.primaryIndex.UnregisterSegment(segID)
@@ -328,21 +336,23 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 	// Sync compactor nextID with flusher to avoid segment ID conflicts
 	e.compactor.SetNextID(e.flusher.NextID())
 
-	l0Segments, l0Indices := e.collectL0Segments()
+	l0Segments, _ := e.collectL0Segments()
 	if len(l0Segments) == 0 {
 		e.mu.Unlock()
 		return nil
 	}
 
-	l1Segments, l1Indices := e.collectL1Segments()
+	l1Segments, _ := e.collectL1Segments()
 
 	allSegments := make([]*Segment, 0, len(l0Segments)+len(l1Segments))
 	allSegments = append(allSegments, l0Segments...)
 	allSegments = append(allSegments, l1Segments...)
 
-	allIndices := make([]int, 0, len(l0Indices)+len(l1Indices))
-	allIndices = append(allIndices, l0Indices...)
-	allIndices = append(allIndices, l1Indices...)
+	// 记录待删除的 segment ID，而非索引，避免并发操作导致索引失效
+	compactIDs := make(map[uint64]struct{}, len(allSegments))
+	for _, seg := range allSegments {
+		compactIDs[seg.ID] = struct{}{}
+	}
 
 	e.mu.Unlock()
 
@@ -354,23 +364,30 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// 按 ID 注销索引
 	for _, seg := range allSegments {
 		e.unregisterSegmentIndexes(seg.ID)
 		delete(e.segmentMap, seg.ID)
 	}
 
-	sort.Slice(allIndices, func(i, j int) bool {
-		return allIndices[i] > allIndices[j]
-	})
-	for _, idx := range allIndices {
-		e.segments = append(e.segments[:idx], e.segments[idx+1:]...)
-		e.segmentLevels = append(e.segmentLevels[:idx], e.segmentLevels[idx+1:]...)
+	// 按 ID 删除 segment，避免并发 Flush/Compact 导致索引偏移
+	remaining := make([]*Segment, 0, len(e.segments))
+	remainingLevels := make([]int, 0, len(e.segmentLevels))
+	for i, seg := range e.segments {
+		if _, ok := compactIDs[seg.ID]; !ok {
+			remaining = append(remaining, seg)
+			remainingLevels = append(remainingLevels, e.segmentLevels[i])
+		}
 	}
+	e.segments = remaining
+	e.segmentLevels = remainingLevels
 
 	e.segments = append(e.segments, newSeg)
 	e.segmentMap[newSeg.ID] = newSeg
 	e.segmentLevels = append(e.segmentLevels, 1)
-	e.registerSegmentIndexes(newSeg, 1)
+	if err := e.registerSegmentIndexes(newSeg, 1); err != nil {
+		return fmt.Errorf("engine compact: %w", err)
+	}
 
 	if err := e.compactor.CleanupSegments(allSegments); err != nil {
 		return fmt.Errorf("engine compact: cleanup: %w", err)

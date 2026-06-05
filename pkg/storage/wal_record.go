@@ -313,7 +313,9 @@ func (e *Engine) loadSegments() error {
 
 	// Register indexes for loaded segments
 	for i, seg := range e.segments {
-		e.registerSegmentIndexes(seg, e.segmentLevels[i])
+		if err := e.registerSegmentIndexes(seg, e.segmentLevels[i]); err != nil {
+			return fmt.Errorf("engine: register segment %d indexes: %w", seg.ID, err)
+		}
 	}
 
 	// Update flusher and compactor nextID to avoid ID collisions
