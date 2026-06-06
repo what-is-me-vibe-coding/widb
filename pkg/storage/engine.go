@@ -257,9 +257,15 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 
 	e.mu.Unlock()
 
-	for _, mem := range immutable {
+	// 记录已成功刷写的 memtable，失败时将未刷写的放回 immutable
+	var flushedIdx int
+	for i, mem := range immutable {
 		seg, err := e.flusher.Flush(mem, cols)
 		if err != nil {
+			// 将未刷写的 memtable 放回 immutable，避免数据丢失
+			e.mu.Lock()
+			e.immutable = append(e.immutable, immutable[flushedIdx:]...)
+			e.mu.Unlock()
 			return fmt.Errorf("engine flush: %w", err)
 		}
 
@@ -269,9 +275,17 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 		e.segmentLevels = append(e.segmentLevels, 0)
 		if err := e.registerSegmentIndexes(seg, 0); err != nil {
 			e.mu.Unlock()
+			// 将剩余未刷写的 memtable 放回 immutable
+			remaining := immutable[flushedIdx+1:]
+			if len(remaining) > 0 {
+				e.mu.Lock()
+				e.immutable = append(e.immutable, remaining...)
+				e.mu.Unlock()
+			}
 			return fmt.Errorf("engine flush: %w", err)
 		}
 		e.mu.Unlock()
+		flushedIdx = i + 1
 	}
 
 	// Write checkpoint after successful flush
@@ -328,13 +342,26 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// 按 ID 注销索引
+	// 先注册新 segment 的索引，再注销旧 segment 的索引，
+	// 确保任何时刻索引中都有数据可用，避免部分失败导致数据丢失。
+	e.segments = append(e.segments, newSeg)
+	e.segmentMap[newSeg.ID] = newSeg
+	e.segmentLevels = append(e.segmentLevels, 1)
+	if err := e.registerSegmentIndexes(newSeg, 1); err != nil {
+		// 注册新索引失败，回滚：移除刚添加的 segment
+		e.segments = e.segments[:len(e.segments)-1]
+		delete(e.segmentMap, newSeg.ID)
+		e.segmentLevels = e.segmentLevels[:len(e.segmentLevels)-1]
+		return fmt.Errorf("engine compact: %w", err)
+	}
+
+	// 新 segment 注册成功后，再注销旧 segment 的索引
 	for _, seg := range allSegments {
 		e.unregisterSegmentIndexes(seg.ID)
 		delete(e.segmentMap, seg.ID)
 	}
 
-	// 按 ID 删除 segment，避免并发 Flush/Compact 导致索引偏移
+	// 按 ID 删除旧 segment
 	remaining := make([]*Segment, 0, len(e.segments))
 	remainingLevels := make([]int, 0, len(e.segmentLevels))
 	for i, seg := range e.segments {
@@ -345,13 +372,6 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 	}
 	e.segments = remaining
 	e.segmentLevels = remainingLevels
-
-	e.segments = append(e.segments, newSeg)
-	e.segmentMap[newSeg.ID] = newSeg
-	e.segmentLevels = append(e.segmentLevels, 1)
-	if err := e.registerSegmentIndexes(newSeg, 1); err != nil {
-		return fmt.Errorf("engine compact: %w", err)
-	}
 
 	if err := e.compactor.CleanupSegments(allSegments); err != nil {
 		return fmt.Errorf("engine compact: cleanup: %w", err)
