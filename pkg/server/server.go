@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,6 +29,7 @@ type Config struct {
 	HTTPAddr        string
 	DataDir         string
 	MaxMemTableSize int64
+	MaxConnections  int // 最大并发 TCP 连接数，0 表示不限制
 }
 
 // Server 是数据库服务器，同时提供 TCP 和 HTTP 接入。
@@ -46,8 +48,9 @@ type Server struct {
 	httpServer   *http.Server
 	httpListener net.Listener
 
-	wg   sync.WaitGroup
-	done chan struct{}
+	connCount int64 // 当前活跃 TCP 连接数
+	wg        sync.WaitGroup
+	done      chan struct{}
 }
 
 // storageAdapter 适配 storage.Engine 以实现 query.StorageProvider 接口。
@@ -214,12 +217,25 @@ func (s *Server) acceptTCP() {
 			case <-s.done:
 				return
 			default:
+				// 瞬态错误（如资源耗尽）不应终止 accept 循环
+				if isTransientAcceptErr(err) {
+					log.Printf("TCP accept 瞬态错误（将继续重试）: %v", err)
+					continue
+				}
 				log.Printf("TCP accept 错误: %v", err)
 				return
 			}
 		}
 
+		// 检查连接数限制
+		if s.cfg.MaxConnections > 0 && s.connCount >= int64(s.cfg.MaxConnections) {
+			log.Printf("TCP 连接数已达上限 %d，拒绝新连接", s.cfg.MaxConnections)
+			_ = conn.Close()
+			continue
+		}
+
 		s.wg.Add(1)
+		atomic.AddInt64(&s.connCount, 1)
 		go s.handleTCPConn(conn)
 	}
 }
@@ -243,6 +259,7 @@ func (s *Server) serveHTTP() {
 // handleTCPConn 处理单个 TCP 连接。
 func (s *Server) handleTCPConn(conn net.Conn) {
 	defer s.wg.Done()
+	defer atomic.AddInt64(&s.connCount, -1)
 	defer func() { _ = conn.Close() }()
 
 	reader := bufio.NewReader(conn)
@@ -467,6 +484,14 @@ func isClosedConnErr(err error) bool {
 	}
 	if opErr, ok := err.(*net.OpError); ok {
 		return opErr.Timeout()
+	}
+	return false
+}
+
+// isTransientAcceptErr 判断 TCP Accept 错误是否为可恢复的瞬态错误（如临时资源耗尽）。
+func isTransientAcceptErr(err error) bool {
+	if opErr, ok := err.(*net.OpError); ok {
+		return opErr.Temporary() || opErr.Timeout()
 	}
 	return false
 }

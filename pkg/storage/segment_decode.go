@@ -151,6 +151,8 @@ func (s *Segment) GetColumnValue(colIdx uint32, rowIdx uint32) (common.Value, er
 }
 
 // GetAllColumnValues 提取指定行所有列的值。
+// 如果某列提取失败，跳过该列并在返回的 map 中不包含该列，
+// 但不会返回错误，以保证调用方仍可获取已成功提取的列值。
 func (s *Segment) GetAllColumnValues(rowIdx uint32, colMeta []ColumnMeta) (map[string]common.Value, error) {
 	values := make(map[string]common.Value, len(colMeta))
 	for colIdx, col := range colMeta {

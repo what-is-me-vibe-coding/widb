@@ -49,7 +49,7 @@ func TestIsClosedConnErr_OpErrorTimeout(t *testing.T) {
 }
 
 func TestIsClosedConnErr_OpErrorNotTimeout(t *testing.T) {
-	opErr := &net.OpError{Op: "read", Net: "tcp", Err: errors.New("some error")}
+	opErr := &net.OpError{Op: "read", Net: testNetTCP, Err: errors.New("some error")}
 	if isClosedConnErr(opErr) {
 		t.Error("isClosedConnErr(non-timeout OpError) = true, want false")
 	}

@@ -153,6 +153,18 @@ func (e *Executor) filterEntriesByPredicate(entries []storage.ScanEntry, pred Ex
 	return result
 }
 
+// appendValueSafe 安全地向列向量追加值，类型不匹配时尝试转换，仍失败则用 NULL 填充。
+func appendValueSafe(col *storage.ColumnVector, val common.Value, typ common.DataType) {
+	if err := col.Append(val); err == nil {
+		return
+	}
+	val = coerceValue(val, typ)
+	if err := col.Append(val); err == nil {
+		return
+	}
+	_ = col.Append(common.NewNull())
+}
+
 // buildChunksFromEntries 将 ScanEntry 切片转换为 Chunk 切片。
 func buildChunksFromEntries(entries []storage.ScanEntry, schema []ColumnDef, chunkSize int) []*storage.Chunk {
 	if len(entries) == 0 || len(schema) == 0 {
@@ -176,10 +188,7 @@ func buildChunksFromEntries(entries []storage.ScanEntry, schema []ColumnDef, chu
 				if !ok {
 					val = common.NewNull()
 				}
-				if err := col.Append(val); err != nil {
-					val = coerceValue(val, colDef.Type)
-					_ = col.Append(val)
-				}
+				appendValueSafe(col, val, colDef.Type)
 			}
 			_ = chunk.AddColumn(col)
 		}
