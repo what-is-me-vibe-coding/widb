@@ -23,7 +23,7 @@ func TestFlusherFlush(t *testing.T) {
 			colName: common.NewString("alice"),
 			colAge:  common.NewInt64(30),
 		}}},
-		{"key2", Row{Version: 1, Columns: map[string]common.Value{
+		{crKey2, Row{Version: 1, Columns: map[string]common.Value{
 			"id":    common.NewInt64(2),
 			colName: common.NewString("bob"),
 			colAge:  common.NewInt64(25),

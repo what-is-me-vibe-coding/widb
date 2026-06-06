@@ -19,12 +19,12 @@ func TestFlushFailurePreservesImmutableMemTables(t *testing.T) {
 	defer func() { _ = eng.Close() }()
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "col0", Type: common.TypeInt64},
+		{ID: 0, Name: crCol0, Type: common.TypeInt64},
 	}
 
 	// 写入数据使 activeMem 有内容
-	if err := eng.Write("key1", map[string]common.Value{
-		"col0": common.NewInt64(1),
+	if err := eng.Write(crKey1, map[string]common.Value{
+		crCol0: common.NewInt64(1),
 	}); err != nil {
 		t.Fatalf("Write key1: %v", err)
 	}
@@ -53,12 +53,12 @@ func TestFlushFailurePreservesImmutableMemTables(t *testing.T) {
 	}
 
 	// 数据应该仍可查询
-	row, ok := eng.Get("key1")
+	row, ok := eng.Get(crKey1)
 	if !ok {
 		t.Fatal("expected key1 to be found after flush failure recovery")
 	}
-	if row.Columns["col0"].Int64 != 1 {
-		t.Fatalf("expected col0=1, got %v", row.Columns["col0"])
+	if row.Columns[crCol0].Int64 != 1 {
+		t.Fatalf("expected col0=1, got %v", row.Columns[crCol0])
 	}
 }
 
@@ -73,13 +73,13 @@ func TestCompactPreservesDataOnIndexRegistrationFailure(t *testing.T) {
 	defer func() { _ = eng.Close() }()
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "col0", Type: common.TypeInt64},
+		{ID: 0, Name: crCol0, Type: common.TypeInt64},
 	}
 
 	// 写入并刷盘多次，生成多个 L0 segment
 	for i := 0; i < 4; i++ {
-		if err := eng.Write("key1", map[string]common.Value{
-			"col0": common.NewInt64(int64(i)),
+		if err := eng.Write(crKey1, map[string]common.Value{
+			crCol0: common.NewInt64(int64(i)),
 		}); err != nil {
 			t.Fatalf("Write %d: %v", i, err)
 		}
@@ -104,12 +104,12 @@ func TestCompactPreservesDataOnIndexRegistrationFailure(t *testing.T) {
 	}
 
 	// 验证数据仍可查询（应返回最新版本）
-	row, ok := eng.Get("key1")
+	row, ok := eng.Get(crKey1)
 	if !ok {
 		t.Fatal("expected key1 to be found after compact")
 	}
-	if row.Columns["col0"].Int64 != 3 {
-		t.Fatalf("expected col0=3 (latest version), got %v", row.Columns["col0"])
+	if row.Columns[crCol0].Int64 != 3 {
+		t.Fatalf("expected col0=3 (latest version), got %v", row.Columns[crCol0])
 	}
 }
 
@@ -164,12 +164,12 @@ func TestCompactionDeduplicationByVersion(t *testing.T) {
 	defer func() { _ = eng.Close() }()
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "col0", Type: common.TypeInt64},
+		{ID: 0, Name: crCol0, Type: common.TypeInt64},
 	}
 
 	// 第一次写入 key1 = 100
-	if err := eng.Write("key1", map[string]common.Value{
-		"col0": common.NewInt64(100),
+	if err := eng.Write(crKey1, map[string]common.Value{
+		crCol0: common.NewInt64(100),
 	}); err != nil {
 		t.Fatalf("Write key1=100: %v", err)
 	}
@@ -178,8 +178,8 @@ func TestCompactionDeduplicationByVersion(t *testing.T) {
 	}
 
 	// 第二次写入 key1 = 200（更新）
-	if err := eng.Write("key1", map[string]common.Value{
-		"col0": common.NewInt64(200),
+	if err := eng.Write(crKey1, map[string]common.Value{
+		crCol0: common.NewInt64(200),
 	}); err != nil {
 		t.Fatalf("Write key1=200: %v", err)
 	}
@@ -188,8 +188,8 @@ func TestCompactionDeduplicationByVersion(t *testing.T) {
 	}
 
 	// 第三次写入 key1 = 300（再次更新）
-	if err := eng.Write("key1", map[string]common.Value{
-		"col0": common.NewInt64(300),
+	if err := eng.Write(crKey1, map[string]common.Value{
+		crCol0: common.NewInt64(300),
 	}); err != nil {
 		t.Fatalf("Write key1=300: %v", err)
 	}
@@ -198,8 +198,8 @@ func TestCompactionDeduplicationByVersion(t *testing.T) {
 	}
 
 	// 写入另一个 key 以确保有足够的 L0 segments
-	if err := eng.Write("key2", map[string]common.Value{
-		"col0": common.NewInt64(999),
+	if err := eng.Write(crKey2, map[string]common.Value{
+		crCol0: common.NewInt64(999),
 	}); err != nil {
 		t.Fatalf("Write key2: %v", err)
 	}
@@ -213,21 +213,21 @@ func TestCompactionDeduplicationByVersion(t *testing.T) {
 	}
 
 	// 验证 key1 返回最新版本 300
-	row, ok := eng.Get("key1")
+	row, ok := eng.Get(crKey1)
 	if !ok {
 		t.Fatal("expected key1 to be found after compact")
 	}
-	if row.Columns["col0"].Int64 != 300 {
-		t.Fatalf("expected col0=300 (latest version after compact), got %v", row.Columns["col0"])
+	if row.Columns[crCol0].Int64 != 300 {
+		t.Fatalf("expected col0=300 (latest version after compact), got %v", row.Columns[crCol0])
 	}
 
 	// 验证 key2 仍可查询
-	row2, ok := eng.Get("key2")
+	row2, ok := eng.Get(crKey2)
 	if !ok {
 		t.Fatal("expected key2 to be found after compact")
 	}
-	if row2.Columns["col0"].Int64 != 999 {
-		t.Fatalf("expected col0=999 for key2, got %v", row2.Columns["col0"])
+	if row2.Columns[crCol0].Int64 != 999 {
+		t.Fatalf("expected col0=999 for key2, got %v", row2.Columns[crCol0])
 	}
 }
 
@@ -242,12 +242,12 @@ func TestFlushMultipleImmutableRecoversOnPartialFailure(t *testing.T) {
 	defer func() { _ = eng.Close() }()
 
 	cols := []ColumnMeta{
-		{ID: 0, Name: "col0", Type: common.TypeInt64},
+		{ID: 0, Name: crCol0, Type: common.TypeInt64},
 	}
 
 	// 写入并刷盘第一个 memtable
-	if err := eng.Write("key1", map[string]common.Value{
-		"col0": common.NewInt64(1),
+	if err := eng.Write(crKey1, map[string]common.Value{
+		crCol0: common.NewInt64(1),
 	}); err != nil {
 		t.Fatalf("Write key1: %v", err)
 	}
@@ -256,8 +256,8 @@ func TestFlushMultipleImmutableRecoversOnPartialFailure(t *testing.T) {
 	}
 
 	// 写入第二个 memtable
-	if err := eng.Write("key2", map[string]common.Value{
-		"col0": common.NewInt64(2),
+	if err := eng.Write(crKey2, map[string]common.Value{
+		crCol0: common.NewInt64(2),
 	}); err != nil {
 		t.Fatalf("Write key2: %v", err)
 	}
@@ -270,8 +270,8 @@ func TestFlushMultipleImmutableRecoversOnPartialFailure(t *testing.T) {
 	eng.mu.Unlock()
 
 	// 再写入第三个 memtable
-	if err := eng.Write("key3", map[string]common.Value{
-		"col0": common.NewInt64(3),
+	if err := eng.Write(crKey3, map[string]common.Value{
+		crCol0: common.NewInt64(3),
 	}); err != nil {
 		t.Fatalf("Write key3: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestFlushMultipleImmutableRecoversOnPartialFailure(t *testing.T) {
 	}
 
 	// 验证所有数据可查询
-	for _, key := range []string{"key1", "key2", "key3"} {
+	for _, key := range []string{crKey1, crKey2, crKey3} {
 		_, ok := eng.Get(key)
 		if !ok {
 			t.Fatalf("expected %s to be found after flush", key)

@@ -318,7 +318,7 @@ func TestEngineWriteAndReadMultipleKeys(t *testing.T) {
 	}
 	defer func() { _ = eng.Close() }()
 
-	keys := []string{crKey1, "key2", crKey3, "key4", "key5"}
+	keys := []string{crKey1, crKey2, crKey3, crKey4, crKey5}
 	for i, key := range keys {
 		if err := eng.Write(key, map[string]common.Value{colVal: common.NewInt64(int64(i))}); err != nil {
 			t.Fatalf("Write %s 失败: %v", key, err)

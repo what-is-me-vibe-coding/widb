@@ -14,6 +14,8 @@ const (
 	crKey2 = "key2"
 	crKey3 = "key3"
 	crKey4 = "key4"
+	crKey5 = "key5"
+	crCol0 = "col0"
 )
 
 // TestCrashRecovery_BasicRecovery 验证基本崩溃恢复：写入数据后模拟崩溃（不Flush），重新打开引擎后数据应从WAL恢复。
