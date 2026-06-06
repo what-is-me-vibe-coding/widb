@@ -43,9 +43,9 @@ func NewBlockCache(capacity int64) *BlockCache {
 	}
 }
 
-// Get 从缓存中获取指定列的已解码数据。
+// get 从缓存中获取指定列的已解码数据。
 // 返回 (decodedColumn, true) 表示命中，(decodedColumn{}, false) 表示未命中。
-func (c *BlockCache) Get(key CacheKey) (decodedColumn, bool) {
+func (c *BlockCache) get(key CacheKey) (decodedColumn, bool) {
 	if c == nil || c.capacity <= 0 {
 		return decodedColumn{}, false
 	}
@@ -63,9 +63,9 @@ func (c *BlockCache) Get(key CacheKey) (decodedColumn, bool) {
 	return decodedColumn{}, false
 }
 
-// Put 将已解码的列数据放入缓存。
+// put 将已解码的列数据放入缓存。
 // 如果缓存已满，会按 LRU 策略淘汰最久未使用的条目。
-func (c *BlockCache) Put(key CacheKey, data decodedColumn) {
+func (c *BlockCache) put(key CacheKey, data decodedColumn) {
 	if c == nil || c.capacity <= 0 {
 		return
 	}
@@ -144,7 +144,7 @@ func (c *BlockCache) Clear() {
 	c.used = 0
 }
 
-// Stats 返回缓存的统计信息。
+// CacheStats holds cache statistics.
 type CacheStats struct {
 	Hits     int64
 	Misses   int64

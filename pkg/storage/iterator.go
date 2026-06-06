@@ -93,53 +93,61 @@ func newSegmentIterator(seg *Segment, colMeta []ColumnMeta, start, end string, b
 // Uses sync.Once to guarantee thread-safe, idempotent initialization.
 // On decode failure, decodedCols is set to an empty (non-nil) slice and err is recorded.
 // 优先从 BlockCache 获取已解码的列数据，未命中时解码并写入缓存。
+// decodeSegmentColumn 从 Segment 中解码单列数据，优先从 BlockCache 获取。
+func (it *segmentIterator) decodeSegmentColumn(i int, decodedCols []decodedColumn) (bool, int) {
+	cacheKey := CacheKey{SegmentID: it.seg.ID, ColumnIdx: uint32(i)}
+	if dc, ok := it.blockCache.get(cacheKey); ok {
+		decodedCols[i] = dc
+		return true, 1
+	}
+
+	src := &it.seg.Columns[i]
+	enc := &EncodedColumn{
+		Encoding: src.Encoding,
+		Type:     src.Type,
+		RowCount: src.RowCount,
+	}
+	if len(src.Data) > 0 {
+		enc.Data = make([]byte, len(src.Data))
+		copy(enc.Data, src.Data)
+	}
+	if len(src.Offsets) > 0 {
+		enc.Offsets = src.Offsets
+	}
+	if len(src.Dict) > 0 {
+		enc.Dict = src.Dict
+	}
+	if len(src.Nulls) > 0 {
+		enc.Nulls = src.Nulls
+	}
+	if err := DecompressColumn(enc); err != nil {
+		it.err = fmt.Errorf("segment: decompress column %d: %w", i, err)
+		it.decodedCols = make([]decodedColumn, 0)
+		return false, 0
+	}
+	decoded, nulls, err := DecodeColumn(enc)
+	if err != nil {
+		it.err = fmt.Errorf("segment: decode column %d: %w", i, err)
+		it.decodedCols = make([]decodedColumn, 0)
+		return false, 0
+	}
+	dc := decodedColumn{data: decoded, nulls: nulls, typ: src.Type, encTyp: src.Encoding}
+	decodedCols[i] = dc
+	it.blockCache.put(cacheKey, dc)
+	return true, 0
+}
+
 func (it *segmentIterator) ensureDecoded() {
 	it.decodeOnce.Do(func() {
 		decodedCols := make([]decodedColumn, len(it.seg.Columns))
 		cacheHitCount := 0
 
 		for i := range it.seg.Columns {
-			cacheKey := CacheKey{SegmentID: it.seg.ID, ColumnIdx: uint32(i)}
-			if dc, ok := it.blockCache.Get(cacheKey); ok {
-				decodedCols[i] = dc
-				cacheHitCount++
-			} else {
-				// 缓存未命中，解码单列
-				src := &it.seg.Columns[i]
-				enc := &EncodedColumn{
-					Encoding: src.Encoding,
-					Type:     src.Type,
-					RowCount: src.RowCount,
-				}
-				if len(src.Data) > 0 {
-					enc.Data = make([]byte, len(src.Data))
-					copy(enc.Data, src.Data)
-				}
-				if len(src.Offsets) > 0 {
-					enc.Offsets = src.Offsets
-				}
-				if len(src.Dict) > 0 {
-					enc.Dict = src.Dict
-				}
-				if len(src.Nulls) > 0 {
-					enc.Nulls = src.Nulls
-				}
-				if err := DecompressColumn(enc); err != nil {
-					it.err = fmt.Errorf("segment: decompress column %d: %w", i, err)
-					it.decodedCols = make([]decodedColumn, 0)
-					return
-				}
-				decoded, nulls, err := DecodeColumn(enc)
-				if err != nil {
-					it.err = fmt.Errorf("segment: decode column %d: %w", i, err)
-					it.decodedCols = make([]decodedColumn, 0)
-					return
-				}
-				dc := decodedColumn{data: decoded, nulls: nulls, typ: src.Type, encTyp: src.Encoding}
-				decodedCols[i] = dc
-				// 写入缓存供后续查询使用
-				it.blockCache.Put(cacheKey, dc)
+			ok, hits := it.decodeSegmentColumn(i, decodedCols)
+			if !ok {
+				return
 			}
+			cacheHitCount += hits
 		}
 
 		it.decodedCols = decodedCols

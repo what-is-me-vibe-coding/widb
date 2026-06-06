@@ -435,7 +435,7 @@ func TestParseCreateTableColumnTypes(t *testing.T) {
 		{"double", "CREATE TABLE t (c DOUBLE NOT NULL)", common.TypeFloat64},
 		{"string", "CREATE TABLE t (c STRING NOT NULL)", common.TypeString},
 		{"varchar", "CREATE TABLE t (c VARCHAR(255) NOT NULL)", common.TypeString},
-		{"bool", "CREATE TABLE t (c BOOL NOT NULL)", common.TypeBool},
+		{"bool_type", "CREATE TABLE t (c BOOL NOT NULL)", common.TypeBool},
 		{"boolean", "CREATE TABLE t (c BOOLEAN NOT NULL)", common.TypeBool},
 		{"timestamp", "CREATE TABLE t (c TIMESTAMP NOT NULL)", common.TypeTimestamp},
 	}

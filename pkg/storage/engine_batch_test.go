@@ -141,11 +141,11 @@ func TestEngineWriteBatchAllTypes(t *testing.T) {
 		{
 			Key: "all_types_row",
 			Values: map[string]common.Value{
-				"bool":  common.NewBool(true),
-				"int":   common.NewInt64(-42),
-				"float": common.NewFloat64(3.14),
-				"str":   common.NewString("hello"),
-				"time":  common.NewTimestamp(ts),
+				"bool_col": common.NewBool(true),
+				"int":      common.NewInt64(-42),
+				"float":    common.NewFloat64(3.14),
+				"str":      common.NewString("hello"),
+				"time":     common.NewTimestamp(ts),
 			},
 		},
 	}
@@ -158,7 +158,7 @@ func TestEngineWriteBatchAllTypes(t *testing.T) {
 	if !ok {
 		t.Fatal("all_types_row not found")
 	}
-	if v := got.Columns["bool"]; !v.Valid || v.Int64 != 1 {
+	if v := got.Columns["bool_col"]; !v.Valid || v.Int64 != 1 {
 		t.Errorf("bool: expected true, got %v", v)
 	}
 	if v := got.Columns["int"]; v.Int64 != -42 {

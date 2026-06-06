@@ -12,7 +12,7 @@ func TestBlockCacheBasic(t *testing.T) {
 	key := CacheKey{SegmentID: 1, ColumnIdx: 0}
 
 	// 缓存未命中
-	_, ok := cache.Get(key)
+	_, ok := cache.get(key)
 	if ok {
 		t.Fatal("expected cache miss")
 	}
@@ -23,10 +23,10 @@ func TestBlockCacheBasic(t *testing.T) {
 		nulls: nil,
 		typ:   common.TypeInt64,
 	}
-	cache.Put(key, dc)
+	cache.put(key, dc)
 
 	// 缓存命中
-	got, ok := cache.Get(key)
+	got, ok := cache.get(key)
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -50,7 +50,7 @@ func TestBlockCacheLRUEviction(t *testing.T) {
 			data: []int64{1, 2, 3, 4, 5},
 			typ:  common.TypeInt64,
 		}
-		cache.Put(key, dc)
+		cache.put(key, dc)
 	}
 
 	stats := cache.Stats()
@@ -60,14 +60,14 @@ func TestBlockCacheLRUEviction(t *testing.T) {
 
 	// 最早的条目应该被淘汰
 	key0 := CacheKey{SegmentID: 1, ColumnIdx: 0}
-	_, ok := cache.Get(key0)
+	_, ok := cache.get(key0)
 	if ok {
 		t.Fatal("expected column 0 to be evicted")
 	}
 
 	// 较新的条目应该还在
 	key4 := CacheKey{SegmentID: 1, ColumnIdx: 4}
-	_, ok = cache.Get(key4)
+	_, ok = cache.get(key4)
 	if !ok {
 		t.Fatal("expected column 4 to be in cache")
 	}
@@ -78,10 +78,10 @@ func TestBlockCacheInvalidate(t *testing.T) {
 
 	// 放入两个 Segment 的数据
 	for i := uint32(0); i < 3; i++ {
-		cache.Put(CacheKey{SegmentID: 1, ColumnIdx: i}, decodedColumn{
+		cache.put(CacheKey{SegmentID: 1, ColumnIdx: i}, decodedColumn{
 			data: []int64{1}, typ: common.TypeInt64,
 		})
-		cache.Put(CacheKey{SegmentID: 2, ColumnIdx: i}, decodedColumn{
+		cache.put(CacheKey{SegmentID: 2, ColumnIdx: i}, decodedColumn{
 			data: []int64{2}, typ: common.TypeInt64,
 		})
 	}
@@ -90,13 +90,13 @@ func TestBlockCacheInvalidate(t *testing.T) {
 	cache.Invalidate(1)
 
 	// Segment 1 的数据应该被清除
-	_, ok := cache.Get(CacheKey{SegmentID: 1, ColumnIdx: 0})
+	_, ok := cache.get(CacheKey{SegmentID: 1, ColumnIdx: 0})
 	if ok {
 		t.Fatal("expected segment 1 data to be invalidated")
 	}
 
 	// Segment 2 的数据应该还在
-	_, ok = cache.Get(CacheKey{SegmentID: 2, ColumnIdx: 0})
+	_, ok = cache.get(CacheKey{SegmentID: 2, ColumnIdx: 0})
 	if !ok {
 		t.Fatal("expected segment 2 data to remain")
 	}
@@ -108,8 +108,8 @@ func TestBlockCacheStats(t *testing.T) {
 	key := CacheKey{SegmentID: 1, ColumnIdx: 0}
 
 	// 未命中
-	cache.Get(key)
-	cache.Get(key)
+	cache.get(key)
+	cache.get(key)
 
 	stats := cache.Stats()
 	if stats.Misses != 2 {
@@ -117,9 +117,9 @@ func TestBlockCacheStats(t *testing.T) {
 	}
 
 	// 放入并命中
-	cache.Put(key, decodedColumn{data: []int64{1}, typ: common.TypeInt64})
-	cache.Get(key)
-	cache.Get(key)
+	cache.put(key, decodedColumn{data: []int64{1}, typ: common.TypeInt64})
+	cache.get(key)
+	cache.get(key)
 
 	stats = cache.Stats()
 	if stats.Hits != 2 {
@@ -137,12 +137,12 @@ func TestBlockCacheNil(t *testing.T) {
 	var cache *BlockCache
 
 	// nil 缓存不应 panic
-	_, ok := cache.Get(CacheKey{SegmentID: 1, ColumnIdx: 0})
+	_, ok := cache.get(CacheKey{SegmentID: 1, ColumnIdx: 0})
 	if ok {
 		t.Fatal("expected miss on nil cache")
 	}
 
-	cache.Put(CacheKey{SegmentID: 1, ColumnIdx: 0}, decodedColumn{})
+	cache.put(CacheKey{SegmentID: 1, ColumnIdx: 0}, decodedColumn{})
 	cache.Invalidate(1)
 	cache.Clear()
 
@@ -156,9 +156,9 @@ func TestBlockCacheDisabled(t *testing.T) {
 	cache := NewBlockCache(0) // 容量 <= 0 表示不缓存
 
 	key := CacheKey{SegmentID: 1, ColumnIdx: 0}
-	cache.Put(key, decodedColumn{data: []int64{1}, typ: common.TypeInt64})
+	cache.put(key, decodedColumn{data: []int64{1}, typ: common.TypeInt64})
 
-	_, ok := cache.Get(key)
+	_, ok := cache.get(key)
 	if ok {
 		t.Fatal("expected miss on disabled cache")
 	}
@@ -170,12 +170,12 @@ func TestBlockCacheUpdateExisting(t *testing.T) {
 	key := CacheKey{SegmentID: 1, ColumnIdx: 0}
 
 	// 放入初始值
-	cache.Put(key, decodedColumn{data: []int64{1}, typ: common.TypeInt64})
+	cache.put(key, decodedColumn{data: []int64{1}, typ: common.TypeInt64})
 
 	// 更新值
-	cache.Put(key, decodedColumn{data: []int64{2, 3}, typ: common.TypeInt64})
+	cache.put(key, decodedColumn{data: []int64{2, 3}, typ: common.TypeInt64})
 
-	got, ok := cache.Get(key)
+	got, ok := cache.get(key)
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -189,7 +189,7 @@ func TestBlockCacheClear(t *testing.T) {
 	cache := NewBlockCache(4096)
 
 	for i := uint32(0); i < 5; i++ {
-		cache.Put(CacheKey{SegmentID: 1, ColumnIdx: i}, decodedColumn{
+		cache.put(CacheKey{SegmentID: 1, ColumnIdx: i}, decodedColumn{
 			data: []int64{1}, typ: common.TypeInt64,
 		})
 	}
@@ -212,7 +212,7 @@ func TestEstimateDecodedSize(t *testing.T) {
 	}{
 		{"int64", decodedColumn{data: make([]int64, 100), typ: common.TypeInt64}},
 		{"float64", decodedColumn{data: make([]float64, 100), typ: common.TypeFloat64}},
-		{"bool", decodedColumn{data: make([]uint64, 2), typ: common.TypeBool}},
+		{"bool_type", decodedColumn{data: make([]uint64, 2), typ: common.TypeBool}},
 		{"string", decodedColumn{data: make([]string, 10), typ: common.TypeString}},
 		{"nil_data", decodedColumn{data: nil, typ: common.TypeInt64}},
 	}

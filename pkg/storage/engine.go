@@ -190,7 +190,7 @@ func (e *Engine) getFromSegments(key string) (Row, bool) {
 		for colIdx, col := range e.columnMeta {
 			// 优先从 BlockCache 获取已解码的列数据
 			cacheKey := CacheKey{SegmentID: segID, ColumnIdx: uint32(colIdx)}
-			if dc, ok := e.blockCache.Get(cacheKey); ok {
+			if dc, ok := e.blockCache.get(cacheKey); ok {
 				columns[col.Name] = extractValue(dc, rowIdx)
 			} else {
 				val, err := seg.GetColumnValue(uint32(colIdx), rowIdx)

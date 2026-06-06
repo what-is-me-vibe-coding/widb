@@ -268,7 +268,7 @@ func TestCompactToLevelWithDifferentColumnTypes(t *testing.T) {
 		colType common.DataType
 	}{
 		{"float64", common.TypeFloat64},
-		{"bool", common.TypeBool},
+		{"bool_type", common.TypeBool},
 		{"string", common.TypeString},
 		{"timestamp", common.TypeTimestamp},
 	}
