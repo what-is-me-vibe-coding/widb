@@ -17,6 +17,9 @@ const (
 	// HeaderSize 是固定包头长度（4+2+1+4=11 字节）。
 	HeaderSize = 11
 
+	// MaxPacketSize 是单个数据包的最大负载大小（16MB），防止 OOM 攻击。
+	MaxPacketSize = 16 * 1024 * 1024
+
 	// PacketQuery 表示查询请求包类型。
 	PacketQuery uint8 = 1
 
@@ -70,6 +73,11 @@ func DecodePacket(r io.Reader) (*Packet, error) {
 	if pkt.Magic != Magic {
 		return nil, fmt.Errorf("decode packet: invalid magic 0x%08x, expected 0x%08x",
 			pkt.Magic, Magic)
+	}
+
+	if pkt.Length > MaxPacketSize {
+		return nil, fmt.Errorf("decode packet: payload size %d exceeds maximum %d",
+			pkt.Length, MaxPacketSize)
 	}
 
 	if pkt.Length > 0 {

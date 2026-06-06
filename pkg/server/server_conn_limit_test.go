@@ -11,13 +11,22 @@ import (
 )
 
 const testNetTCP = "tcp"
+const testOpAccept = "accept"
 
 // --- isTransientAcceptErr tests ---
 
 func TestIsTransientAcceptErr_TemporaryOpError(t *testing.T) {
-	opErr := &net.OpError{Op: "accept", Net: testNetTCP, Err: temporaryError{}}
+	// 测试包含 "resource temporarily unavailable" 消息的 OpError
+	opErr := &net.OpError{Op: testOpAccept, Net: testNetTCP, Err: errors.New("resource temporarily unavailable")}
 	if !isTransientAcceptErr(opErr) {
-		t.Error("isTransientAcceptErr(temporary OpError) = false, want true")
+		t.Error("isTransientAcceptErr(resource temporarily unavailable OpError) = false, want true")
+	}
+}
+
+func TestIsTransientAcceptErr_TooManyOpenFiles(t *testing.T) {
+	opErr := &net.OpError{Op: testOpAccept, Net: testNetTCP, Err: errors.New("too many open files")}
+	if !isTransientAcceptErr(opErr) {
+		t.Error("isTransientAcceptErr(too many open files OpError) = false, want true")
 	}
 }
 
@@ -47,7 +56,7 @@ func TestIsTransientAcceptErr_TimeoutOpError(t *testing.T) {
 }
 
 func TestIsTransientAcceptErr_NonTransientError(t *testing.T) {
-	opErr := &net.OpError{Op: "accept", Net: testNetTCP, Err: errors.New("fatal error")}
+	opErr := &net.OpError{Op: testOpAccept, Net: testNetTCP, Err: errors.New("fatal error")}
 	if isTransientAcceptErr(opErr) {
 		t.Error("isTransientAcceptErr(non-temporary OpError) = true, want false")
 	}
@@ -58,13 +67,6 @@ func TestIsTransientAcceptErr_OtherError(t *testing.T) {
 		t.Error("isTransientAcceptErr(random error) = true, want false")
 	}
 }
-
-// temporaryError 实现一个 Temporary() = true 的错误，用于测试。
-type temporaryError struct{}
-
-func (temporaryError) Error() string   { return "temporary error" }
-func (temporaryError) Temporary() bool { return true }
-func (temporaryError) Timeout() bool   { return false }
 
 // --- MaxConnections 测试 ---
 

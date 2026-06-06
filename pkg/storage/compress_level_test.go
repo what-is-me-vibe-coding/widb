@@ -171,14 +171,6 @@ func TestInitEncoderDecoder(t *testing.T) {
 		t.Fatal("Compress 返回空数据")
 	}
 
-	// 验证初始化后的编码器和解码器
-	if encoderVal == nil {
-		t.Fatal("全局 encoder 未初始化")
-	}
-	if decoderVal == nil {
-		t.Fatal("全局 decoder 未初始化")
-	}
-
 	decompressed, err := Decompress(compressed)
 	if err != nil {
 		t.Fatalf("Decompress 失败: %v", err)

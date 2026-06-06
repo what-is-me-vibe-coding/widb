@@ -24,10 +24,11 @@ type cacheEntry struct {
 // BlockCache 是 Segment 列数据的 LRU 缓存。
 // 缓存已解码的列数据，避免重复解压和解码，提升点查和范围扫描性能。
 type BlockCache struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	capacity int64
 	used     int64
 	items    map[CacheKey]*list.Element
+	segIndex map[uint64][]CacheKey // segmentID → cache keys，加速 Invalidate
 	order    *list.List
 	hits     int64
 	misses   int64
@@ -39,6 +40,7 @@ func NewBlockCache(capacity int64) *BlockCache {
 	return &BlockCache{
 		capacity: capacity,
 		items:    make(map[CacheKey]*list.Element),
+		segIndex: make(map[uint64][]CacheKey),
 		order:    list.New(),
 	}
 }
@@ -94,6 +96,7 @@ func (c *BlockCache) put(key CacheKey, data decodedColumn) {
 		}
 		entry := c.order.Remove(oldest).(*cacheEntry)
 		delete(c.items, entry.key)
+		c.removeFromSegIndex(entry.key)
 		c.used -= entry.size
 	}
 
@@ -101,6 +104,26 @@ func (c *BlockCache) put(key CacheKey, data decodedColumn) {
 	elem := c.order.PushFront(entry)
 	c.items[key] = elem
 	c.used += size
+	c.addToSegIndex(key)
+}
+
+// addToSegIndex 将缓存键添加到 segment 索引。调用方需持有写锁。
+func (c *BlockCache) addToSegIndex(key CacheKey) {
+	c.segIndex[key.SegmentID] = append(c.segIndex[key.SegmentID], key)
+}
+
+// removeFromSegIndex 从 segment 索引中移除缓存键。调用方需持有写锁。
+func (c *BlockCache) removeFromSegIndex(key CacheKey) {
+	keys := c.segIndex[key.SegmentID]
+	for i, k := range keys {
+		if k == key {
+			c.segIndex[key.SegmentID] = append(keys[:i], keys[i+1:]...)
+			break
+		}
+	}
+	if len(c.segIndex[key.SegmentID]) == 0 {
+		delete(c.segIndex, key.SegmentID)
+	}
 }
 
 // Invalidate 使指定 Segment 的所有缓存条目失效。
@@ -113,21 +136,19 @@ func (c *BlockCache) Invalidate(segmentID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 收集需要删除的 key
-	var keysToDelete []CacheKey
-	for key := range c.items {
-		if key.SegmentID == segmentID {
-			keysToDelete = append(keysToDelete, key)
-		}
+	keys, ok := c.segIndex[segmentID]
+	if !ok {
+		return
 	}
 
-	for _, key := range keysToDelete {
+	for _, key := range keys {
 		if elem, ok := c.items[key]; ok {
 			entry := c.order.Remove(elem).(*cacheEntry)
 			c.used -= entry.size
 			delete(c.items, key)
 		}
 	}
+	delete(c.segIndex, segmentID)
 }
 
 // Clear 清空所有缓存条目。
@@ -140,6 +161,7 @@ func (c *BlockCache) Clear() {
 	defer c.mu.Unlock()
 
 	c.items = make(map[CacheKey]*list.Element)
+	c.segIndex = make(map[uint64][]CacheKey)
 	c.order.Init()
 	c.used = 0
 }
@@ -160,8 +182,8 @@ func (c *BlockCache) Stats() CacheStats {
 		return CacheStats{}
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	total := c.hits + c.misses
 	var hitRate float64
@@ -218,7 +240,7 @@ func estimateDecodedSize(dc decodedColumn) int64 {
 // IndexCache 主要缓存 Segment Footer 的列统计信息，
 // 避免重复解析 Segment 文件。
 type IndexCache struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	capacity int
 	used     int
 	items    map[uint64]*list.Element // key: segmentID
@@ -325,8 +347,8 @@ func (c *IndexCache) Len() int {
 		return 0
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	return c.used
 }

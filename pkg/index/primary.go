@@ -58,16 +58,47 @@ func (pi *PrimaryIndex) UnregisterSegment(segID uint64) error {
 }
 
 // Lookup 点查：返回包含 key 的所有 Segment ID。
+// 利用 segments 按 MinKey 排序的特性，使用二分查找快速定位候选范围。
 func (pi *PrimaryIndex) Lookup(key string) []uint64 {
 	pi.mu.RLock()
 	defer pi.mu.RUnlock()
 
+	if len(pi.segments) == 0 {
+		return nil
+	}
+
 	var result []uint64
-	for _, seg := range pi.segments {
+
+	// 二分查找：找到第一个 MinKey <= key 的 segment
+	// 由于 segments 按 MinKey 排序，key 可能落在 MinKey <= key 的连续范围内
+	idx := sort.Search(len(pi.segments), func(i int) bool {
+		return pi.segments[i].MinKey > key
+	})
+
+	// 从 idx-1 开始向前扫描，因为 key 可能落在 MinKey <= key 的多个 segment 中
+	// L0 层允许重叠，所以需要检查所有可能包含 key 的 segment
+	for i := idx - 1; i >= 0; i-- {
+		seg := pi.segments[i]
+		if keyInRange(key, seg.MinKey, seg.MaxKey) {
+			result = append(result, seg.ID)
+		}
+		// 如果当前 segment 的 MaxKey < key，更早的 segment 也不可能包含 key
+		if seg.MaxKey < key {
+			break
+		}
+	}
+
+	// 从 idx 开始向后扫描，检查 MinKey == key 或 MinKey > key 但 MaxKey >= key 的 segment
+	for i := idx; i < len(pi.segments); i++ {
+		seg := pi.segments[i]
+		if seg.MinKey > key {
+			break // 后续 segment 的 MinKey 更大，不可能包含 key
+		}
 		if keyInRange(key, seg.MinKey, seg.MaxKey) {
 			result = append(result, seg.ID)
 		}
 	}
+
 	return result
 }
 

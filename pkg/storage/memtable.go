@@ -34,6 +34,7 @@ type skipList struct {
 	head  *skipNode
 	level int
 	size  int
+	prev  []*skipNode // 可复用的前驱节点缓冲区，避免每次 put/delete 分配
 }
 
 func newSkipList() *skipList {
@@ -42,6 +43,7 @@ func newSkipList() *skipList {
 			forward: make([]*skipNode, maxLevel),
 		},
 		level: 0,
+		prev:  make([]*skipNode, maxLevel),
 	}
 }
 
@@ -68,8 +70,11 @@ func (sl *skipList) findLess(key string, prev []*skipNode) *skipNode {
 
 // put 插入或更新键值对，返回旧值是否存在。
 func (sl *skipList) put(key string, value Row) (Row, bool) {
-	prev := make([]*skipNode, maxLevel)
-	x := sl.findLess(key, prev)
+	// 复用 prev 缓冲区，避免每次分配
+	for i := range sl.prev {
+		sl.prev[i] = nil
+	}
+	x := sl.findLess(key, sl.prev)
 
 	if x.forward[0] != nil && x.forward[0].key == key {
 		old := x.forward[0].value
@@ -80,7 +85,7 @@ func (sl *skipList) put(key string, value Row) (Row, bool) {
 	level := sl.randomLevel()
 	if level > sl.level {
 		for i := sl.level + 1; i <= level; i++ {
-			prev[i] = sl.head
+			sl.prev[i] = sl.head
 		}
 		sl.level = level
 	}
@@ -92,8 +97,8 @@ func (sl *skipList) put(key string, value Row) (Row, bool) {
 	}
 
 	for i := 0; i <= level; i++ {
-		node.forward[i] = prev[i].forward[i]
-		prev[i].forward[i] = node
+		node.forward[i] = sl.prev[i].forward[i]
+		sl.prev[i].forward[i] = node
 	}
 
 	sl.size++
@@ -111,8 +116,11 @@ func (sl *skipList) get(key string) (Row, bool) {
 
 // delete 删除键值对，返回旧值是否存在。
 func (sl *skipList) delete(key string) (Row, bool) {
-	prev := make([]*skipNode, maxLevel)
-	x := sl.findLess(key, prev)
+	// 复用 prev 缓冲区
+	for i := range sl.prev {
+		sl.prev[i] = nil
+	}
+	x := sl.findLess(key, sl.prev)
 
 	if x.forward[0] == nil || x.forward[0].key != key {
 		return Row{}, false
@@ -121,10 +129,10 @@ func (sl *skipList) delete(key string) (Row, bool) {
 	node := x.forward[0]
 	old := node.value
 	for i := 0; i <= sl.level; i++ {
-		if prev[i].forward[i] != node {
+		if sl.prev[i].forward[i] != node {
 			break
 		}
-		prev[i].forward[i] = node.forward[i]
+		sl.prev[i].forward[i] = node.forward[i]
 	}
 
 	for sl.level > 0 && sl.head.forward[sl.level] == nil {
@@ -198,9 +206,9 @@ func (m *MemTable) Put(key string, value Row) (Row, bool, error) {
 	estimatedSize := int64(len(key)) + estimateRowSize(value)
 	if exists {
 		oldSize := int64(len(key)) + estimateRowSize(old)
-		atomic.StoreInt64(&m.size, m.size+estimatedSize-oldSize)
+		m.size += estimatedSize - oldSize
 	} else {
-		atomic.StoreInt64(&m.size, m.size+estimatedSize)
+		m.size += estimatedSize
 	}
 
 	return old, exists, nil
@@ -226,7 +234,7 @@ func (m *MemTable) Delete(key string) (Row, bool, error) {
 	old, exists := m.tree.delete(key)
 	if exists {
 		estimatedSize := int64(len(key)) + estimateRowSize(old)
-		atomic.StoreInt64(&m.size, m.size-estimatedSize)
+		m.size -= estimatedSize
 	}
 
 	return old, exists, nil
@@ -252,12 +260,16 @@ func (m *MemTable) Len() int {
 
 // Size 返回估算的内存占用（字节）。
 func (m *MemTable) Size() int64 {
-	return atomic.LoadInt64(&m.size)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.size
 }
 
 // ShouldFlush 判断是否达到刷盘阈值。
 func (m *MemTable) ShouldFlush() bool {
-	return atomic.LoadInt64(&m.size) >= m.maxSize
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.size >= m.maxSize
 }
 
 // Freeze 冻结 MemTable 为只读。

@@ -7,27 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
-
-// walWriteRecord 是 Write 操作的 JSON 序列化格式。
-type walWriteRecord struct {
-	Key     string                    `json:"key"`
-	Version uint64                    `json:"version"`
-	Columns map[string]walValueRecord `json:"columns"`
-}
-
-// walValueRecord 是 common.Value 的 JSON 序列化格式。
-type walValueRecord struct {
-	Typ     int     `json:"typ"`
-	Valid   bool    `json:"valid"`
-	Int64   int64   `json:"int64"`
-	Float64 float64 `json:"float64"`
-	Str     string  `json:"str"`
-	Time    string  `json:"time"`
-}
 
 // walCheckpointRecord 是 Checkpoint 记录的 JSON 序列化格式。
 type walCheckpointRecord struct {
@@ -43,48 +25,20 @@ type walColMeta struct {
 }
 
 func serializeWriteRecord(key string, version uint64, columns map[string]common.Value) ([]byte, error) {
-	rec := walWriteRecord{
-		Key:     key,
-		Version: version,
-		Columns: make(map[string]walValueRecord, len(columns)),
-	}
-	for colName, v := range columns {
-		rec.Columns[colName] = walValueRecord{
-			Typ:     int(v.Typ),
-			Valid:   v.Valid,
-			Int64:   v.Int64,
-			Float64: v.Float64,
-			Str:     v.Str,
-			Time:    v.Time.Format(time.RFC3339Nano),
-		}
-	}
-	return json.Marshal(rec)
+	// 使用二进制格式序列化，与批量写入一致
+	rows := []WriteRow{{Key: key, Values: columns}}
+	return serializeBatchWriteRecord(rows, version)
 }
 
 func deserializeWriteRecord(data []byte) (string, uint64, map[string]common.Value, error) {
-	var rec walWriteRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
+	rows, err := deserializeBatchWriteRecord(data)
+	if err != nil {
 		return "", 0, nil, fmt.Errorf("engine: deserialize write record: %w", err)
 	}
-	columns := make(map[string]common.Value, len(rec.Columns))
-	for colName, v := range rec.Columns {
-		val := common.Value{
-			Typ:     common.DataType(v.Typ),
-			Valid:   v.Valid,
-			Int64:   v.Int64,
-			Float64: v.Float64,
-			Str:     v.Str,
-		}
-		if v.Time != "" {
-			t, err := time.Parse(time.RFC3339Nano, v.Time)
-			if err != nil {
-				return "", 0, nil, fmt.Errorf("engine: parse time %q: %w", v.Time, err)
-			}
-			val.Time = t
-		}
-		columns[colName] = val
+	if len(rows) == 0 {
+		return "", 0, nil, fmt.Errorf("engine: empty write record")
 	}
-	return rec.Key, rec.Version, columns, nil
+	return rows[0].Key, rows[0].Version, rows[0].Values, nil
 }
 
 func serializeCheckpointRecord(lastFlushedVersion uint64, colMeta []ColumnMeta) ([]byte, error) {
@@ -184,7 +138,10 @@ func applySingleWriteRecord(payload []byte, lastFlushedVersion uint64, mem *MemT
 	if version <= lastFlushedVersion {
 		return 0, true
 	}
-	_, _, _ = mem.Put(key, Row{Version: version, Columns: columns})
+	if _, _, err := mem.Put(key, Row{Version: version, Columns: columns}); err != nil {
+		log.Printf("engine: WAL replay Put failed for key %q: %v", key, err)
+		return version, true
+	}
 	return version, true
 }
 
@@ -199,7 +156,9 @@ func applyBatchWriteRecord(payload []byte, lastFlushedVersion uint64, mem *MemTa
 		if br.Version <= lastFlushedVersion {
 			continue
 		}
-		_, _, _ = mem.Put(br.Key, Row{Version: br.Version, Columns: br.Values})
+		if _, _, err := mem.Put(br.Key, Row{Version: br.Version, Columns: br.Values}); err != nil {
+			log.Printf("engine: WAL replay batch Put failed for key %q: %v", br.Key, err)
+		}
 		if br.Version > maxVersion {
 			maxVersion = br.Version
 		}

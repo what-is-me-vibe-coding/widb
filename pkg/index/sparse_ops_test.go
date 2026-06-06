@@ -2,6 +2,7 @@ package index
 
 import (
 	"testing"
+	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -68,7 +69,7 @@ func TestBytesToValue_BoolAndTimestamp(t *testing.T) {
 		{name: "Bool_false", data: []byte{0}, dataType: common.TypeBool, wantVal: common.NewBool(false)},
 		{name: "Bool_非0值视为true", data: []byte{42}, dataType: common.TypeBool, wantVal: common.NewBool(true)},
 		{name: "Bool空bytes", data: []byte{}, dataType: common.TypeBool, wantVal: common.NewNull()},
-		{name: "Timestamp正常8字节", data: int64ToBytes(1700000000), dataType: common.TypeTimestamp, wantVal: common.NewInt64(1700000000)},
+		{name: "Timestamp正常8字节", data: int64ToBytes(1700000000), dataType: common.TypeTimestamp, wantVal: common.NewTimestamp(time.Unix(0, 1700000000))},
 		{name: "Timestamp不足8字节", data: []byte{1, 2, 3, 4, 5, 6, 7}, dataType: common.TypeTimestamp, wantVal: common.NewNull()},
 		{name: "Timestamp空bytes", data: []byte{}, dataType: common.TypeTimestamp, wantVal: common.NewNull()},
 	}

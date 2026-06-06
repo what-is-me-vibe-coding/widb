@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -219,7 +220,7 @@ func bytesToValue(b []byte, dataType common.DataType) common.Value {
 	case common.TypeTimestamp:
 		if len(b) >= 8 {
 			v := int64(binary.LittleEndian.Uint64(b))
-			return common.NewInt64(v)
+			return common.NewTimestamp(time.Unix(0, v))
 		}
 	case common.TypeString:
 		return common.NewString(string(b))

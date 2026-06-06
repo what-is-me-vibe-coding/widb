@@ -8,29 +8,42 @@ import (
 )
 
 var (
-	encoderOnce sync.Once
-	encoderVal  *zstd.Encoder
-	encoderErr  error
-
-	decoderOnce sync.Once
-	decoderVal  *zstd.Decoder
-	decoderErr  error
+	encoderPool sync.Pool
+	decoderPool sync.Pool
 )
 
-// initEncoder 延迟初始化 ZSTD 编码器，避免在 init() 中使用 panic。
-func initEncoder() (*zstd.Encoder, error) {
-	encoderOnce.Do(func() {
-		encoderVal, encoderErr = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
-	})
-	return encoderVal, encoderErr
+// getEncoder 从池中获取或创建 ZSTD 编码器。
+func getEncoder() (*zstd.Encoder, error) {
+	if v := encoderPool.Get(); v != nil {
+		return v.(*zstd.Encoder), nil
+	}
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	if err != nil {
+		return nil, fmt.Errorf("zstd encoder init: %w", err)
+	}
+	return enc, nil
 }
 
-// initDecoder 延迟初始化 ZSTD 解码器，避免在 init() 中使用 panic。
-func initDecoder() (*zstd.Decoder, error) {
-	decoderOnce.Do(func() {
-		decoderVal, decoderErr = zstd.NewReader(nil)
-	})
-	return decoderVal, decoderErr
+// putEncoder 将 ZSTD 编码器归还到池中。
+func putEncoder(enc *zstd.Encoder) {
+	encoderPool.Put(enc)
+}
+
+// getDecoder 从池中获取或创建 ZSTD 解码器。
+func getDecoder() (*zstd.Decoder, error) {
+	if v := decoderPool.Get(); v != nil {
+		return v.(*zstd.Decoder), nil
+	}
+	dec, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, fmt.Errorf("zstd decoder init: %w", err)
+	}
+	return dec, nil
+}
+
+// putDecoder 将 ZSTD 解码器归还到池中。
+func putDecoder(dec *zstd.Decoder) {
+	decoderPool.Put(dec)
 }
 
 // Compress 使用 ZSTD 压缩数据，返回压缩后的字节切片。
@@ -38,10 +51,11 @@ func Compress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
-	enc, err := initEncoder()
+	enc, err := getEncoder()
 	if err != nil {
-		return nil, fmt.Errorf("zstd encoder init: %w", err)
+		return nil, err
 	}
+	defer putEncoder(enc)
 	return enc.EncodeAll(data, nil), nil
 }
 
@@ -50,10 +64,11 @@ func Decompress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
-	dec, err := initDecoder()
+	dec, err := getDecoder()
 	if err != nil {
-		return nil, fmt.Errorf("zstd decoder init: %w", err)
+		return nil, err
 	}
+	defer putDecoder(dec)
 	result, err := dec.DecodeAll(data, nil)
 	if err != nil {
 		return nil, fmt.Errorf("zstd decompress: %w", err)

@@ -176,7 +176,7 @@ func (c *Catalog) UnregisterSegment(table string, segID uint64) error {
 	return fmt.Errorf("segment %d not found in table %q", segID, table)
 }
 
-// GetTable 按名称获取表定义（只读快照）。
+// GetTable 按名称获取表定义（返回深拷贝，避免外部修改内部状态）。
 func (c *Catalog) GetTable(name string) (*Table, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -185,7 +185,16 @@ func (c *Catalog) GetTable(name string) (*Table, error) {
 	if !ok {
 		return nil, common.ErrTableNotExist
 	}
-	return tbl, nil
+	// 深拷贝以防止外部修改内部状态
+	tblCopy := *tbl
+	tblCopy.Columns = make([]ColumnDef, len(tbl.Columns))
+	copy(tblCopy.Columns, tbl.Columns)
+	tblCopy.PrimaryKey = make([]string, len(tbl.PrimaryKey))
+	copy(tblCopy.PrimaryKey, tbl.PrimaryKey)
+	tblCopy.SegmentList = make([]SegmentRef, len(tbl.SegmentList))
+	copy(tblCopy.SegmentList, tbl.SegmentList)
+	tblCopy.colTypeMap = nil // 延迟重建
+	return &tblCopy, nil
 }
 
 // Snapshot 返回当前 Database 的一致快照。
