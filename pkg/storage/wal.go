@@ -204,27 +204,53 @@ func (w *WAL) Truncate() error {
 }
 
 // maybeRotate 在未持有锁时检查是否需要切分 WAL 文件。
+// 采用"先建后删"策略：先创建新文件，再重命名旧文件，
+// 避免在 Rename 成功但 Create 失败时导致 WAL 不可用。
 func (w *WAL) maybeRotate() error {
 	if w.offset < w.maxSize {
 		return nil
 	}
 
-	old := w.file
 	rotatedPath := w.path + ".prev"
 
+	// 先创建新文件，确保新文件可用后再处理旧文件
+	newF, err := os.Create(w.path + ".tmp")
+	if err != nil {
+		return fmt.Errorf("wal rotate create temp: %w", err)
+	}
+
+	// 关闭旧文件
+	old := w.file
 	if err := old.Close(); err != nil {
+		_ = newF.Close()
+		_ = os.Remove(w.path + ".tmp")
 		return fmt.Errorf("wal rotate close: %w", err)
 	}
 
+	// 重命名旧文件为 .prev
 	if err := os.Rename(w.path, rotatedPath); err != nil {
+		// 旧文件已关闭但重命名失败，尝试恢复：重新打开旧路径
+		_ = os.Remove(w.path + ".tmp")
+		recoveredF, recoverErr := os.OpenFile(w.path, os.O_RDWR|os.O_CREATE, 0644)
+		if recoverErr == nil {
+			w.file = recoveredF
+		}
 		return fmt.Errorf("wal rotate rename: %w", err)
 	}
 
-	f, err := os.Create(w.path)
-	if err != nil {
-		return fmt.Errorf("wal rotate create: %w", err)
+	// 将临时新文件重命名为正式 WAL 路径
+	if err := os.Rename(w.path+".tmp", w.path); err != nil {
+		// 极端情况：旧文件已重命名，新文件重命名失败
+		// 尝试将 .prev 改回来恢复
+		_ = os.Rename(rotatedPath, w.path)
+		recoveredF, recoverErr := os.OpenFile(w.path, os.O_RDWR|os.O_CREATE, 0644)
+		if recoverErr == nil {
+			w.file = recoveredF
+		}
+		return fmt.Errorf("wal rotate rename temp: %w", err)
 	}
-	w.file = f
+
+	w.file = newF
 	w.offset = 0
 	return nil
 }

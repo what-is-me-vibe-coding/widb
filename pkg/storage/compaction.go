@@ -78,14 +78,23 @@ func (c *Compactor) mergeSegments(segments []*Segment, cols []ColumnMeta) ([]mem
 		if err != nil {
 			return nil, fmt.Errorf("compactor: read segment %d: %w", seg.ID, err)
 		}
+		// 将 segment ID 附加到每行，用于去重时判断版本先后
+		for i := range rows {
+			rows[i].segID = seg.ID
+		}
 		allRows = append(allRows, rows...)
 	}
 
+	// 按 key 排序，同 key 时按 segment ID 升序排列，
+	// 这样去重时取最后一个即为最新版本
 	sort.Slice(allRows, func(i, j int) bool {
-		return allRows[i].Key < allRows[j].Key
+		if allRows[i].Key != allRows[j].Key {
+			return allRows[i].Key < allRows[j].Key
+		}
+		return allRows[i].segID < allRows[j].segID
 	})
 
-	// 去重：同一 key 保留最新版本（L0 Segment ID 更大，排在后面，取最后一个）
+	// 去重：同一 key 保留最新版本（segment ID 最大，排在最后）
 	deduped := make([]memRow, 0, len(allRows))
 	for i := range allRows {
 		if i > 0 && allRows[i].Key == allRows[i-1].Key {
@@ -243,4 +252,5 @@ func (c *Compactor) CleanupSegments(segments []*Segment) error {
 type memRow struct {
 	Key    string
 	Values []common.Value
+	segID  uint64 // 来源 segment ID，用于去重时判断版本先后
 }
