@@ -13,16 +13,16 @@ import (
 func verifyNullRow(t *testing.T, row storage.Row, nameExpected string, nameIsNull, ageIsNull bool, scoreVal float64, suffix string) {
 	t.Helper()
 	if nameIsNull {
-		if v := row.Columns["name"]; !v.IsNull() {
+		if v := row.Columns[colName]; !v.IsNull() {
 			t.Errorf("name%s: expected NULL, got %v", suffix, v)
 		}
-	} else if v := row.Columns["name"]; v.Str != nameExpected {
+	} else if v := row.Columns[colName]; v.Str != nameExpected {
 		t.Errorf("name%s: expected %s, got %s", suffix, nameExpected, v.Str)
 	}
-	if v := row.Columns["age"]; v.IsNull() != ageIsNull {
+	if v := row.Columns[colAge]; v.IsNull() != ageIsNull {
 		t.Errorf("age%s: isNull=%v, expected=%v", suffix, v.IsNull(), ageIsNull)
 	}
-	if v := row.Columns["score"]; !v.IsNull() {
+	if v := row.Columns[colScore]; !v.IsNull() {
 		if v.Float64 != scoreVal {
 			t.Errorf("score%s: expected %g, got %g", suffix, scoreVal, v.Float64)
 		}
@@ -44,16 +44,16 @@ func TestEndToEndNullValues(t *testing.T) {
 	defer func() { _ = eng.Close() }()
 
 	cols := []storage.ColumnMeta{
-		{ID: 0, Name: "name", Type: common.TypeString},
-		{ID: 1, Name: "age", Type: common.TypeInt64},
-		{ID: 2, Name: "score", Type: common.TypeFloat64},
+		{ID: 0, Name: colName, Type: common.TypeString},
+		{ID: 1, Name: colAge, Type: common.TypeInt64},
+		{ID: 2, Name: colScore, Type: common.TypeFloat64},
 	}
 
 	_ = eng.Write("row1", map[string]common.Value{
-		"name": common.NewString("alice"), "age": common.NewInt64(30), "score": common.NewNull(),
+		colName: common.NewString("alice"), colAge: common.NewInt64(30), colScore: common.NewNull(),
 	})
 	_ = eng.Write("row2", map[string]common.Value{
-		"name": common.NewNull(), "age": common.NewNull(), "score": common.NewFloat64(99.5),
+		colName: common.NewNull(), colAge: common.NewNull(), colScore: common.NewFloat64(99.5),
 	})
 
 	// 刷盘前验证

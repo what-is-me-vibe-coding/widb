@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	colName = "name"
-	colAge  = "age"
-	colVal  = "val"
+	colName  = "name"
+	colAge   = "age"
+	colVal   = "val"
+	colScore = "score"
+	colValue = "value"
 )
 
 // TestEndToEndWriteFlushScan 测试完整的写入→刷盘→扫描流程

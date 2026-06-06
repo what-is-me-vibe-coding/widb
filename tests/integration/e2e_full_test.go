@@ -17,7 +17,7 @@ func verifyMultiColRow(t *testing.T, row storage.Row, ts time.Time, suffix strin
 	if v := row.Columns["id"]; v.Int64 != 42 {
 		t.Errorf("id%s: expected 42, got %d", suffix, v.Int64)
 	}
-	if v := row.Columns["score"]; v.Float64 != 3.14 {
+	if v := row.Columns[colScore]; v.Float64 != 3.14 {
 		t.Errorf("score%s: expected 3.14, got %g", suffix, v.Float64)
 	}
 	if v := row.Columns["label"]; v.Str != "hello" {
@@ -47,7 +47,7 @@ func TestEndToEndMultiColumnTypes(t *testing.T) {
 
 	cols := []storage.ColumnMeta{
 		{ID: 0, Name: "id", Type: common.TypeInt64},
-		{ID: 1, Name: "score", Type: common.TypeFloat64},
+		{ID: 1, Name: colScore, Type: common.TypeFloat64},
 		{ID: 2, Name: "label", Type: common.TypeString},
 		{ID: 3, Name: "active", Type: common.TypeBool},
 		{ID: 4, Name: "created", Type: common.TypeTimestamp},
@@ -55,7 +55,7 @@ func TestEndToEndMultiColumnTypes(t *testing.T) {
 
 	ts := time.Date(2025, 6, 15, 10, 30, 0, 0, time.UTC)
 	_ = eng.Write("row1", map[string]common.Value{
-		"id": common.NewInt64(42), "score": common.NewFloat64(3.14),
+		"id": common.NewInt64(42), colScore: common.NewFloat64(3.14),
 		"label": common.NewString("hello"), "active": common.NewBool(true),
 		"created": common.NewTimestamp(ts),
 	})
@@ -93,14 +93,14 @@ func TestEndToEndBatchWriteAndScan(t *testing.T) {
 	defer func() { _ = eng.Close() }()
 
 	cols := []storage.ColumnMeta{
-		{ID: 0, Name: "name", Type: common.TypeString},
-		{ID: 1, Name: "value", Type: common.TypeInt64},
+		{ID: 0, Name: colName, Type: common.TypeString},
+		{ID: 1, Name: colValue, Type: common.TypeInt64},
 	}
 
 	batch := []storage.WriteRow{
-		{Key: "batch1", Values: map[string]common.Value{"name": common.NewString("alpha"), "value": common.NewInt64(10)}},
-		{Key: "batch2", Values: map[string]common.Value{"name": common.NewString("beta"), "value": common.NewInt64(20)}},
-		{Key: "batch3", Values: map[string]common.Value{"name": common.NewString("gamma"), "value": common.NewInt64(30)}},
+		{Key: "batch1", Values: map[string]common.Value{colName: common.NewString("alpha"), colValue: common.NewInt64(10)}},
+		{Key: "batch2", Values: map[string]common.Value{colName: common.NewString("beta"), colValue: common.NewInt64(20)}},
+		{Key: "batch3", Values: map[string]common.Value{colName: common.NewString("gamma"), colValue: common.NewInt64(30)}},
 	}
 
 	if err := eng.WriteBatch(batch); err != nil {
@@ -126,10 +126,10 @@ func TestEndToEndBatchWriteAndScan(t *testing.T) {
 	for _, r := range results {
 		resultMap[r.Key] = r.Value.Columns
 	}
-	if v := resultMap["batch1"]["name"]; v.Str != "alpha" {
+	if v := resultMap["batch1"][colName]; v.Str != "alpha" {
 		t.Errorf("batch1 name: expected alpha, got %s", v.Str)
 	}
-	if v := resultMap["batch2"]["value"]; v.Int64 != 20 {
+	if v := resultMap["batch2"][colValue]; v.Int64 != 20 {
 		t.Errorf("batch2 value: expected 20, got %d", v.Int64)
 	}
 }
@@ -148,14 +148,14 @@ func TestEndToEndMultipleFlushCycles(t *testing.T) {
 	}
 	defer func() { _ = eng.Close() }()
 
-	cols := []storage.ColumnMeta{{ID: 0, Name: "val", Type: common.TypeInt64}}
+	cols := []storage.ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
 
 	// 三轮写入-刷盘
 	for round := 0; round < 3; round++ {
 		k1 := fmt.Sprintf("k%d", round*2+1)
 		k2 := fmt.Sprintf("k%d", round*2+2)
-		_ = eng.Write(k1, map[string]common.Value{"val": common.NewInt64(int64(round*2 + 1))})
-		_ = eng.Write(k2, map[string]common.Value{"val": common.NewInt64(int64(round*2 + 2))})
+		_ = eng.Write(k1, map[string]common.Value{colVal: common.NewInt64(int64(round*2 + 1))})
+		_ = eng.Write(k2, map[string]common.Value{colVal: common.NewInt64(int64(round*2 + 2))})
 		if err := eng.Flush(cols); err != nil {
 			t.Fatalf("flush %d failed: %v", round+1, err)
 		}
@@ -177,7 +177,7 @@ func TestEndToEndMultipleFlushCycles(t *testing.T) {
 // writeAndFlush 写入一行并执行刷盘
 func writeAndFlush(t *testing.T, eng *storage.Engine, key string, val int64, cols []storage.ColumnMeta) {
 	t.Helper()
-	_ = eng.Write(key, map[string]common.Value{"val": common.NewInt64(val)})
+	_ = eng.Write(key, map[string]common.Value{colVal: common.NewInt64(val)})
 	if err := eng.Flush(cols); err != nil {
 		t.Fatalf("flush failed for key %s: %v", key, err)
 	}
@@ -197,7 +197,7 @@ func TestEndToEndCompactionDedup(t *testing.T) {
 	}
 	defer func() { _ = eng.Close() }()
 
-	cols := []storage.ColumnMeta{{ID: 0, Name: "val", Type: common.TypeInt64}}
+	cols := []storage.ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
 
 	// 三次覆盖 key "dup"，同时写入不同的 other key
 	writeAndFlush(t, eng, "dup", 1, cols)
@@ -217,7 +217,7 @@ func TestEndToEndCompactionDedup(t *testing.T) {
 	if !ok {
 		t.Fatal("expected to find key dup after compaction")
 	}
-	if v := row.Columns["val"]; v.Int64 != 3 {
+	if v := row.Columns[colVal]; v.Int64 != 3 {
 		t.Errorf("key dup: expected val=3 (latest), got %d", v.Int64)
 	}
 
@@ -259,7 +259,7 @@ func TestEndToEndConcurrentWriteRead(t *testing.T) {
 			defer wg.Done()
 			for k := 0; k < numKeysPerWriter; k++ {
 				key := fmt.Sprintf("w%d_k%d", writerID, k)
-				_ = eng.Write(key, map[string]common.Value{"val": common.NewInt64(int64(writerID*numKeysPerWriter + k))})
+				_ = eng.Write(key, map[string]common.Value{colVal: common.NewInt64(int64(writerID*numKeysPerWriter + k))})
 			}
 		}(w)
 	}
@@ -278,7 +278,7 @@ func TestEndToEndConcurrentWriteRead(t *testing.T) {
 	wg.Wait()
 
 	// 写入完成后验证所有数据可读
-	cols := []storage.ColumnMeta{{ID: 0, Name: "val", Type: common.TypeInt64}}
+	cols := []storage.ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
 	if err := eng.Flush(cols); err != nil {
 		t.Fatal(err)
 	}
@@ -301,8 +301,8 @@ func TestEndToEndEngineRecoveryAfterMultipleFlushes(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	cols := []storage.ColumnMeta{
-		{ID: 0, Name: "name", Type: common.TypeString},
-		{ID: 1, Name: "value", Type: common.TypeInt64},
+		{ID: 0, Name: colName, Type: common.TypeString},
+		{ID: 1, Name: colValue, Type: common.TypeInt64},
 	}
 
 	// 第一个引擎实例：多次写入和刷盘
@@ -314,7 +314,7 @@ func TestEndToEndEngineRecoveryAfterMultipleFlushes(t *testing.T) {
 	// 三轮刷盘
 	for i := 1; i <= 5; i++ {
 		_ = eng1.Write(fmt.Sprintf("key%d", i), map[string]common.Value{
-			"name": common.NewString(fmt.Sprintf("val%d", i)), "value": common.NewInt64(int64(i)),
+			colName: common.NewString(fmt.Sprintf("val%d", i)), colValue: common.NewInt64(int64(i)),
 		})
 		if i%2 == 0 {
 			if err := eng1.Flush(cols); err != nil {
@@ -329,7 +329,7 @@ func TestEndToEndEngineRecoveryAfterMultipleFlushes(t *testing.T) {
 
 	// 写入一条不刷盘的数据（在 WAL 中）
 	_ = eng1.Write("key6", map[string]common.Value{
-		"name": common.NewString("val6"), "value": common.NewInt64(6),
+		colName: common.NewString("val6"), colValue: common.NewInt64(6),
 	})
 
 	// 模拟崩溃：不调用 Close
@@ -347,10 +347,10 @@ func TestEndToEndEngineRecoveryAfterMultipleFlushes(t *testing.T) {
 			t.Errorf("expected to find key %s after recovery", key)
 			continue
 		}
-		if v := row.Columns["name"]; v.Str != fmt.Sprintf("val%d", i) {
+		if v := row.Columns[colName]; v.Str != fmt.Sprintf("val%d", i) {
 			t.Errorf("key %s name: expected val%d, got %s", key, i, v.Str)
 		}
-		if v := row.Columns["value"]; v.Int64 != int64(i) {
+		if v := row.Columns[colValue]; v.Int64 != int64(i) {
 			t.Errorf("key %s value: expected %d, got %d", key, i, v.Int64)
 		}
 	}
