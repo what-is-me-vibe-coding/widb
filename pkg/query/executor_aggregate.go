@@ -179,14 +179,18 @@ func (e *Executor) buildAggregateOutput(agg *AggregateNode, schema []ColumnDef, 
 }
 
 // buildGroupKey 构建分组键。
+// 使用 strings.Builder 避免创建临时字符串切片，减少内存分配。
 func buildGroupKey(groupBy []Expression, row map[string]common.Value, colIdxMap map[string]int) string {
 	if len(groupBy) == 0 {
 		return ""
 	}
-	parts := make([]string, len(groupBy))
+	var b strings.Builder
 	for i, gb := range groupBy {
+		if i > 0 {
+			b.WriteByte('|')
+		}
 		val, _ := evalExpr(gb, row, colIdxMap)
-		parts[i] = val.String()
+		b.WriteString(val.String())
 	}
-	return strings.Join(parts, "|")
+	return b.String()
 }
