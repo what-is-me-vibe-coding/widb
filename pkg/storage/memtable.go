@@ -198,9 +198,9 @@ func (m *MemTable) Put(key string, value Row) (Row, bool, error) {
 	estimatedSize := int64(len(key)) + estimateRowSize(value)
 	if exists {
 		oldSize := int64(len(key)) + estimateRowSize(old)
-		atomic.AddInt64(&m.size, estimatedSize-oldSize)
+		atomic.StoreInt64(&m.size, m.size+estimatedSize-oldSize)
 	} else {
-		atomic.AddInt64(&m.size, estimatedSize)
+		atomic.StoreInt64(&m.size, m.size+estimatedSize)
 	}
 
 	return old, exists, nil
@@ -226,7 +226,7 @@ func (m *MemTable) Delete(key string) (Row, bool, error) {
 	old, exists := m.tree.delete(key)
 	if exists {
 		estimatedSize := int64(len(key)) + estimateRowSize(old)
-		atomic.AddInt64(&m.size, -estimatedSize)
+		atomic.StoreInt64(&m.size, m.size-estimatedSize)
 	}
 
 	return old, exists, nil
