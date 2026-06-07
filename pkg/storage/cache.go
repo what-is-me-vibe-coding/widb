@@ -4,8 +4,6 @@ import (
 	"container/list"
 	"sync"
 	"time"
-
-	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
 // CacheKey 标识一个缓存条目，由 Segment ID 和列索引组成。
@@ -347,6 +345,3 @@ func (e *Engine) CacheStats() (blockStats CacheStats, indexEntries int) {
 	indexEntries = e.indexCache.Len()
 	return
 }
-
-// ensure common.Bitmap is available for estimateDecodedSize
-var _ = common.NewBitmap
