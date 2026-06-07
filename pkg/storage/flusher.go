@@ -36,6 +36,15 @@ func (f *Flusher) NextID() uint64 {
 	return f.nextID
 }
 
+// SetNextID updates the flusher's nextID if the given id is larger.
+func (f *Flusher) SetNextID(id uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id > f.nextID {
+		f.nextID = id
+	}
+}
+
 // NewFlusher 创建一个 Flusher 实例。
 func NewFlusher(dataDir string) *Flusher {
 	return &Flusher{dataDir: dataDir}

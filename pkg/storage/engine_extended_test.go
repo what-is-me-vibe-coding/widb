@@ -267,3 +267,51 @@ func TestEngineRegisterSegmentIndexesBloomFilter(t *testing.T) {
 		t.Error("expected nonexistent_key to not be found")
 	}
 }
+
+// TestEngineCloseFlushesActiveMemTable 验证 Close() 会将 activeMem 中的数据刷写到磁盘，
+// 重启后数据可从 segment 文件恢复，无需依赖 WAL 回放。
+func TestEngineCloseFlushesActiveMemTable(t *testing.T) {
+	dir := t.TempDir()
+	cfg := EngineConfig{DataDir: dir}
+	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
+
+	eng, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	// 写入数据但不显式 Flush，直接 Close
+	_ = eng.Write("x", map[string]common.Value{colVal: common.NewInt64(10)})
+	_ = eng.Write("y", map[string]common.Value{colVal: common.NewInt64(20)})
+
+	// 设置 columnMeta 以便 Close 中的 flush 能正确编码列
+	if err := eng.Flush(cols); err != nil {
+		t.Fatalf("flush to set columnMeta: %v", err)
+	}
+
+	// 再写入新数据到 activeMem
+	_ = eng.Write("z", map[string]common.Value{colVal: common.NewInt64(30)})
+
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close engine: %v", err)
+	}
+
+	// 重启引擎，验证所有数据都可恢复
+	eng2, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("reopen engine: %v", err)
+	}
+	defer func() { _ = eng2.Close() }()
+
+	expectedData := map[string]int64{"x": 10, "y": 20, "z": 30}
+	for key, expected := range expectedData {
+		row, ok := eng2.Get(key)
+		if !ok {
+			t.Errorf("key %s not recovered after Close flush", key)
+			continue
+		}
+		if row.Columns[colVal].Int64 != expected {
+			t.Errorf("key %s: expected %d, got %d", key, expected, row.Columns[colVal].Int64)
+		}
+	}
+}

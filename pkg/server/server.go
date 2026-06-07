@@ -145,7 +145,12 @@ func (s *Server) Start() error {
 
 	httpLn, err := net.Listen("tcp", s.cfg.HTTPAddr)
 	if err != nil {
+		// HTTP 监听失败，需优雅关闭已启动的 TCP goroutine
+		close(s.done)
 		_ = s.tcpListener.Close()
+		s.wg.Wait()
+		// 重置 done 通道，允许后续重试 Start
+		s.done = make(chan struct{})
 		return fmt.Errorf("server: listen http %s: %w", s.cfg.HTTPAddr, err)
 	}
 	s.httpListener = httpLn

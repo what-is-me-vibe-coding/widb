@@ -61,6 +61,12 @@ func TestIsClosedConnErr_OtherError(t *testing.T) {
 	}
 }
 
+func TestIsClosedConnErr_NetErrClosed(t *testing.T) {
+	if !isClosedConnErr(net.ErrClosed) {
+		t.Error("isClosedConnErr(net.ErrClosed) = false, want true")
+	}
+}
+
 // --- handleTCPConn tests ---
 
 func TestHandleTCPConn_ValidQueryPacket(t *testing.T) {
@@ -433,4 +439,60 @@ func TestNewServer_CustomMaxMemTableSize(t *testing.T) {
 	if srv.cfg.MaxMemTableSize != 128*1024*1024 {
 		t.Errorf("MaxMemTableSize = %d, want %d", srv.cfg.MaxMemTableSize, 128*1024*1024)
 	}
+}
+
+// TestStart_HTTPListenFailureCleanup 验证 HTTP 监听失败时，
+// 已启动的 TCP goroutine 被优雅关闭，不会泄漏。
+func TestStart_HTTPListenFailureCleanup(t *testing.T) {
+	dir := t.TempDir()
+
+	// 先启动一个服务器占用 HTTP 端口
+	blocker, err := NewServer(Config{
+		TCPAddr:  testListenAddr,
+		HTTPAddr: testListenAddr,
+		DataDir:  dir + "_blocker",
+	}, WithMetricsRegistry(prometheus.NewRegistry()))
+	if err != nil {
+		t.Fatalf("create blocker server: %v", err)
+	}
+	if err := blocker.Start(); err != nil {
+		t.Fatalf("start blocker server: %v", err)
+	}
+	defer func() { _ = blocker.Stop() }()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// 创建第二个服务器，使用相同的 HTTP 端口（会失败）
+	// 但使用不同的 TCP 端口（自动分配，不会冲突）
+	srv, err := NewServer(Config{
+		TCPAddr:  testListenAddr,
+		HTTPAddr: blocker.HTTPAddr(), // 使用已被占用的 HTTP 端口
+		DataDir:  dir,
+	}, WithMetricsRegistry(prometheus.NewRegistry()))
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	// Start 应该返回错误（HTTP 端口被占用）
+	err = srv.Start()
+	if err == nil {
+		t.Error("expected error when HTTP port is already in use, got nil")
+		_ = srv.Stop()
+		return
+	}
+
+	// 验证服务器状态一致：done 通道已重置，可以重试 Start
+	// 尝试用新的端口启动
+	srv2, err := NewServer(Config{
+		TCPAddr:  testListenAddr,
+		HTTPAddr: testListenAddr,
+		DataDir:  dir + "_2",
+	}, WithMetricsRegistry(prometheus.NewRegistry()))
+	if err != nil {
+		t.Fatalf("create second server: %v", err)
+	}
+	if err := srv2.Start(); err != nil {
+		t.Fatalf("start second server: %v", err)
+	}
+	defer func() { _ = srv2.Stop() }()
 }

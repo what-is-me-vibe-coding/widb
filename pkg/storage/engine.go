@@ -378,6 +378,9 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 		return fmt.Errorf("engine compact: cleanup: %w", err)
 	}
 
+	// 同步 flusher 的 nextID，避免后续 Flush 产生 segment ID 冲突
+	e.flusher.SetNextID(e.compactor.NextID())
+
 	return nil
 }
 
@@ -388,12 +391,41 @@ func (e *Engine) ShouldCompact() bool {
 	return e.l0Count() >= defaultL0CompactionThreshold
 }
 
-// Close 关闭引擎，停止后台调度器，同步并关闭 WAL。
+// Close 关闭引擎，停止后台调度器，刷写剩余内存数据，同步并关闭 WAL。
 func (e *Engine) Close() error {
 	// 先停止后台调度器，避免调度器在关闭过程中触发操作
 	if e.scheduler != nil {
 		e.scheduler.Stop()
 		e.scheduler = nil
+	}
+
+	e.mu.Lock()
+
+	// 将 activeMem 中未刷写的数据移入 immutable，确保 Close 后数据不丢失
+	if e.activeMem.Len() > 0 {
+		e.activeMem.Freeze()
+		e.immutable = append(e.immutable, e.activeMem)
+		e.activeMem = NewMemTableWithSize(e.activeMem.maxSize)
+	}
+
+	immutable := e.immutable
+	e.immutable = nil
+	cols := e.columnMeta
+	e.mu.Unlock()
+
+	// 尝试刷写所有 immutable memtable，确保数据持久化
+	// 刷写失败不阻止关闭流程，因为数据仍在 WAL 中，重启后可恢复
+	for _, mem := range immutable {
+		seg, err := e.flusher.Flush(mem, cols)
+		if err != nil {
+			continue
+		}
+		e.mu.Lock()
+		e.segments = append(e.segments, seg)
+		e.segmentMap[seg.ID] = seg
+		e.segmentLevels = append(e.segmentLevels, 0)
+		_ = e.registerSegmentIndexes(seg, 0)
+		e.mu.Unlock()
 	}
 
 	e.mu.Lock()

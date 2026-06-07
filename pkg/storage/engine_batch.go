@@ -29,13 +29,14 @@ func (e *Engine) WriteBatch(rows []WriteRow) error {
 	if err := e.wal.Sync(); err != nil {
 		return fmt.Errorf("engine write batch: sync: %w", err)
 	}
+	// 先写入所有行到 MemTable，全部成功后再递增版本号，避免部分失败导致版本号跳跃
+	baseVersion := e.nextVersion
 	for i := range rows {
-		v := e.nextVersion
-		e.nextVersion++
-		if _, _, err := e.activeMem.Put(rows[i].Key, Row{Version: v, Columns: rows[i].Values}); err != nil {
+		if _, _, err := e.activeMem.Put(rows[i].Key, Row{Version: baseVersion + uint64(i), Columns: rows[i].Values}); err != nil {
 			return fmt.Errorf("engine write batch: %w", err)
 		}
 	}
+	e.nextVersion += uint64(len(rows))
 	if e.activeMem.ShouldFlush() {
 		if err := e.rotateMemTable(); err != nil {
 			return fmt.Errorf("engine write batch: rotate: %w", err)

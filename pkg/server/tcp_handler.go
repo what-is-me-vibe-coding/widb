@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -161,6 +162,10 @@ func (s *Server) handlePing() (*Packet, error) {
 // isClosedConnErr 判断是否为连接关闭相关的错误。
 func isClosedConnErr(err error) bool {
 	if err == io.EOF {
+		return true
+	}
+	// 使用 errors.Is 检查 net.ErrClosed，兼容 Go 1.16+ 的错误包装
+	if errors.Is(err, net.ErrClosed) {
 		return true
 	}
 	opErr, ok := err.(*net.OpError)

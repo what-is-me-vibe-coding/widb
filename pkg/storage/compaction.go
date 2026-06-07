@@ -31,6 +31,13 @@ func (c *Compactor) SetNextID(id uint64) {
 	}
 }
 
+// NextID returns the compactor's current nextID.
+func (c *Compactor) NextID() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.nextID
+}
+
 // NewCompactor 创建一个 Compactor 实例。
 func NewCompactor(dataDir string) *Compactor {
 	return &Compactor{dataDir: dataDir}
