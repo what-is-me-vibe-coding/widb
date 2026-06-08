@@ -49,7 +49,7 @@ func TestMayContainString_UnregisteredSegment(t *testing.T) {
 func TestMayContainString_RegisteredSegment(t *testing.T) {
 	bi := NewBloomIndex()
 
-	keys := []string{"alpha", "beta", "gamma"}
+	keys := []string{testAlpha, testBeta, testGamma}
 	err := bi.BuildAndRegister(1, keys, DefaultBloomFPRate)
 	if err != nil {
 		t.Fatalf("BuildAndRegister: %v", err)

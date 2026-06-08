@@ -39,8 +39,8 @@ func TestEngineFlushWithColumnMeta(t *testing.T) {
 
 	// 写入数据
 	if err := eng.Write("key1", map[string]common.Value{
-		"id":   common.NewInt64(1),
-		"name": common.NewString("alice"),
+		"id":         common.NewInt64(1),
+		benchColName: common.NewString("alice"),
 	}); err != nil {
 		t.Fatalf("Write: %v", err)
 	}

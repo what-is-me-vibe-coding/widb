@@ -69,7 +69,7 @@ func TestAggregateFuncString(t *testing.T) {
 
 func TestAggregateExprString(t *testing.T) {
 	agg := AggregateExpr{Func: AggCount, Arg: nil}
-	if agg.String() != "COUNT(*)" {
+	if agg.String() != testAggCountStar {
 		t.Errorf("expected 'COUNT(*)', got %q", agg.String())
 	}
 
@@ -245,7 +245,7 @@ func TestParseAggFunc(t *testing.T) {
 		input    string
 		expected AggregateFunc
 	}{
-		{"count", testFuncCount, AggCount},
+		{aggNameCount, testFuncCount, AggCount},
 		{"sum", aggNameSum, AggSum},
 		{"min", testFuncMin, AggMin},
 		{"max", testFuncMax, AggMax},

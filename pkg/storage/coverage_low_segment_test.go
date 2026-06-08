@@ -133,7 +133,7 @@ func TestBuildEncodedColumnNullAppendErrorLowCov(t *testing.T) {
 	}
 
 	// Use an unsupported type to trigger an error in the column vector
-	colMeta := ColumnMeta{ID: 0, Name: "col", Type: common.DataType(99)}
+	colMeta := ColumnMeta{ID: 0, Name: crCol, Type: common.DataType(99)}
 	_, err := flusher.buildEncodedColumn(colMeta, rows, 1)
 	if err == nil {
 		t.Error("expected error for unsupported column type with null append, got nil")

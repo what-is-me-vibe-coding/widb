@@ -35,7 +35,7 @@ func TestWriteJSON_EncodingError(t *testing.T) {
 	}
 
 	// writeJSON should not panic even if the underlying writer fails
-	writeJSON(w, http.StatusOK, &Response{Code: 0, Message: "test"})
+	writeJSON(w, http.StatusOK, &Response{Code: 0, Message: testTableName})
 
 	// The function sets headers before writing, so headers should still be set
 	if w.Header().Get("Content-Type") != "application/json" {

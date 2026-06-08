@@ -8,6 +8,8 @@ import (
 )
 
 const crCol1 = "col1"
+const crCol0 = "col0"
+const crCol = "col"
 
 // ---------------------------------------------------------------------------
 // Compress / Decompress edge cases

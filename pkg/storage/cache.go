@@ -115,11 +115,14 @@ func (c *BlockCache) removeFromSegIndex(key CacheKey) {
 	keys := c.segIndex[key.SegmentID]
 	for i, k := range keys {
 		if k == key {
-			// 零化被移除的位置以防底层数组保留引用
-			keys[i] = CacheKey{}
-			copy(keys[i:], keys[i+1:])
-			keys[len(keys)-1] = CacheKey{}
-			c.segIndex[key.SegmentID] = keys[:len(keys)-1]
+			// 用最后一个元素覆盖被删除的位置，然后截断
+			// 不需要保持顺序，因为 Invalidate 会删除整个 segment 的所有缓存
+			lastIdx := len(keys) - 1
+			if i < lastIdx {
+				keys[i] = keys[lastIdx]
+			}
+			keys[lastIdx] = CacheKey{} // 零化防止内存泄漏
+			c.segIndex[key.SegmentID] = keys[:lastIdx]
 			break
 		}
 	}

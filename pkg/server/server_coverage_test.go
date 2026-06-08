@@ -211,7 +211,7 @@ func TestHandleTCPConn_WritePacketWithValidData(t *testing.T) {
 		Table: testTable,
 		Rows: []map[string]interface{}{
 			{"id": float64(1), testColName: "alice"},
-			{"id": float64(2), testColName: "bob"},
+			{"id": float64(2), testColName: testNameBob},
 		},
 	})
 	writePkt := NewPacket(PacketWrite, writePayload)

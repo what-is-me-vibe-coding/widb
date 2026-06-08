@@ -164,7 +164,7 @@ func TestConvertFuncExpr_StarArgV3(t *testing.T) {
 	if !ok {
 		t.Fatalf("期望 FuncExpr，得到 %T", sel.Columns[0].Expr)
 	}
-	if funcExpr.Name != "count" {
+	if funcExpr.Name != aggNameCount {
 		t.Errorf("期望函数名 count，得到 %s", funcExpr.Name)
 	}
 	if len(funcExpr.Args) != 1 {

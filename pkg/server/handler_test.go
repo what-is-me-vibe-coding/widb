@@ -21,6 +21,7 @@ const (
 	testColScore   = "score"
 	testStrHello   = "hello"
 	testColName    = "name"
+	testNameBob    = "bob"
 )
 
 // --- handleQuery / handleWrite 直接测试 ---
@@ -64,7 +65,7 @@ func TestHandleWriteSuccess(t *testing.T) {
 		Table: testTable,
 		Rows: []map[string]interface{}{
 			{"id": float64(1), testColName: testName},
-			{"id": float64(2), testColName: "bob"},
+			{"id": float64(2), testColName: testNameBob},
 		},
 	})
 	if err != nil {

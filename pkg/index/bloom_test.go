@@ -10,11 +10,15 @@ import (
 
 const testBloomKey1 = "key1"
 const testBloomKey2 = "key2"
+const testBloomKey3 = "key3"
+const testAlpha = "alpha"
+const testBeta = "beta"
+const testGamma = "gamma"
 
 func TestBloomIndexRegisterAndMayContain(t *testing.T) {
 	bi := NewBloomIndex()
 
-	keys := []string{testBloomKey1, testBloomKey2, "key3", "key4", "key5"}
+	keys := []string{testBloomKey1, testBloomKey2, testBloomKey3, "key4", "key5"}
 	data, err := BuildFromKeys(keys, DefaultBloomFPRate)
 	if err != nil {
 		t.Fatalf("BuildFromKeys: %v", err)
@@ -408,7 +412,7 @@ func TestBuildAndRegisterWithKeys(t *testing.T) {
 func TestBloomBuildAndRegister(t *testing.T) {
 	bi := NewBloomIndex()
 
-	keys := []string{testBloomKey1, testBloomKey2, "key3"}
+	keys := []string{testBloomKey1, testBloomKey2, testBloomKey3}
 	if err := bi.BuildAndRegister(1, keys, DefaultBloomFPRate); err != nil {
 		t.Fatalf("BuildAndRegister: %v", err)
 	}

@@ -262,7 +262,7 @@ func TestLoadFromSegment(t *testing.T) {
 	if !ok {
 		t.Fatal("expected column 1 stat to exist")
 	}
-	if css.MinValue.Str != "alpha" {
+	if css.MinValue.Str != testAlpha {
 		t.Errorf("expected Min 'alpha', got %q", css.MinValue.Str)
 	}
 }

@@ -189,7 +189,7 @@ func TestHandleTCPConn_WriteToNonExistentTable(t *testing.T) {
 	writePayload, _ := json.Marshal(WriteRequest{
 		Table: "nonexistent", //nolint:goconst
 		Rows: []map[string]interface{}{
-			{"id": float64(1), "name": "test"},
+			{"id": float64(1), "name": testTableName},
 		},
 	})
 	writePkt := NewPacket(PacketWrite, writePayload)

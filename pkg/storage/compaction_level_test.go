@@ -281,7 +281,7 @@ func TestCompactToLevelWithDifferentColumnTypes(t *testing.T) {
 			}
 			defer func() { _ = os.RemoveAll(dir) }()
 
-			cols := []ColumnMeta{{ID: 0, Name: "col", Type: tt.colType}}
+			cols := []ColumnMeta{{ID: 0, Name: crCol, Type: tt.colType}}
 			eng := setupEngine(t, dir, 64<<20)
 			writeRows(t, eng, cols, 10, 0)
 			if err := eng.Flush(cols); err != nil {

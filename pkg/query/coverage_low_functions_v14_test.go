@@ -373,7 +373,7 @@ func TestV14ParserConvertFuncExpr(t *testing.T) {
 		name, sql, funcName string
 		argCount            int
 	}{
-		{"COUNT(*)", "SELECT COUNT(*) FROM users", v14FuncCount, 1},
+		{testAggCountStar, "SELECT COUNT(*) FROM users", v14FuncCount, 1},
 		{v14FuncSumUpper, "SELECT SUM(age) FROM users", "sum", 1},
 		{"AVG", "SELECT AVG(score) FROM users", "avg", 1},
 		{v14FuncMinUpper, "SELECT MIN(age) FROM users", "min", 1},
