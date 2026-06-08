@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -424,16 +425,15 @@ func (e *Engine) Close() error {
 		e.segments = append(e.segments, seg)
 		e.segmentMap[seg.ID] = seg
 		e.segmentLevels = append(e.segmentLevels, 0)
-		_ = e.registerSegmentIndexes(seg, 0)
+		if err := e.registerSegmentIndexes(seg, 0); err != nil {
+			log.Printf("engine close: register segment %d indexes: %v", seg.ID, err)
+		}
 		e.mu.Unlock()
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if err := e.wal.Sync(); err != nil {
-		return fmt.Errorf("engine close: sync wal: %w", err)
-	}
 	if err := e.wal.Close(); err != nil {
 		return fmt.Errorf("engine close: close wal: %w", err)
 	}

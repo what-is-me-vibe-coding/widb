@@ -175,10 +175,15 @@ func (w *WAL) Size() int64 {
 	return w.offset
 }
 
-// Close 关闭 WAL 文件。
+// Close 同步并关闭 WAL 文件。
 func (w *WAL) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// 先同步缓冲区到磁盘，再关闭文件，确保数据持久化
+	if err := w.file.Sync(); err != nil {
+		_ = w.file.Close()
+		return fmt.Errorf("wal close sync: %w", err)
+	}
 	return w.file.Close()
 }
 
