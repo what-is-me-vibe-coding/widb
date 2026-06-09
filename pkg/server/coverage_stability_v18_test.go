@@ -67,7 +67,7 @@ func TestHandlePing_MarshalError_V18(t *testing.T) {
 		t.Fatalf("handlePing failed: %v", err)
 	}
 	if resp == nil {
-		t.Error("expected non-nil response")
+		t.Fatal("expected non-nil response")
 	}
 
 	var response Response

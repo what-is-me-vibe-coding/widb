@@ -13,7 +13,7 @@ func TestBuildAndRegister_InvalidFPRate_V18(t *testing.T) {
 	bi := NewBloomIndex()
 
 	// fpRate <= 0 应使用默认值
-	err := bi.BuildAndRegister(1, []string{"key1", "key2"}, 0)
+	err := bi.BuildAndRegister(1, []string{testBloomKey1, testBloomKey2}, 0)
 	if err != nil {
 		t.Errorf("BuildAndRegister with fpRate=0 should not error: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestBuildAndRegister_InvalidFPRate_V18(t *testing.T) {
 
 	// fpRate >= 1 应使用默认值
 	bi.Clear()
-	err = bi.BuildAndRegister(2, []string{"key3"}, 1.5)
+	err = bi.BuildAndRegister(2, []string{testBloomKey3}, 1.5)
 	if err != nil {
 		t.Errorf("BuildAndRegister with fpRate>=1 should not error: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestMayContain_UnregisteredSegment_V18(t *testing.T) {
 // TestBuildFromKeys_InvalidFPRate_V18 测试 BuildFromKeys 使用无效误判率时使用默认值。
 func TestBuildFromKeys_InvalidFPRate_V18(t *testing.T) {
 	// fpRate <= 0 应使用默认值
-	data, err := BuildFromKeys([]string{"key1"}, 0)
+	data, err := BuildFromKeys([]string{testBloomKey1}, 0)
 	if err != nil {
 		t.Errorf("BuildFromKeys with fpRate=0 should not error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestBuildFromKeys_InvalidFPRate_V18(t *testing.T) {
 	}
 
 	// fpRate >= 1 应使用默认值
-	data, err = BuildFromKeys([]string{"key2"}, 2.0)
+	data, err = BuildFromKeys([]string{testBloomKey2}, 2.0)
 	if err != nil {
 		t.Errorf("BuildFromKeys with fpRate>=1 should not error: %v", err)
 	}
