@@ -21,7 +21,7 @@ func TestEngineWrite_WALSyncFailure(t *testing.T) {
 		t.Fatalf("WAL Close failed: %v", err)
 	}
 
-	err = eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(1)})
+	err = eng.Write(crKey1, map[string]common.Value{colVal: common.NewInt64(1)})
 	if err == nil {
 		t.Error("expected error when WAL sync fails, got nil")
 	}
@@ -43,7 +43,7 @@ func TestEngineWrite_WALAppendFailure(t *testing.T) {
 		t.Fatalf("WAL file Close failed: %v", err)
 	}
 
-	err = eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(1)})
+	err = eng.Write(crKey1, map[string]common.Value{colVal: common.NewInt64(1)})
 	if err == nil {
 		t.Error("expected error when WAL append fails, got nil")
 	}
@@ -66,7 +66,7 @@ func TestEngineWriteBatch_WALSyncFailure(t *testing.T) {
 	}
 
 	rows := []WriteRow{
-		{Key: "key1", Values: map[string]common.Value{colVal: common.NewInt64(1)}},
+		{Key: crKey1, Values: map[string]common.Value{colVal: common.NewInt64(1)}},
 	}
 	err = eng.WriteBatch(rows)
 	if err == nil {
@@ -90,7 +90,7 @@ func TestEngineWriteBatch_WALAppendFailure(t *testing.T) {
 	}
 
 	rows := []WriteRow{
-		{Key: "key1", Values: map[string]common.Value{colVal: common.NewInt64(1)}},
+		{Key: crKey1, Values: map[string]common.Value{colVal: common.NewInt64(1)}},
 	}
 	err = eng.WriteBatch(rows)
 	if err == nil {
@@ -251,7 +251,7 @@ func TestEngineWrite_RotateMemTableFailure(t *testing.T) {
 	}
 
 	// Write enough data to trigger MemTable rotation
-	err = eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(1)})
+	err = eng.Write(crKey1, map[string]common.Value{colVal: common.NewInt64(1)})
 	if err == nil {
 		t.Error("expected error when MemTable rotation fails, got nil")
 	}
