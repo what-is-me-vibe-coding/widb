@@ -30,6 +30,9 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Create temp directory
+        run: mkdir -p ${{ runner.temp }}/gotest
+
       - name: Run tests with race detector
         run: go test -race -v -p=1 ./...
         env:
