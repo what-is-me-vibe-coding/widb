@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
+	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
@@ -14,31 +14,35 @@ import (
 
 // Engine 是存储引擎的核心结构。
 type Engine struct {
-	mu            sync.RWMutex
-	activeMem     *MemTable
-	immutable     []*MemTable
-	wal           *WAL
-	flusher       *Flusher
-	compactor     *Compactor
-	segments      []*Segment
-	segmentMap    map[uint64]*Segment
-	segmentLevels []int
-	nextVersion   uint64
-	primaryIndex  *index.PrimaryIndex
-	bloomIndex    *index.BloomIndex
-	sparseIndex   *index.SparseIndex
-	columnMeta    []ColumnMeta
-	blockCache    *BlockCache
-	indexCache    *IndexCache
-	scheduler     *Scheduler
+	mu             sync.RWMutex
+	activeMem      *MemTable
+	immutable      []*MemTable
+	wal            *WAL
+	flusher        *Flusher
+	compactor      *Compactor
+	segments       []*Segment
+	segmentMap     map[uint64]*Segment
+	segmentLevels  []int
+	nextVersion    uint64
+	primaryIndex   *index.PrimaryIndex
+	bloomIndex     *index.BloomIndex
+	sparseIndex    *index.SparseIndex
+	columnMeta     []ColumnMeta
+	blockCache     *BlockCache
+	indexCache     *IndexCache
+	scheduler      *Scheduler
+	groupCommitter *GroupCommitter
+	syncMode       SyncMode
 }
 
 // EngineConfig 是 Engine 的配置参数。
 type EngineConfig struct {
 	DataDir         string
 	MaxMemTableSize int64
-	BlockCacheSize  int64 // BlockCache 容量（字节），默认 256MB，<=0 表示不缓存
-	IndexCacheSize  int   // IndexCache 容量（条目数），默认 1000，<=0 表示不缓存
+	BlockCacheSize  int64         // BlockCache 容量（字节），默认 256MB，<=0 表示不缓存
+	IndexCacheSize  int           // IndexCache 容量（条目数），默认 1000，<=0 表示不缓存
+	SyncMode        SyncMode      // WAL 同步模式，默认 SyncEveryWrite
+	SyncInterval    time.Duration // GroupCommit 模式下的同步间隔，默认 1ms
 }
 
 // NewEngine 创建一个新的存储引擎实例。
@@ -73,6 +77,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		sparseIndex:  index.NewSparseIndex(),
 		blockCache:   NewBlockCache(blockCacheSize),
 		indexCache:   NewIndexCache(indexCacheSize),
+		syncMode:     cfg.SyncMode,
 	}
 
 	// Load existing segments from disk
@@ -97,25 +102,37 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	}
 	eng.wal = wal
 
+	// 启动 GroupCommitter（如果配置了 GroupCommit 模式）
+	if cfg.SyncMode == SyncGroupCommit {
+		eng.groupCommitter = NewGroupCommitter(wal, cfg.SyncInterval)
+	}
+
 	return eng, nil
 }
 
 // Write 向引擎写入一行数据。
 func (e *Engine) Write(key string, values map[string]common.Value) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	version := e.nextVersion
 
 	// Write to WAL first (write-ahead logging)
 	payload, err := serializeWriteRecord(key, version, values)
 	if err != nil {
+		e.mu.Unlock()
 		return fmt.Errorf("engine write: serialize wal: %w", err)
 	}
 	if err := e.wal.AppendWrite(payload); err != nil {
+		e.mu.Unlock()
 		return fmt.Errorf("engine write: wal append: %w", err)
 	}
-	if err := e.wal.Sync(); err != nil {
+
+	// 根据同步模式选择同步策略
+	var syncCh <-chan struct{}
+	if e.groupCommitter != nil {
+		syncCh = e.groupCommitter.Submit()
+	} else if err := e.wal.Sync(); err != nil {
+		e.mu.Unlock()
 		return fmt.Errorf("engine write: wal sync: %w", err)
 	}
 
@@ -128,110 +145,26 @@ func (e *Engine) Write(key string, values map[string]common.Value) error {
 
 	if e.activeMem.ShouldFlush() {
 		if err := e.rotateMemTable(); err != nil {
+			e.mu.Unlock()
 			return fmt.Errorf("engine write: rotate memtable: %w", err)
 		}
 	}
 
 	_, _, err = e.activeMem.Put(key, row)
 	if err != nil {
+		e.mu.Unlock()
 		return fmt.Errorf("engine write: %w", err)
 	}
 
+	e.mu.Unlock()
+
+	// GroupCommit 模式下，在引擎锁外等待 WAL sync 完成
+	// 这样其他写入可以在等待期间并行进行
+	if syncCh != nil {
+		<-syncCh
+	}
+
 	return nil
-}
-
-// Get 根据主键查询一行数据，查询路径：MemTable → Immutable → PrimaryIndex → BloomFilter → Segment。
-func (e *Engine) Get(key string) (Row, bool) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	if row, ok := e.activeMem.Get(key); ok {
-		return row, true
-	}
-
-	for i := len(e.immutable) - 1; i >= 0; i-- {
-		if row, ok := e.immutable[i].Get(key); ok {
-			return row, true
-		}
-	}
-
-	return e.getFromSegments(key)
-}
-
-func (e *Engine) getFromSegments(key string) (Row, bool) {
-	segIDs := e.primaryIndex.Lookup(key)
-	if len(segIDs) == 0 {
-		return Row{}, false
-	}
-
-	// Sort segment IDs in ascending order so that newer segments (higher IDs)
-	// are checked first when iterating in reverse.
-	sort.Slice(segIDs, func(i, j int) bool { return segIDs[i] < segIDs[j] })
-
-	// Iterate in reverse order: since segment IDs are monotonically increasing,
-	// higher IDs appear later in the slice, so reverse iteration checks
-	// newer segments first without allocating a sorted copy.
-	for i := len(segIDs) - 1; i >= 0; i-- {
-		segID := segIDs[i]
-		if !e.bloomIndex.MayContainString(segID, key) {
-			continue
-		}
-
-		seg := e.findSegmentByID(segID)
-		if seg == nil {
-			continue
-		}
-
-		rowIdx, found := seg.FindRowByKey(key)
-		if !found {
-			continue
-		}
-
-		// 创建新 map 而非清空复用，避免逐键删除的开销
-		columns := make(map[string]common.Value, len(e.columnMeta))
-		for colIdx, col := range e.columnMeta {
-			// 优先从 BlockCache 获取已解码的列数据
-			cacheKey := CacheKey{SegmentID: segID, ColumnIdx: uint32(colIdx)}
-			if dc, ok := e.blockCache.get(cacheKey); ok {
-				columns[col.Name] = extractValue(dc, rowIdx)
-			} else {
-				val, err := seg.GetColumnValue(uint32(colIdx), rowIdx)
-				if err != nil {
-					continue
-				}
-				columns[col.Name] = val
-			}
-		}
-		return Row{Version: seg.ID, Columns: columns}, true
-	}
-
-	return Row{}, false
-}
-
-func (e *Engine) findSegmentByID(segID uint64) *Segment {
-	return e.segmentMap[segID]
-}
-
-// Scan 扫描指定键范围内的所有行。
-// 使用 MergeIterator 合并所有数据源（MemTable、Immutable、Segment），
-// 结果按键排序，重复键取最新版本。
-func (e *Engine) Scan(start, end string) []struct {
-	Key   string
-	Value Row
-} {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	entries := e.ScanRange(start, end)
-	results := make([]struct {
-		Key   string
-		Value Row
-	}, len(entries))
-	for i, entry := range entries {
-		results[i].Key = entry.Key
-		results[i].Value = entry.Value
-	}
-	return results
 }
 
 // Flush 将内存表中的数据刷写到磁盘。
@@ -300,6 +233,11 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 	colMeta := e.columnMeta
 	e.mu.Unlock()
 
+	// GroupCommit 模式下，先确保所有待同步数据已刷盘，再写 checkpoint
+	if e.groupCommitter != nil {
+		e.groupCommitter.SyncNow()
+	}
+
 	checkpointPayload, err := serializeCheckpointRecord(flushVersion, colMeta)
 	if err != nil {
 		return fmt.Errorf("engine flush: serialize checkpoint: %w", err)
@@ -314,95 +252,18 @@ func (e *Engine) Flush(cols []ColumnMeta) error {
 	return nil
 }
 
-// Compact 执行 Tiered Compaction，将 L0 合并到 L1。
-func (e *Engine) Compact(cols []ColumnMeta) error {
-	e.mu.Lock()
-
-	// Sync compactor nextID with flusher to avoid segment ID conflicts
-	e.compactor.SetNextID(e.flusher.NextID())
-
-	l0Segments, _ := e.collectL0Segments()
-	if len(l0Segments) == 0 {
-		e.mu.Unlock()
-		return nil
-	}
-
-	l1Segments, _ := e.collectL1Segments()
-
-	allSegments := make([]*Segment, 0, len(l0Segments)+len(l1Segments))
-	allSegments = append(allSegments, l0Segments...)
-	allSegments = append(allSegments, l1Segments...)
-
-	// 记录待删除的 segment ID，而非索引，避免并发操作导致索引失效
-	compactIDs := make(map[uint64]struct{}, len(allSegments))
-	for _, seg := range allSegments {
-		compactIDs[seg.ID] = struct{}{}
-	}
-
-	e.mu.Unlock()
-
-	newSeg, err := e.compactor.Compact(allSegments, cols)
-	if err != nil {
-		return fmt.Errorf("engine compact: %w", err)
-	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// 先注册新 segment 的索引，再注销旧 segment 的索引，
-	// 确保任何时刻索引中都有数据可用，避免部分失败导致数据丢失。
-	e.segments = append(e.segments, newSeg)
-	e.segmentMap[newSeg.ID] = newSeg
-	e.segmentLevels = append(e.segmentLevels, 1)
-	if err := e.registerSegmentIndexes(newSeg, 1); err != nil {
-		// 注册新索引失败，回滚：移除刚添加的 segment
-		e.segments = e.segments[:len(e.segments)-1]
-		delete(e.segmentMap, newSeg.ID)
-		e.segmentLevels = e.segmentLevels[:len(e.segmentLevels)-1]
-		return fmt.Errorf("engine compact: %w", err)
-	}
-
-	// 新 segment 注册成功后，再注销旧 segment 的索引
-	for _, seg := range allSegments {
-		e.unregisterSegmentIndexes(seg.ID)
-		delete(e.segmentMap, seg.ID)
-	}
-
-	// 按 ID 删除旧 segment
-	remaining := make([]*Segment, 0, len(e.segments))
-	remainingLevels := make([]int, 0, len(e.segmentLevels))
-	for i, seg := range e.segments {
-		if _, ok := compactIDs[seg.ID]; !ok {
-			remaining = append(remaining, seg)
-			remainingLevels = append(remainingLevels, e.segmentLevels[i])
-		}
-	}
-	e.segments = remaining
-	e.segmentLevels = remainingLevels
-
-	if err := e.compactor.CleanupSegments(allSegments); err != nil {
-		return fmt.Errorf("engine compact: cleanup: %w", err)
-	}
-
-	// 同步 flusher 的 nextID，避免后续 Flush 产生 segment ID 冲突
-	e.flusher.SetNextID(e.compactor.NextID())
-
-	return nil
-}
-
-// ShouldCompact 判断是否需要执行 Compaction。
-func (e *Engine) ShouldCompact() bool {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.l0Count() >= defaultL0CompactionThreshold
-}
-
 // Close 关闭引擎，停止后台调度器，刷写剩余内存数据，同步并关闭 WAL。
 func (e *Engine) Close() error {
 	// 先停止后台调度器，避免调度器在关闭过程中触发操作
 	if e.scheduler != nil {
 		e.scheduler.Stop()
 		e.scheduler = nil
+	}
+
+	// 先停止 GroupCommitter，确保所有待同步数据已刷盘
+	if e.groupCommitter != nil {
+		e.groupCommitter.Close()
+		e.groupCommitter = nil
 	}
 
 	e.mu.Lock()
