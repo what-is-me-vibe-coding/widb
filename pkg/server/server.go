@@ -147,7 +147,7 @@ func (s *Server) Start() error {
 	if err != nil {
 		// HTTP 监听失败，需优雅关闭已启动的 TCP goroutine
 		close(s.done)
-		_ = s.tcpListener.Close()
+		_ = s.tcpListener.Close() // 错误路径，忽略关闭错误
 		s.wg.Wait()
 		// 重置 done 通道，允许后续重试 Start
 		s.done = make(chan struct{})
@@ -195,13 +195,13 @@ func (s *Server) Stop() error {
 	close(s.done)
 
 	if s.tcpListener != nil {
-		_ = s.tcpListener.Close()
+		_ = s.tcpListener.Close() // 关闭错误不影响主流程
 	}
 	if s.httpListener != nil {
-		_ = s.httpListener.Close()
+		_ = s.httpListener.Close() // 关闭错误不影响主流程
 	}
 	if s.httpServer != nil {
-		_ = s.httpServer.Close()
+		_ = s.httpServer.Close() // 关闭错误不影响主流程
 	}
 
 	s.wg.Wait()
@@ -298,7 +298,7 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 
 // convertWriteRow 将 JSON 行数据转换为存储引擎需要的格式。
 func (s *Server) convertWriteRow(
-	tbl *catalog.Table, row map[string]interface{},
+	tbl *catalog.Table, row map[string]any,
 ) (string, map[string]common.Value, error) {
 	values := make(map[string]common.Value, len(row))
 	colTypes := tbl.ColTypeMap()
@@ -325,7 +325,7 @@ func (s *Server) convertWriteRow(
 
 // buildPrimaryKey 从行数据中提取主键值，拼接为存储 key。
 func (s *Server) buildPrimaryKey(
-	tbl *catalog.Table, row map[string]interface{},
+	tbl *catalog.Table, row map[string]any,
 ) (string, error) {
 	var builder strings.Builder
 	for i, pk := range tbl.PrimaryKey {

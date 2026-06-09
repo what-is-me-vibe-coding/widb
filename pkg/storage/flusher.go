@@ -143,7 +143,7 @@ func encodeColumnVector(cv *ColumnVector) (*EncodedColumn, error) {
 	rowCount := cv.Len()
 	nulls := cv.NullBitmap()
 
-	var data interface{}
+	var data any
 	switch cv.Typ {
 	case common.TypeInt64:
 		data = cv.Int64Data()

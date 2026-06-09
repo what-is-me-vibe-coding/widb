@@ -37,7 +37,7 @@ func (s *Server) acceptTCP() {
 		// 检查连接数限制
 		if s.cfg.MaxConnections > 0 && s.connCount >= int64(s.cfg.MaxConnections) {
 			log.Printf("TCP 连接数已达上限 %d，拒绝新连接", s.cfg.MaxConnections)
-			_ = conn.Close()
+			_ = conn.Close() // 拒绝连接，忽略关闭错误
 			continue
 		}
 
@@ -51,7 +51,7 @@ func (s *Server) acceptTCP() {
 func (s *Server) handleTCPConn(conn net.Conn) {
 	defer s.wg.Done()
 	defer atomic.AddInt64(&s.connCount, -1)
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = conn.Close() }() // 连接处理结束，关闭错误不影响主流程
 
 	reader := bufio.NewReader(conn)
 

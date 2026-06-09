@@ -90,14 +90,14 @@ func (s *Server) httpHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	health := map[string]interface{}{
+	health := map[string]any{
 		"status":    "ok",
 		"timestamp": time.Now().Format(time.RFC3339Nano),
 	}
 
 	// 附加调度器统计信息
 	if stats, ok := s.storage.SchedulerStats(); ok {
-		health["scheduler"] = map[string]interface{}{
+		health["scheduler"] = map[string]any{
 			"flush_count":     stats.FlushCount,
 			"compact_count":   stats.CompactCount,
 			"wal_clean_count": stats.WALCleanCount,
@@ -109,7 +109,7 @@ func (s *Server) httpHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeJSON 将响应以 JSON 格式写入 HTTP 响应。
-func writeJSON(w http.ResponseWriter, statusCode int, v interface{}) {
+func writeJSON(w http.ResponseWriter, statusCode int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(v); err != nil {

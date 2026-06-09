@@ -9,7 +9,7 @@ import (
 
 // decodedColumn 缓存已解码的列数据，避免重复解压和解码。
 type decodedColumn struct {
-	data   interface{}
+	data   any
 	nulls  *common.Bitmap
 	typ    common.DataType
 	encTyp EncodingType
@@ -37,35 +37,35 @@ func extractValue(dc decodedColumn, row uint32) common.Value {
 	}
 }
 
-func extractInt64Value(data interface{}, row uint32) common.Value {
+func extractInt64Value(data any, row uint32) common.Value {
 	if ints, ok := data.([]int64); ok && row < uint32(len(ints)) {
 		return common.NewInt64(ints[row])
 	}
 	return common.NewNull()
 }
 
-func extractFloat64Value(data interface{}, row uint32) common.Value {
+func extractFloat64Value(data any, row uint32) common.Value {
 	if floats, ok := data.([]float64); ok && row < uint32(len(floats)) {
 		return common.NewFloat64(floats[row])
 	}
 	return common.NewNull()
 }
 
-func extractBoolValue(data interface{}, row uint32) common.Value {
+func extractBoolValue(data any, row uint32) common.Value {
 	if bools, ok := data.([]uint64); ok && row < uint32(len(bools)) {
 		return common.NewBool(bools[row] != 0)
 	}
 	return common.NewNull()
 }
 
-func extractStringValue(data interface{}, row uint32) common.Value {
+func extractStringValue(data any, row uint32) common.Value {
 	if strs, ok := data.([]string); ok && row < uint32(len(strs)) {
 		return common.NewString(strs[row])
 	}
 	return common.NewNull()
 }
 
-func extractTimestampValue(data interface{}, row uint32) common.Value {
+func extractTimestampValue(data any, row uint32) common.Value {
 	if times, ok := data.([]int64); ok && row < uint32(len(times)) {
 		return common.NewTimestamp(time.Unix(0, times[row]))
 	}

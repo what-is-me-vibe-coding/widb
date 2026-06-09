@@ -96,7 +96,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	} else {
 		// Replay WAL records to recover data
 		if err := eng.replayWALRecords(records); err != nil {
-			_ = wal.Close()
+			_ = wal.Close() // 错误路径，忽略关闭错误
 			return nil, fmt.Errorf("engine: replay wal: %w", err)
 		}
 	}
@@ -379,7 +379,7 @@ func (e *Engine) registerSegmentIndexes(seg *Segment, level int) error {
 
 // unregisterSegmentIndexes 从所有索引中注销 Segment，并清除相关缓存。
 func (e *Engine) unregisterSegmentIndexes(segID uint64) {
-	_ = e.primaryIndex.UnregisterSegment(segID)
+	_ = e.primaryIndex.UnregisterSegment(segID) // 注销失败不影响后续清理
 	e.bloomIndex.Unregister(segID)
 	e.sparseIndex.UnregisterSegment(segID)
 	e.blockCache.Invalidate(segID)

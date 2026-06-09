@@ -104,9 +104,9 @@ func (h compactionHeap) Less(i, j int) bool {
 	// key 相同时，segIdx 大的排在堆顶（优先处理）
 	return h[i].segIdx > h[j].segIdx
 }
-func (h compactionHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *compactionHeap) Push(x interface{}) { *h = append(*h, x.(*compactionEntry)) }
-func (h *compactionHeap) Pop() interface{} {
+func (h compactionHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *compactionHeap) Push(x any)   { *h = append(*h, x.(*compactionEntry)) }
+func (h *compactionHeap) Pop() any {
 	old := *h
 	n := len(old)
 	item := old[n-1]

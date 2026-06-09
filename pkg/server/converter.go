@@ -8,8 +8,8 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
 
-// interfaceToValue 将 interface{} 转换为 common.Value。
-func interfaceToValue(raw interface{}, typ common.DataType) (common.Value, error) {
+// interfaceToValue 将 any 转换为 common.Value。
+func interfaceToValue(raw any, typ common.DataType) (common.Value, error) {
 	if raw == nil {
 		return common.NewNull(), nil
 	}
@@ -38,8 +38,8 @@ func interfaceToValue(raw interface{}, typ common.DataType) (common.Value, error
 	}
 }
 
-// toInt64Value 将 interface{} 转换为 INT64 Value。
-func toInt64Value(raw interface{}) (common.Value, error) {
+// toInt64Value 将 any 转换为 INT64 Value。
+func toInt64Value(raw any) (common.Value, error) {
 	switch v := raw.(type) {
 	case float64:
 		return common.NewInt64(int64(v)), nil
@@ -52,8 +52,8 @@ func toInt64Value(raw interface{}) (common.Value, error) {
 	}
 }
 
-// toFloat64Value 将 interface{} 转换为 FLOAT64 Value。
-func toFloat64Value(raw interface{}) (common.Value, error) {
+// toFloat64Value 将 any 转换为 FLOAT64 Value。
+func toFloat64Value(raw any) (common.Value, error) {
 	switch v := raw.(type) {
 	case float64:
 		return common.NewFloat64(v), nil
@@ -66,8 +66,8 @@ func toFloat64Value(raw interface{}) (common.Value, error) {
 	}
 }
 
-// toTimestampValue 将 interface{} 转换为 TIMESTAMP Value。
-func toTimestampValue(raw interface{}) (common.Value, error) {
+// toTimestampValue 将 any 转换为 TIMESTAMP Value。
+func toTimestampValue(raw any) (common.Value, error) {
 	v, ok := raw.(string)
 	if !ok {
 		return common.NewNull(), fmt.Errorf("%w: expected timestamp string, got %T",
@@ -81,14 +81,14 @@ func toTimestampValue(raw interface{}) (common.Value, error) {
 }
 
 // chunksToRows 将 Chunk 切片转换为可 JSON 序列化的行数据。
-func chunksToRows(chunks []*storage.Chunk) []map[string]interface{} {
-	var result []map[string]interface{}
+func chunksToRows(chunks []*storage.Chunk) []map[string]any {
+	var result []map[string]any
 	for _, chunk := range chunks {
 		if chunk == nil {
 			continue
 		}
 		for i := uint32(0); i < chunk.RowCount(); i++ {
-			rowMap := make(map[string]interface{})
+			rowMap := make(map[string]any)
 			for colIdx := 0; colIdx < chunk.ColumnCount(); colIdx++ {
 				col, err := chunk.GetColumn(colIdx)
 				if err != nil {
@@ -105,8 +105,8 @@ func chunksToRows(chunks []*storage.Chunk) []map[string]interface{} {
 	return result
 }
 
-// valueToInterface 将 common.Value 转换为 interface{}。
-func valueToInterface(v common.Value) interface{} {
+// valueToInterface 将 common.Value 转换为 any。
+func valueToInterface(v common.Value) any {
 	if !v.Valid {
 		return nil
 	}

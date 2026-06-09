@@ -48,7 +48,7 @@ type EncodedColumn struct {
 }
 
 // EncodeColumn 根据数据类型和编码策略对列数据进行编码。
-func EncodeColumn(typ common.DataType, data interface{}, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+func EncodeColumn(typ common.DataType, data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	encoding := selectEncoding(typ, data, rowCount)
 	switch encoding {
 	case EncodingPlain:
@@ -65,7 +65,7 @@ func EncodeColumn(typ common.DataType, data interface{}, rowCount uint32, nulls 
 }
 
 // DecodeColumn 解码 EncodedColumn 为原始数据。
-func DecodeColumn(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
+func DecodeColumn(enc *EncodedColumn) (any, *common.Bitmap, error) {
 	switch enc.Encoding {
 	case EncodingPlain:
 		return decodePlain(enc)
@@ -80,7 +80,7 @@ func DecodeColumn(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
 	}
 }
 
-func selectEncoding(typ common.DataType, data interface{}, rowCount uint32) EncodingType {
+func selectEncoding(typ common.DataType, data any, rowCount uint32) EncodingType {
 	if typ == common.TypeBool {
 		return EncodingBitmap
 	}
@@ -95,7 +95,7 @@ func selectEncoding(typ common.DataType, data interface{}, rowCount uint32) Enco
 	return EncodingPlain
 }
 
-func isRLEInt64(data interface{}, rowCount uint32) bool {
+func isRLEInt64(data any, rowCount uint32) bool {
 	ints, ok := data.([]int64)
 	if !ok || len(ints) < 2 {
 		return false
@@ -109,7 +109,7 @@ func isRLEInt64(data interface{}, rowCount uint32) bool {
 	return float64(runCount)/float64(rowCount) <= rleThreshold
 }
 
-func encodePlain(typ common.DataType, data interface{}, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+func encodePlain(typ common.DataType, data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	if rowCount == 0 {
 		return &EncodedColumn{Encoding: EncodingPlain, Type: typ, RowCount: 0}, nil
 	}
@@ -190,7 +190,7 @@ func encodePlainStrings(strs []string, rowCount uint32, nulls *common.Bitmap) (*
 	return enc, nil
 }
 
-func encodeDict(typ common.DataType, data interface{}, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+func encodeDict(typ common.DataType, data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	if typ != common.TypeString {
 		return nil, fmt.Errorf("dict encode: only string type supported, got %v", typ)
 	}
@@ -240,7 +240,7 @@ func encodeDict(typ common.DataType, data interface{}, rowCount uint32, nulls *c
 	}, nil
 }
 
-func encodeRLE(typ common.DataType, data interface{}, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+func encodeRLE(typ common.DataType, data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	if typ != common.TypeInt64 {
 		return nil, fmt.Errorf("rle encode: only int64 type supported, got %v", typ)
 	}
@@ -283,7 +283,7 @@ func encodeRLE(typ common.DataType, data interface{}, rowCount uint32, nulls *co
 	}, nil
 }
 
-func encodeBitmap(data interface{}, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+func encodeBitmap(data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	bools, ok := data.([]uint64)
 	if !ok {
 		return nil, fmt.Errorf("bitmap encode: expected []uint64, got %T", data)
@@ -308,7 +308,7 @@ func encodeBitmap(data interface{}, rowCount uint32, nulls *common.Bitmap) (*Enc
 	return enc, nil
 }
 
-func decodePlain(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
+func decodePlain(enc *EncodedColumn) (any, *common.Bitmap, error) {
 	var nulls *common.Bitmap
 	if len(enc.Nulls) > 0 {
 		nulls = common.NewBitmapFromBytes(enc.Nulls)
@@ -349,7 +349,7 @@ func decodePlain(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
 	}
 }
 
-func decodeDict(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
+func decodeDict(enc *EncodedColumn) (any, *common.Bitmap, error) {
 	idxWidth := indexWidth(uint32(len(enc.Dict)), true)
 	nullMarker := nullMarkerForWidth(idxWidth)
 	strs := make([]string, enc.RowCount)
@@ -371,7 +371,7 @@ func decodeDict(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
 	return strs, nulls, nil
 }
 
-func decodeRLE(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
+func decodeRLE(enc *EncodedColumn) (any, *common.Bitmap, error) {
 	runCount := len(enc.Data) / 16
 	ints := make([]int64, enc.RowCount)
 	nulls := common.NewBitmap(enc.RowCount)
@@ -395,7 +395,7 @@ func decodeRLE(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
 	return ints, nulls, nil
 }
 
-func decodeBitmap(enc *EncodedColumn) (interface{}, *common.Bitmap, error) {
+func decodeBitmap(enc *EncodedColumn) (any, *common.Bitmap, error) {
 	bm := common.NewBitmapFromBytes(enc.Data)
 	bools := make([]uint64, enc.RowCount)
 	for i := uint32(0); i < enc.RowCount; i++ {

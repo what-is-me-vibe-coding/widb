@@ -108,14 +108,14 @@ type QueryRequest struct {
 
 // WriteRequest 是写入请求的 JSON 结构。
 type WriteRequest struct {
-	Table string                   `json:"table"`
-	Rows  []map[string]interface{} `json:"rows"`
+	Table string           `json:"table"`
+	Rows  []map[string]any `json:"rows"`
 }
 
 // Response 是统一的响应 JSON 结构。
 type Response struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
-	Rows    int         `json:"rows,omitempty"`
+	Code    int    `json:"code"`
+	Message string `json:"message,omitempty"`
+	Data    any    `json:"data,omitempty"`
+	Rows    int    `json:"rows,omitempty"`
 }
