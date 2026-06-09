@@ -234,14 +234,14 @@ func TestStats查询后更新(t *testing.T) {
 func TestClear清空所有(t *testing.T) {
 	bi := NewBloomIndex()
 
-	keys := []string{"key1"}
+	keys := []string{testBloomKey1}
 	err := bi.BuildAndRegister(1, keys, DefaultBloomFPRate)
 	if err != nil {
 		t.Fatalf("BuildAndRegister 失败: %v", err)
 	}
 
 	// 查询以更新统计
-	_ = bi.MayContain(1, []byte("key1"))
+	_ = bi.MayContain(1, []byte(testBloomKey1))
 
 	bi.Clear()
 
