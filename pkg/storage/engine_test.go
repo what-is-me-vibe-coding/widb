@@ -307,7 +307,7 @@ func TestEngineWriteBatchWithClosedWAL(t *testing.T) {
 	_ = eng.wal.Close()
 
 	rows := []WriteRow{
-		{Key: "key1", Values: map[string]common.Value{colVal: common.NewInt64(1)}},
+		{Key: crKey1, Values: map[string]common.Value{colVal: common.NewInt64(1)}},
 	}
 	err = eng.WriteBatch(rows)
 	if err == nil {

@@ -148,7 +148,7 @@ func TestGetColumnValueDecompressFailure(t *testing.T) {
 		Columns: []EncodedColumn{
 			{Encoding: EncodingPlain, Type: common.TypeInt64, RowCount: 1, Data: []byte{0xFF, 0xFE, 0xFD, 0xFC}},
 		},
-		Keys: []string{"key1"},
+		Keys: []string{crKey1},
 	}
 	_, err := seg.GetColumnValue(0, 0)
 	if err == nil {

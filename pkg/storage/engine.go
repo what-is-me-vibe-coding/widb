@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
@@ -162,6 +163,10 @@ func (e *Engine) getFromSegments(key string) (Row, bool) {
 	if len(segIDs) == 0 {
 		return Row{}, false
 	}
+
+	// Sort segment IDs in ascending order so that newer segments (higher IDs)
+	// are checked first when iterating in reverse.
+	sort.Slice(segIDs, func(i, j int) bool { return segIDs[i] < segIDs[j] })
 
 	// Iterate in reverse order: since segment IDs are monotonically increasing,
 	// higher IDs appear later in the slice, so reverse iteration checks
