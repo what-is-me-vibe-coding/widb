@@ -89,25 +89,35 @@ func chunksToRows(chunks []*storage.Chunk, colNames []string) []map[string]any {
 			continue
 		}
 		for i := uint32(0); i < chunk.RowCount(); i++ {
-			rowMap := make(map[string]any)
-			for colIdx := 0; colIdx < chunk.ColumnCount(); colIdx++ {
-				col, err := chunk.GetColumn(colIdx)
-				if err != nil {
-					continue
-				}
-				if i < col.Len() {
-					val := col.GetValue(i)
-					name := fmt.Sprintf("col_%d", colIdx)
-					if colNames != nil && colIdx < len(colNames) && colNames[colIdx] != "" {
-						name = colNames[colIdx]
-					}
-					rowMap[name] = valueToInterface(val)
-				}
-			}
-			result = append(result, rowMap)
+			result = append(result, buildRowMap(chunk, i, colNames))
 		}
 	}
 	return result
+}
+
+// buildRowMap 从 Chunk 中构建单行数据映射。
+func buildRowMap(chunk *storage.Chunk, rowIdx uint32, colNames []string) map[string]any {
+	rowMap := make(map[string]any)
+	for colIdx := 0; colIdx < chunk.ColumnCount(); colIdx++ {
+		col, err := chunk.GetColumn(colIdx)
+		if err != nil {
+			continue
+		}
+		if rowIdx < col.Len() {
+			val := col.GetValue(rowIdx)
+			name := columnName(colNames, colIdx)
+			rowMap[name] = valueToInterface(val)
+		}
+	}
+	return rowMap
+}
+
+// columnName 解析列名，优先使用 colNames 中指定名称，否则回退到 col_N 格式。
+func columnName(colNames []string, colIdx int) string {
+	if colNames != nil && colIdx < len(colNames) && colNames[colIdx] != "" {
+		return colNames[colIdx]
+	}
+	return fmt.Sprintf("col_%d", colIdx)
 }
 
 // valueToInterface 将 common.Value 转换为 any。
