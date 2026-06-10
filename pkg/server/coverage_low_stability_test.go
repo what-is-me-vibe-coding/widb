@@ -345,7 +345,7 @@ func TestIsClosedConnErr完整覆盖(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"io.EOF", io.EOF, true},
+		{testNameIOEOF, io.EOF, true},
 		{"普通错误", fmt.Errorf("some error"), false},
 		{"wrapped io.EOF", fmt.Errorf("wrapped: %w", io.EOF), false}, // isClosedConnErr 用 == 而非 errors.Is 检查 io.EOF
 	}

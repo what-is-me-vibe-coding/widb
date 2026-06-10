@@ -13,6 +13,8 @@ const (
 	v14OpAccept    = "accept"
 	v14OpRead      = "read"
 	v14Nonexistent = "nonexistent"
+	testNameIOEOF  = "io.EOF"
+	testNameNilErr = "nil error"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,7 +28,7 @@ func TestIsTransientAcceptErr(t *testing.T) {
 		want bool
 	}{
 		{"non-OpError", errors.New("some error"), false},
-		{"nil error", nil, false},
+		{testNameNilErr, nil, false},
 		{"OpError with timeout", &net.OpError{Op: v14OpAccept, Net: testNetTCP, Err: timeoutError{}}, true},
 		{"OpError resource temporarily unavailable", &net.OpError{Op: v14OpAccept, Net: testNetTCP, Err: errors.New("resource temporarily unavailable")}, true},
 		{"OpError too many open files", &net.OpError{Op: v14OpAccept, Net: testNetTCP, Err: errors.New("too many open files")}, true},
@@ -54,14 +56,14 @@ func TestIsClosedConnErr_Table(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"io.EOF", io.EOF, true},
+		{testNameIOEOF, io.EOF, true},
 		{"net.ErrClosed", net.ErrClosed, true},
 		{"wrapped net.ErrClosed", fmt.Errorf("wrapped: %w", net.ErrClosed), true},
 		{"double-wrapped net.ErrClosed", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", net.ErrClosed)), true},
 		{"timeout OpError", &net.OpError{Op: v14OpRead, Net: testNetTCP, Err: timeoutError{}}, true},
 		{"non-timeout OpError", &net.OpError{Op: v14OpRead, Net: testNetTCP, Err: errors.New("connection reset")}, false},
 		{"arbitrary error", errors.New("some error"), false},
-		{"nil error", nil, false},
+		{testNameNilErr, nil, false},
 		{"OpError empty Err", &net.OpError{Op: v14OpRead, Net: testNetTCP, Err: errors.New("")}, false},
 	}
 	for _, tt := range tests {

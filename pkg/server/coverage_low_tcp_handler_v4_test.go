@@ -92,11 +92,11 @@ func TestIsClosedConnErr_V4(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"io.EOF", io.EOF, true},
+		{testNameIOEOF, io.EOF, true},
 		{"net.ErrClosed", net.ErrClosed, true},
 		{"wrapped net.ErrClosed", fmt.Errorf("wrap: %w", net.ErrClosed), true},
 		{"regular error", errors.New("something else"), false},
-		{"nil error", nil, false},
+		{testNameNilError, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,22 +120,22 @@ func TestIsTransientAcceptErr_V4(t *testing.T) {
 	}{
 		{
 			"timeout OpError",
-			&net.OpError{Op: "accept", Net: testNetTCP, Err: timeoutError{}},
+			&net.OpError{Op: v14OpAccept, Net: testNetTCP, Err: timeoutError{}},
 			true,
 		},
 		{
 			"non-timeout OpError with resource temporarily unavailable",
-			&net.OpError{Op: "accept", Net: testNetTCP, Err: errors.New("resource temporarily unavailable")},
+			&net.OpError{Op: v14OpAccept, Net: testNetTCP, Err: errors.New("resource temporarily unavailable")},
 			true,
 		},
 		{
 			"non-timeout OpError with too many open files",
-			&net.OpError{Op: "accept", Net: testNetTCP, Err: errors.New("too many open files")},
+			&net.OpError{Op: v14OpAccept, Net: testNetTCP, Err: errors.New("too many open files")},
 			true,
 		},
 		{
 			"non-timeout OpError with other message",
-			&net.OpError{Op: "accept", Net: testNetTCP, Err: errors.New("connection refused")},
+			&net.OpError{Op: v14OpAccept, Net: testNetTCP, Err: errors.New("connection refused")},
 			false,
 		},
 		{
@@ -144,7 +144,7 @@ func TestIsTransientAcceptErr_V4(t *testing.T) {
 			false,
 		},
 		{
-			"nil error",
+			testNameNilError,
 			nil,
 			false,
 		},

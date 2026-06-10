@@ -207,10 +207,9 @@ func TestWriteSegmentWriteFileFails(t *testing.T) {
 
 func TestSegmentBuildNoColumns(t *testing.T) {
 	builder := NewSegmentBuilder(1, "a", "z")
-	seg, err := builder.Build()
+	_, err := builder.Build()
 	if err == nil {
 		t.Fatal("expected error when building segment with no columns")
-		_ = seg
 	}
 }
 
@@ -219,10 +218,9 @@ func TestSegmentBuildOnlyNilColumns(t *testing.T) {
 	builder.AddEncodedColumn(nil)
 	builder.AddEncodedColumn(nil)
 
-	seg, err := builder.Build()
+	_, err := builder.Build()
 	if err == nil {
 		t.Fatal("expected error when building segment with only nil columns")
-		_ = seg
 	}
 }
 
