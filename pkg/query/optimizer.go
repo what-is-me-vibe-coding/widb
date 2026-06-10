@@ -226,7 +226,17 @@ func (r *ConstantFoldingRule) foldBinaryExpr(e *BinaryExpr) Expression {
 		return e
 	}
 
-	switch e.Op {
+	if result := r.foldComparisonOps(leftLit, rightLit, e.Op); result != nil {
+		return result
+	}
+	if result := r.foldLogicalOps(leftLit, rightLit, e.Op); result != nil {
+		return result
+	}
+	return e
+}
+
+func (r *ConstantFoldingRule) foldComparisonOps(leftLit, rightLit *LiteralExpr, op BinaryOp) Expression {
+	switch op {
 	case OpEq:
 		return &LiteralExpr{Value: common.NewBool(leftLit.Value.Equal(rightLit.Value))}
 	case OpNe:
@@ -239,6 +249,12 @@ func (r *ConstantFoldingRule) foldBinaryExpr(e *BinaryExpr) Expression {
 		return &LiteralExpr{Value: common.NewBool(!rightLit.Value.Less(leftLit.Value))}
 	case OpGe:
 		return &LiteralExpr{Value: common.NewBool(!leftLit.Value.Less(rightLit.Value))}
+	}
+	return nil
+}
+
+func (r *ConstantFoldingRule) foldLogicalOps(leftLit, rightLit *LiteralExpr, op BinaryOp) Expression {
+	switch op {
 	case OpAnd:
 		lb := isTruthy(leftLit.Value)
 		rb := isTruthy(rightLit.Value)
@@ -248,8 +264,7 @@ func (r *ConstantFoldingRule) foldBinaryExpr(e *BinaryExpr) Expression {
 		rb := isTruthy(rightLit.Value)
 		return &LiteralExpr{Value: common.NewBool(lb || rb)}
 	}
-
-	return e
+	return nil
 }
 
 func (r *ConstantFoldingRule) foldUnaryExpr(e *UnaryExpr) Expression {
