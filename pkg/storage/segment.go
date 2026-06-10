@@ -280,8 +280,14 @@ func computeStringStats(data []byte, offsets []uint32, rowCount uint32, nulls *c
 		if nulls != nil && nulls.Get(i) {
 			continue
 		}
+		if int(i+1) >= len(offsets) {
+			break
+		}
 		start := offsets[i]
 		end := offsets[i+1]
+		if int(end) > len(data) || int(start) > len(data) {
+			break
+		}
 		s := string(data[start:end])
 		if first {
 			minStr, maxStr = s, s

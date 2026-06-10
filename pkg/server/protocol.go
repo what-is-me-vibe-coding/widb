@@ -75,6 +75,11 @@ func DecodePacket(r io.Reader) (*Packet, error) {
 			pkt.Magic, Magic)
 	}
 
+	if pkt.Version != ProtocolVersion {
+		return nil, fmt.Errorf("decode packet: unsupported version %d, expected %d",
+			pkt.Version, ProtocolVersion)
+	}
+
 	if pkt.Length > MaxPacketSize {
 		return nil, fmt.Errorf("decode packet: payload size %d exceeds maximum %d",
 			pkt.Length, MaxPacketSize)

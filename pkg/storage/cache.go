@@ -272,13 +272,22 @@ func (c *IndexCache) GetColumnStats(segmentID uint64) ([]ColumnStat, bool) {
 		return nil, false
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	c.mu.RLock()
 	if elem, ok := c.items[segmentID]; ok {
-		c.order.MoveToFront(elem)
-		return elem.Value.(*indexCacheEntry).stats, true
+		stats := elem.Value.(*indexCacheEntry).stats
+		c.mu.RUnlock()
+
+		// LRU 移动需要写锁，单独获取
+		c.mu.Lock()
+		// 重新检查，因为期间可能被淘汰
+		if elem, ok := c.items[segmentID]; ok {
+			c.order.MoveToFront(elem)
+		}
+		c.mu.Unlock()
+
+		return stats, true
 	}
+	c.mu.RUnlock()
 
 	return nil, false
 }
