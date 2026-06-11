@@ -30,13 +30,8 @@ func (e *Engine) getFromSegments(key string) (Row, bool) {
 		return Row{}, false
 	}
 
-	// Sort segment IDs in ascending order so that newer segments (higher IDs)
-	// are checked first when iterating in reverse.
 	sort.Slice(segIDs, func(i, j int) bool { return segIDs[i] < segIDs[j] })
 
-	// Iterate in reverse order: since segment IDs are monotonically increasing,
-	// higher IDs appear later in the slice, so reverse iteration checks
-	// newer segments first without allocating a sorted copy.
 	for i := len(segIDs) - 1; i >= 0; i-- {
 		segID := segIDs[i]
 		if !e.bloomIndex.MayContainString(segID, key) {
@@ -53,28 +48,35 @@ func (e *Engine) getFromSegments(key string) (Row, bool) {
 			continue
 		}
 
-		// 创建新 map 而非清空复用，避免逐键删除的开销
-		columns := make(map[string]common.Value, len(e.columnMeta))
-		for colIdx, col := range e.columnMeta {
-			cacheKey := CacheKey{SegmentID: segID, ColumnIdx: uint32(colIdx)}
-			if dc, ok := e.blockCache.get(cacheKey); ok {
-				columns[col.Name] = extractValue(dc, rowIdx)
-			} else {
-				val, err := seg.GetColumnValue(uint32(colIdx), rowIdx)
-				if err != nil {
-					continue
-				}
-				columns[col.Name] = val
-				// Cache the decoded column for future queries
-				if dc, ok := seg.getColCache(uint32(colIdx)); ok {
-					e.blockCache.put(cacheKey, dc)
-				}
-			}
-		}
+		columns := e.fetchColumnsFromSegment(seg, segID, rowIdx)
 		return Row{Version: seg.ID, Columns: columns}, true
 	}
 
 	return Row{}, false
+}
+
+// fetchColumnsFromSegment 从 Segment 中提取指定行所有列的值，优先从 BlockCache 读取。
+// 解码后的列数据在大小允许时写入 BlockCache，防止大体积冷数据驱逐热数据。
+func (e *Engine) fetchColumnsFromSegment(seg *Segment, segID uint64, rowIdx uint32) map[string]common.Value {
+	columns := make(map[string]common.Value, len(e.columnMeta))
+	for colIdx, col := range e.columnMeta {
+		cacheKey := CacheKey{SegmentID: segID, ColumnIdx: uint32(colIdx)}
+		if dc, ok := e.blockCache.get(cacheKey); ok {
+			columns[col.Name] = extractValue(dc, rowIdx)
+			continue
+		}
+		val, err := seg.GetColumnValue(uint32(colIdx), rowIdx)
+		if err != nil {
+			continue
+		}
+		columns[col.Name] = val
+		if dc, ok := seg.getColCache(uint32(colIdx)); ok {
+			if estimateDecodedSize(dc) <= e.blockCacheMaxEntrySize {
+				e.blockCache.put(cacheKey, dc)
+			}
+		}
+	}
+	return columns
 }
 
 func (e *Engine) findSegmentByID(segID uint64) *Segment {
@@ -82,8 +84,6 @@ func (e *Engine) findSegmentByID(segID uint64) *Segment {
 }
 
 // Scan 扫描指定键范围内的所有行。
-// 使用 MergeIterator 合并所有数据源（MemTable、Immutable、Segment），
-// 结果按键排序，重复键取最新版本。
 func (e *Engine) Scan(start, end string) []struct {
 	Key   string
 	Value Row
