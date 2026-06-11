@@ -169,37 +169,42 @@ const (
 
 func evalArithmetic(left, right common.Value, op arithOp) (common.Value, error) {
 	if left.Typ == common.TypeFloat64 || right.Typ == common.TypeFloat64 {
-		lf := toFloat64(left)
-		rf := toFloat64(right)
-		switch op {
-		case opAdd:
-			return common.NewFloat64(lf + rf), nil
-		case opSub:
-			return common.NewFloat64(lf - rf), nil
-		case opMul:
-			return common.NewFloat64(lf * rf), nil
-		case opDiv:
-			if rf == 0 {
-				return common.NewNull(), nil
-			}
-			return common.NewFloat64(lf / rf), nil
-		}
+		return evalFloatArithmetic(toFloat64(left), toFloat64(right), op)
 	}
+	return evalIntArithmetic(left.Int64, right.Int64, op)
+}
 
+func evalFloatArithmetic(lf, rf float64, op arithOp) (common.Value, error) {
 	switch op {
 	case opAdd:
-		return common.NewInt64(left.Int64 + right.Int64), nil
+		return common.NewFloat64(lf + rf), nil
 	case opSub:
-		return common.NewInt64(left.Int64 - right.Int64), nil
+		return common.NewFloat64(lf - rf), nil
 	case opMul:
-		return common.NewInt64(left.Int64 * right.Int64), nil
+		return common.NewFloat64(lf * rf), nil
 	case opDiv:
-		if right.Int64 == 0 {
+		if rf == 0 {
 			return common.NewNull(), nil
 		}
-		return common.NewInt64(left.Int64 / right.Int64), nil
+		return common.NewFloat64(lf / rf), nil
 	}
+	return common.NewNull(), nil
+}
 
+func evalIntArithmetic(li, ri int64, op arithOp) (common.Value, error) {
+	switch op {
+	case opAdd:
+		return common.NewInt64(li + ri), nil
+	case opSub:
+		return common.NewInt64(li - ri), nil
+	case opMul:
+		return common.NewInt64(li * ri), nil
+	case opDiv:
+		if ri == 0 {
+			return common.NewNull(), nil
+		}
+		return common.NewInt64(li / ri), nil
+	}
 	return common.NewNull(), nil
 }
 

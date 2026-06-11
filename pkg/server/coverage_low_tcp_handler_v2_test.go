@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+// 测试用例中重复使用的字符串常量，避免 goconst 重复字符串警告
+const (
+	testNameIncompleteJSON = "不完整JSON"
+	testNamePureNumber     = "纯数字"
+	testNameBinaryGarbage  = "二进制垃圾"
+)
+
 // ---------------------------------------------------------------------------
 // handleQueryPacket JSON 反序列化错误路径（tcp_handler.go:113）
 // ---------------------------------------------------------------------------
@@ -20,11 +27,11 @@ func TestHandleQueryPacketBadJSONCov_V2(t *testing.T) {
 		payload []byte
 	}{
 		{"空字节", []byte{}},
-		{"不完整JSON", []byte("{")},
-		{"纯数字", []byte("42")},
+		{testNameIncompleteJSON, []byte("{")},
+		{testNamePureNumber, []byte("42")},
 		{"数组", []byte(`[1,2,3]`)},
 		{"布尔值", []byte("true")},
-		{"二进制垃圾", []byte{0x00, 0x01, 0x02, 0xFF}},
+		{testNameBinaryGarbage, []byte{0x00, 0x01, 0x02, 0xFF}},
 		{"无效UTF8", []byte("\xff\xfe\xfd")},
 	}
 	for _, tt := range tests {
@@ -76,11 +83,11 @@ func TestHandleWritePacketBadJSONCov_V2(t *testing.T) {
 		payload []byte
 	}{
 		{"空字节", []byte{}},
-		{"不完整JSON", []byte("{")},
-		{"纯数字", []byte("42")},
+		{testNameIncompleteJSON, []byte("{")},
+		{testNamePureNumber, []byte("42")},
 		{"字符串", []byte(`"hello"`)},
 		{"布尔值", []byte("false")},
-		{"二进制垃圾", []byte{0xDE, 0xAD, 0xBE, 0xEF}},
+		{testNameBinaryGarbage, []byte{0xDE, 0xAD, 0xBE, 0xEF}},
 		{"无效UTF8", []byte("\xff\xfe")},
 	}
 	for _, tt := range tests {

@@ -35,31 +35,51 @@ func newAccumulators(aggs []AggregateExpr) []accumulator {
 func (a *accumulator) update(val common.Value) {
 	switch a.funcType {
 	case AggCount:
-		a.count++
+		a.updateCount()
 	case AggSum:
-		if val.Valid {
-			a.count++
-			a.sum += toFloat64(val)
-		}
+		a.updateSum(val)
 	case AggMin:
-		if val.Valid {
-			if !a.hasValue || val.Less(a.minVal) {
-				a.minVal = val
-			}
-			a.hasValue = true
-		}
+		a.updateMin(val)
 	case AggMax:
-		if val.Valid {
-			if !a.hasValue || a.maxVal.Less(val) {
-				a.maxVal = val
-			}
-			a.hasValue = true
-		}
+		a.updateMax(val)
 	case AggAvg:
-		if val.Valid {
-			a.count++
-			a.sum += toFloat64(val)
+		a.updateAvg(val)
+	}
+}
+
+func (a *accumulator) updateCount() {
+	a.count++
+}
+
+func (a *accumulator) updateSum(val common.Value) {
+	if val.Valid {
+		a.count++
+		a.sum += toFloat64(val)
+	}
+}
+
+func (a *accumulator) updateMin(val common.Value) {
+	if val.Valid {
+		if !a.hasValue || val.Less(a.minVal) {
+			a.minVal = val
 		}
+		a.hasValue = true
+	}
+}
+
+func (a *accumulator) updateMax(val common.Value) {
+	if val.Valid {
+		if !a.hasValue || a.maxVal.Less(val) {
+			a.maxVal = val
+		}
+		a.hasValue = true
+	}
+}
+
+func (a *accumulator) updateAvg(val common.Value) {
+	if val.Valid {
+		a.count++
+		a.sum += toFloat64(val)
 	}
 }
 
@@ -104,7 +124,10 @@ func (e *Executor) executeAggregate(agg *AggregateNode) (*execResult, error) {
 	groupAccum, groupRows, groupOrder := e.aggregateRows(agg, childResult, inputSchema, colIdxMap)
 
 	schema := agg.Schema()
-	outputCols := e.buildAggregateOutput(agg, schema, groupAccum, groupRows, groupOrder, colIdxMap)
+	outputCols, err := e.buildAggregateOutput(agg, schema, groupAccum, groupRows, groupOrder, colIdxMap)
+	if err != nil {
+		return nil, err
+	}
 
 	output := storage.NewChunk(defaultChunkSize)
 	for _, col := range outputCols {
@@ -151,7 +174,7 @@ func (e *Executor) aggregateRows(agg *AggregateNode, childResult *execResult, in
 	return groupAccum, groupRows, groupOrder
 }
 
-func (e *Executor) buildAggregateOutput(agg *AggregateNode, schema []ColumnDef, groupAccum map[string][]accumulator, groupRows map[string]*groupRow, groupOrder []string, colIdxMap map[string]int) []*storage.ColumnVector {
+func (e *Executor) buildAggregateOutput(agg *AggregateNode, schema []ColumnDef, groupAccum map[string][]accumulator, groupRows map[string]*groupRow, groupOrder []string, colIdxMap map[string]int) ([]*storage.ColumnVector, error) {
 	outputCols := make([]*storage.ColumnVector, len(schema))
 	for i, colDef := range schema {
 		outputCols[i] = storage.NewColumnVector(uint32(i), colDef.Type, uint32(len(groupOrder)))
@@ -164,18 +187,22 @@ func (e *Executor) buildAggregateOutput(agg *AggregateNode, schema []ColumnDef, 
 
 		for _, gb := range agg.GroupBy {
 			val, _ := evalExpr(gb, gr.values, colIdxMap)
-			_ = outputCols[colIdx].Append(coerceValue(val, schema[colIdx].Type))
+			if err := outputCols[colIdx].Append(coerceValue(val, schema[colIdx].Type)); err != nil {
+				return nil, fmt.Errorf("aggregate output: group-by append: %w", err)
+			}
 			colIdx++
 		}
 
 		for _, acc := range accs {
 			val := acc.result()
-			_ = outputCols[colIdx].Append(coerceValue(val, schema[colIdx].Type))
+			if err := outputCols[colIdx].Append(coerceValue(val, schema[colIdx].Type)); err != nil {
+				return nil, fmt.Errorf("aggregate output: aggregate append: %w", err)
+			}
 			colIdx++
 		}
 	}
 
-	return outputCols
+	return outputCols, nil
 }
 
 // buildGroupKey 构建分组键。

@@ -214,7 +214,10 @@ func (e *Executor) executeLimit(limit *LimitNode) (*execResult, error) {
 			break
 		}
 
-		limited := sliceChunk(chunk, startRow, endRow)
+		limited, err := sliceChunk(chunk, startRow, endRow)
+		if err != nil {
+			return nil, err
+		}
 		if limited.RowCount() > 0 {
 			chunks = append(chunks, limited)
 			returned += uint64(endRow - startRow)
@@ -229,14 +232,18 @@ func (e *Executor) executeLimit(limit *LimitNode) (*execResult, error) {
 }
 
 // sliceChunk 从 Chunk 中截取指定行范围。
-func sliceChunk(chunk *storage.Chunk, startRow, endRow uint32) *storage.Chunk {
+func sliceChunk(chunk *storage.Chunk, startRow, endRow uint32) (*storage.Chunk, error) {
 	result := storage.NewChunk(defaultChunkSize)
 	for _, col := range chunk.Columns() {
 		newCol := storage.NewColumnVector(col.ColumnID, col.Typ, endRow-startRow)
 		for row := startRow; row < endRow; row++ {
-			_ = newCol.Append(col.GetValue(row))
+			if err := newCol.Append(col.GetValue(row)); err != nil {
+				return nil, fmt.Errorf("executor limit: slice column %d row %d: %w", col.ColumnID, row, err)
+			}
 		}
-		_ = result.AddColumn(newCol)
+		if err := result.AddColumn(newCol); err != nil {
+			return nil, fmt.Errorf("executor limit: add column %d: %w", col.ColumnID, err)
+		}
 	}
-	return result
+	return result, nil
 }

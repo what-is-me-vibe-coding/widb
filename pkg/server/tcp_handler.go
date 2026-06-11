@@ -77,13 +77,7 @@ func (s *Server) handleTCPConn(conn net.Conn) {
 
 		resp, err := s.handlePacket(pkt)
 		if err != nil {
-			errResp := &Response{Code: -1, Message: err.Error()}
-			payload, marshalErr := json.Marshal(errResp)
-			if marshalErr != nil {
-				log.Printf("TCP: JSON marshal error response failed: %v", marshalErr)
-				payload = []byte(`{"code":-1,"message":"internal error"}`)
-			}
-			resp = NewPacket(PacketResponse, payload)
+			resp = newErrorResponse(err)
 		}
 
 		if err := conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
@@ -93,6 +87,17 @@ func (s *Server) handleTCPConn(conn net.Conn) {
 			return
 		}
 	}
+}
+
+// newErrorResponse 将错误构造为 Response 类型的 Packet。
+func newErrorResponse(err error) *Packet {
+	errResp := &Response{Code: -1, Message: err.Error()}
+	payload, marshalErr := json.Marshal(errResp)
+	if marshalErr != nil {
+		log.Printf("TCP: JSON marshal error response failed: %v", marshalErr)
+		payload = []byte(`{"code":-1,"message":"internal error"}`)
+	}
+	return NewPacket(PacketResponse, payload)
 }
 
 // handlePacket 根据包类型路由到对应的处理器。

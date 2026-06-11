@@ -19,7 +19,7 @@ func TestOpenWALWithValidRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	if err := w.AppendWrite([]byte("record1")); err != nil {
+	if err := w.AppendWrite([]byte(walRec1)); err != nil {
 		t.Fatalf("AppendWrite failed: %v", err)
 	}
 	if err := w.AppendCommit([]byte("commit1")); err != nil {
@@ -42,7 +42,7 @@ func TestOpenWALWithValidRecords(t *testing.T) {
 	if len(records) != 3 {
 		t.Fatalf("expected 3 records, got %d", len(records))
 	}
-	if records[0].Type != walTypeWrite || string(records[0].Payload) != "record1" {
+	if records[0].Type != walTypeWrite || string(records[0].Payload) != walRec1 {
 		t.Errorf("record 0: type=%d payload=%q", records[0].Type, records[0].Payload)
 	}
 	if records[1].Type != walTypeCommit || string(records[1].Payload) != "commit1" {
@@ -311,4 +311,159 @@ func setFileAppendOnly(path string, appendOnly bool) error {
 // unsafePtr returns the uintptr of an int32 pointer for use with syscall.Syscall.
 func unsafePtr(p *int32) uintptr {
 	return uintptr(unsafe.Pointer(p))
+}
+
+// TestOpenWALReplayCorruptCRC 测试 OpenWAL 在遇到 CRC 损坏记录时，仅返回损坏点之前的有效记录
+func TestOpenWALReplayCorruptCRC(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	// 创建 WAL 并写入多条有效记录
+	w, err := CreateWAL(path)
+	if err != nil {
+		t.Fatalf("CreateWAL 失败: %v", err)
+	}
+	if err := w.AppendWrite([]byte(walRec1)); err != nil {
+		t.Fatalf("AppendWrite record1 失败: %v", err)
+	}
+	if err := w.AppendWrite([]byte("record2")); err != nil {
+		t.Fatalf("AppendWrite record2 失败: %v", err)
+	}
+	if err := w.AppendWrite([]byte("record3")); err != nil {
+		t.Fatalf("AppendWrite record3 失败: %v", err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Sync 失败: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close 失败: %v", err)
+	}
+
+	// 读取文件内容，在最后一条记录的 CRC 处进行损坏
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile 失败: %v", err)
+	}
+
+	// 损坏最后一条记录的 CRC（最后一个字节取反）
+	data[len(data)-1] ^= 0xFF
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("WriteFile 失败: %v", err)
+	}
+
+	// OpenWAL 应返回前两条有效记录，第三条因 CRC 损坏被截断
+	w2, records, err := OpenWAL(path)
+	if err != nil {
+		t.Fatalf("OpenWAL 失败: %v", err)
+	}
+	defer func() { _ = w2.Close() }()
+
+	if len(records) != 2 {
+		t.Fatalf("期望 2 条有效记录，得到 %d", len(records))
+	}
+	if string(records[0].Payload) != walRec1 {
+		t.Errorf("record0: 期望 %q，得到 %q", walRec1, string(records[0].Payload))
+	}
+	if string(records[1].Payload) != "record2" {
+		t.Errorf("record1: 期望 %q，得到 %q", "record2", string(records[1].Payload))
+	}
+}
+
+// TestOpenWALEmptyFileReplay 测试打开空文件时 OpenWAL 应成功返回 0 条记录并可继续追加
+func TestOpenWALEmptyFileReplay(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	// 创建空文件（不使用 CreateWAL，直接创建空文件）
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create 失败: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close 失败: %v", err)
+	}
+
+	// OpenWAL 应成功，返回 0 条记录
+	w, records, err := OpenWAL(path)
+	if err != nil {
+		t.Fatalf("OpenWAL 空文件失败: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	if len(records) != 0 {
+		t.Fatalf("期望 0 条记录，得到 %d", len(records))
+	}
+
+	// 验证 WAL 可以继续追加新记录
+	if err := w.AppendWrite([]byte("after_empty")); err != nil {
+		t.Fatalf("AppendWrite 失败: %v", err)
+	}
+}
+
+// TestOpenWALPartialHeader 测试文件仅包含不完整头部时 OpenWAL 的行为
+func TestOpenWALPartialHeader(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	// 创建仅包含 2 字节的文件（不完整的头部，头部需要 4 字节）
+	if err := os.WriteFile(path, []byte{0x01, 0x02}, 0644); err != nil {
+		t.Fatalf("WriteFile 失败: %v", err)
+	}
+
+	// OpenWAL 应优雅处理，返回 0 条记录且不报错
+	w, records, err := OpenWAL(path)
+	if err != nil {
+		t.Fatalf("OpenWAL 部分头部文件失败: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	if len(records) != 0 {
+		t.Fatalf("期望 0 条记录，得到 %d", len(records))
+	}
+
+	// 验证 WAL 可以继续追加新记录
+	if err := w.AppendWrite([]byte("after_partial")); err != nil {
+		t.Fatalf("AppendWrite 失败: %v", err)
+	}
+}
+
+// TestOpenWALWithOnlyCheckpointRecords 测试仅包含 Checkpoint 记录的 WAL 文件恢复
+func TestOpenWALWithOnlyCheckpointRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.wal")
+
+	// 创建 WAL 并仅写入 Checkpoint 记录
+	w, err := CreateWAL(path)
+	if err != nil {
+		t.Fatalf("CreateWAL 失败: %v", err)
+	}
+	if err := w.AppendCheckpoint([]byte("checkpoint_v1")); err != nil {
+		t.Fatalf("AppendCheckpoint v1 失败: %v", err)
+	}
+	if err := w.AppendCheckpoint([]byte("checkpoint_v2")); err != nil {
+		t.Fatalf("AppendCheckpoint v2 失败: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close 失败: %v", err)
+	}
+
+	// OpenWAL 应恢复所有 Checkpoint 记录
+	w2, records, err := OpenWAL(path)
+	if err != nil {
+		t.Fatalf("OpenWAL 失败: %v", err)
+	}
+	defer func() { _ = w2.Close() }()
+
+	if len(records) != 2 {
+		t.Fatalf("期望 2 条记录，得到 %d", len(records))
+	}
+	if records[0].Type != walTypeCheckpoint || string(records[0].Payload) != "checkpoint_v1" {
+		t.Errorf("record 0: type=%d payload=%q, 期望 type=%d payload=%q",
+			records[0].Type, string(records[0].Payload), walTypeCheckpoint, "checkpoint_v1")
+	}
+	if records[1].Type != walTypeCheckpoint || string(records[1].Payload) != "checkpoint_v2" {
+		t.Errorf("record 1: type=%d payload=%q, 期望 type=%d payload=%q",
+			records[1].Type, string(records[1].Payload), walTypeCheckpoint, "checkpoint_v2")
+	}
 }

@@ -10,6 +10,19 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
+// waitForCondition 轮询等待条件满足，避免 time.Sleep 导致的 flaky 测试。
+func waitForCondition(t *testing.T, interval, timeout time.Duration, condition func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(interval)
+	}
+	t.Fatalf("timed out waiting for condition: %s", msg)
+}
+
 func TestNewScheduler(t *testing.T) {
 	dir := t.TempDir()
 	eng, err := NewEngine(EngineConfig{DataDir: dir})
@@ -79,7 +92,6 @@ func TestSchedulerStartStop(t *testing.T) {
 	})
 
 	sched.Start()
-	time.Sleep(50 * time.Millisecond)
 
 	_ = sched.Stats()
 
@@ -140,7 +152,9 @@ func TestSchedulerAutoFlush(t *testing.T) {
 	}
 
 	// 等待调度器触发刷盘
-	time.Sleep(300 * time.Millisecond)
+	waitForCondition(t, 20*time.Millisecond, 2*time.Second, func() bool {
+		return sched.Stats().FlushCount > 0
+	}, "scheduler auto flush")
 
 	stats := sched.Stats()
 	if stats.FlushCount == 0 {
@@ -185,7 +199,9 @@ func TestSchedulerAutoCompact(t *testing.T) {
 	}
 
 	// 等待调度器触发 Compaction
-	time.Sleep(300 * time.Millisecond)
+	waitForCondition(t, 20*time.Millisecond, 2*time.Second, func() bool {
+		return sched.Stats().CompactCount > 0
+	}, "scheduler auto compact")
 
 	stats := sched.Stats()
 	if stats.CompactCount == 0 {
@@ -217,7 +233,10 @@ func TestSchedulerWALClean(t *testing.T) {
 	}
 
 	// 等待调度器清理
-	time.Sleep(300 * time.Millisecond)
+	waitForCondition(t, 20*time.Millisecond, 2*time.Second, func() bool {
+		_, err := os.Stat(prevPath)
+		return os.IsNotExist(err)
+	}, "old WAL file to be cleaned up")
 
 	if _, err := os.Stat(prevPath); !os.IsNotExist(err) {
 		t.Error("expected old WAL file to be cleaned up")
@@ -247,7 +266,14 @@ func TestSchedulerWALCleanNoFile(t *testing.T) {
 	defer sched.Stop()
 
 	// 不创建旧 WAL 文件，调度器应正常运行不报错
-	time.Sleep(200 * time.Millisecond)
+	// 轮询检查，如果出现错误立即失败；超时说明无错误，测试通过
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if sched.Stats().LastError != "" {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
 
 	stats := sched.Stats()
 	if stats.LastError != "" {
@@ -286,7 +312,8 @@ func TestSchedulerStopIdempotent(t *testing.T) {
 	})
 
 	sched.Start()
-	time.Sleep(30 * time.Millisecond)
+	// 短暂等待确保调度器已启动
+	time.Sleep(10 * time.Millisecond)
 
 	// 多次 Stop 不应 panic
 	sched.Stop()
@@ -311,7 +338,15 @@ func TestSchedulerNoActionWhenNotNeeded(t *testing.T) {
 	defer sched.Stop()
 
 	// 不写入任何数据，调度器应正常运行
-	time.Sleep(200 * time.Millisecond)
+	// 轮询检查，如果出现 flush/compact 立即失败；超时说明无操作，测试通过
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stats := sched.Stats()
+		if stats.FlushCount > 0 || stats.CompactCount > 0 {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
 
 	stats := sched.Stats()
 	// 无数据时不应触发 flush 或 compact
@@ -407,7 +442,10 @@ func TestEngineSchedulerAutoFlush(t *testing.T) {
 	}
 
 	// 等待调度器触发刷盘
-	time.Sleep(300 * time.Millisecond)
+	waitForCondition(t, 20*time.Millisecond, 2*time.Second, func() bool {
+		stats, _ := eng.SchedulerStats()
+		return stats.FlushCount > 0
+	}, "engine scheduler auto flush")
 
 	stats, ok := eng.SchedulerStats()
 	if !ok {

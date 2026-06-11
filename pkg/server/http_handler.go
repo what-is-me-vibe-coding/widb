@@ -48,7 +48,13 @@ func (s *Server) httpQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, _ := s.handleQuery(&req)
+	resp, err := s.handleQuery(&req)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, &Response{
+			Code: -1, Message: fmt.Sprintf("内部错误: %v", err),
+		})
+		return
+	}
 	statusCode := http.StatusOK
 	if resp.Code != 0 {
 		statusCode = http.StatusBadRequest
@@ -73,7 +79,13 @@ func (s *Server) httpWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, _ := s.handleWrite(&req)
+	resp, err := s.handleWrite(&req)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, &Response{
+			Code: -1, Message: fmt.Sprintf("内部错误: %v", err),
+		})
+		return
+	}
 	statusCode := http.StatusOK
 	if resp.Code != 0 {
 		statusCode = http.StatusBadRequest

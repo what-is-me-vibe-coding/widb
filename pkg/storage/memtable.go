@@ -306,7 +306,7 @@ func (m *MemTable) All() []KeyValue {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var result []KeyValue
+	result := make([]KeyValue, 0, m.tree.size)
 	x := m.tree.head.forward[0]
 	for x != nil {
 		result = append(result, KeyValue{Key: x.key, Value: x.value})

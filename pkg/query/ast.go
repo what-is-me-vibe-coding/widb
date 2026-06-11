@@ -287,37 +287,18 @@ const (
 	OpLike
 )
 
+// binaryOpStr 存储二元运算符的字符串表示，按 BinaryOp 值索引。
+var binaryOpStr = [...]string{
+	OpEq: "=", OpNe: "!=", OpLt: "<", OpLe: "<=",
+	OpGt: ">", OpGe: ">=", OpAnd: "AND", OpOr: "OR",
+	OpAdd: "+", OpSub: "-", OpMul: "*", OpDiv: "/", OpLike: "LIKE",
+}
+
 func (op BinaryOp) String() string {
-	switch op {
-	case OpEq:
-		return "="
-	case OpNe:
-		return "!="
-	case OpLt:
-		return "<"
-	case OpLe:
-		return "<="
-	case OpGt:
-		return ">"
-	case OpGe:
-		return ">="
-	case OpAnd:
-		return "AND"
-	case OpOr:
-		return "OR"
-	case OpAdd:
-		return "+"
-	case OpSub:
-		return "-"
-	case OpMul:
-		return "*"
-	case OpDiv:
-		return "/"
-	case OpLike:
-		return "LIKE"
-	default:
-		return "?"
+	if int(op) < len(binaryOpStr) && binaryOpStr[op] != "" {
+		return binaryOpStr[op]
 	}
+	return "?"
 }
 
 // UnaryOp 表示一元运算符。

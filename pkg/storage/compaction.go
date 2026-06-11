@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
@@ -116,11 +117,7 @@ func (h *compactionHeap) Pop() any {
 
 // sortSegsByID 按 Segment ID 升序排序（ID 越小越旧）。
 func sortSegsByID(segs []*Segment) {
-	for i := 1; i < len(segs); i++ {
-		for j := i; j > 0 && segs[j].ID < segs[j-1].ID; j-- {
-			segs[j], segs[j-1] = segs[j-1], segs[j]
-		}
-	}
+	sort.Slice(segs, func(i, j int) bool { return segs[i].ID < segs[j].ID })
 }
 
 func (c *Compactor) mergeSegments(segments []*Segment, cols []ColumnMeta) ([]memRow, error) {
@@ -275,23 +272,9 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 	builder.SetKeys(keys)
 
 	for colIdx, colMeta := range cols {
-		cv := NewColumnVector(colMeta.ID, colMeta.Type, rowCount)
-		for _, row := range rows {
-			if colIdx >= len(row.Values) {
-				if err := cv.Append(common.NewNull()); err != nil {
-					return nil, fmt.Errorf("compactor: column %s append null: %w", colMeta.Name, err)
-				}
-				continue
-			}
-			val := row.Values[colIdx]
-			if err := cv.Append(val); err != nil {
-				return nil, fmt.Errorf("compactor: column %s: %w", colMeta.Name, err)
-			}
-		}
-
-		enc, err := encodeColumnVector(cv)
+		enc, err := buildColumnEncoded(rows, colIdx, colMeta, rowCount)
 		if err != nil {
-			return nil, fmt.Errorf("compactor: encode column %s: %w", colMeta.Name, err)
+			return nil, err
 		}
 		builder.AddEncodedColumn(enc)
 	}
@@ -317,6 +300,29 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 
 	seg.FilePath = fileName
 	return seg, nil
+}
+
+// buildColumnEncoded 将行数据中指定列编码为 EncodedColumn。
+func buildColumnEncoded(rows []memRow, colIdx int, colMeta ColumnMeta, rowCount uint32) (*EncodedColumn, error) {
+	cv := NewColumnVector(colMeta.ID, colMeta.Type, rowCount)
+	for _, row := range rows {
+		if colIdx >= len(row.Values) {
+			if err := cv.Append(common.NewNull()); err != nil {
+				return nil, fmt.Errorf("compactor: column %s append null: %w", colMeta.Name, err)
+			}
+			continue
+		}
+		val := row.Values[colIdx]
+		if err := cv.Append(val); err != nil {
+			return nil, fmt.Errorf("compactor: column %s: %w", colMeta.Name, err)
+		}
+	}
+
+	enc, err := encodeColumnVector(cv)
+	if err != nil {
+		return nil, fmt.Errorf("compactor: encode column %s: %w", colMeta.Name, err)
+	}
+	return enc, nil
 }
 
 // CleanupSegments 删除旧 Segment 文件。

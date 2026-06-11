@@ -21,16 +21,24 @@ const (
 	EncodingBitmap EncodingType = 3
 )
 
+// 编码类型名称常量，供 String() 等方法使用。
+const (
+	encodingPlainName  = "Plain"
+	encodingDictName   = "Dict"
+	encodingRLEName    = "RLE"
+	encodingBitmapName = "Bitmap"
+)
+
 func (e EncodingType) String() string {
 	switch e {
 	case EncodingPlain:
-		return "Plain"
+		return encodingPlainName
 	case EncodingDict:
-		return "Dict"
+		return encodingDictName
 	case EncodingRLE:
-		return "RLE"
+		return encodingRLEName
 	case EncodingBitmap:
-		return "Bitmap"
+		return encodingBitmapName
 	default:
 		return fmt.Sprintf("Unknown(%d)", e)
 	}
@@ -114,35 +122,13 @@ func encodePlain(typ common.DataType, data any, rowCount uint32, nulls *common.B
 		return &EncodedColumn{Encoding: EncodingPlain, Type: typ, RowCount: 0}, nil
 	}
 
-	var buf []byte
 	switch typ {
 	case common.TypeInt64:
-		ints, ok := data.([]int64)
-		if !ok {
-			return nil, fmt.Errorf("plain encode: expected []int64, got %T", data)
-		}
-		buf = make([]byte, rowCount*8)
-		for i := uint32(0); i < rowCount; i++ {
-			binary.LittleEndian.PutUint64(buf[i*8:], uint64(ints[i]))
-		}
+		return encodePlainInt64(data, rowCount, nulls)
 	case common.TypeFloat64:
-		floats, ok := data.([]float64)
-		if !ok {
-			return nil, fmt.Errorf("plain encode: expected []float64, got %T", data)
-		}
-		buf = make([]byte, rowCount*8)
-		for i := uint32(0); i < rowCount; i++ {
-			binary.LittleEndian.PutUint64(buf[i*8:], math.Float64bits(floats[i]))
-		}
+		return encodePlainFloat64(data, rowCount, nulls)
 	case common.TypeTimestamp:
-		times, ok := data.([]int64)
-		if !ok {
-			return nil, fmt.Errorf("plain encode: expected []int64 (unix nanos), got %T", data)
-		}
-		buf = make([]byte, rowCount*8)
-		for i := uint32(0); i < rowCount; i++ {
-			binary.LittleEndian.PutUint64(buf[i*8:], uint64(times[i]))
-		}
+		return encodePlainTimestamp(data, rowCount, nulls)
 	case common.TypeString:
 		strs, ok := data.([]string)
 		if !ok {
@@ -152,17 +138,62 @@ func encodePlain(typ common.DataType, data any, rowCount uint32, nulls *common.B
 	default:
 		return nil, fmt.Errorf("plain encode: unsupported type %v", typ)
 	}
+}
 
+// encodePlainInt64 将 int64 列编码为 Plain 格式。
+func encodePlainInt64(data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+	ints, ok := data.([]int64)
+	if !ok {
+		return nil, fmt.Errorf("plain encode: expected []int64, got %T", data)
+	}
+	buf := encodeUint64Batch(ints, rowCount)
+	return newPlainEncodedColumn(common.TypeInt64, rowCount, buf, nulls), nil
+}
+
+// encodePlainFloat64 将 float64 列编码为 Plain 格式。
+func encodePlainFloat64(data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+	floats, ok := data.([]float64)
+	if !ok {
+		return nil, fmt.Errorf("plain encode: expected []float64, got %T", data)
+	}
+	buf := make([]byte, rowCount*8)
+	for i := uint32(0); i < rowCount; i++ {
+		binary.LittleEndian.PutUint64(buf[i*8:], math.Float64bits(floats[i]))
+	}
+	return newPlainEncodedColumn(common.TypeFloat64, rowCount, buf, nulls), nil
+}
+
+// encodePlainTimestamp 将 timestamp 列编码为 Plain 格式。
+func encodePlainTimestamp(data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+	times, ok := data.([]int64)
+	if !ok {
+		return nil, fmt.Errorf("plain encode: expected []int64 (unix nanos), got %T", data)
+	}
+	buf := encodeUint64Batch(times, rowCount)
+	return newPlainEncodedColumn(common.TypeTimestamp, rowCount, buf, nulls), nil
+}
+
+// encodeUint64Batch 将 int64 切片编码为小端字节序列。
+func encodeUint64Batch(ints []int64, rowCount uint32) []byte {
+	buf := make([]byte, rowCount*8)
+	for i := uint32(0); i < rowCount; i++ {
+		binary.LittleEndian.PutUint64(buf[i*8:], uint64(ints[i]))
+	}
+	return buf
+}
+
+// newPlainEncodedColumn 创建 Plain 编码的 EncodedColumn，处理 nulls 位图。
+func newPlainEncodedColumn(typ common.DataType, rowCount uint32, data []byte, nulls *common.Bitmap) *EncodedColumn {
 	enc := &EncodedColumn{
 		Encoding: EncodingPlain,
 		Type:     typ,
 		RowCount: rowCount,
-		Data:     buf,
+		Data:     data,
 	}
 	if nulls != nil && !nulls.IsEmpty() {
 		enc.Nulls = nulls.ToBytes()
 	}
-	return enc, nil
+	return enc
 }
 
 func encodePlainStrings(strs []string, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {

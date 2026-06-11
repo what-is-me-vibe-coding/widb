@@ -93,10 +93,10 @@ func TestComputeStringStatsShortOffsets(t *testing.T) {
 	computeStringStats(data, offsets, rowCount, nil, stat)
 
 	// 第 0 行 "hello" 应被正确统计
-	if stat.Min == nil || string(stat.Min) != "hello" {
+	if stat.Min == nil || string(stat.Min) != testStrHello {
 		t.Errorf("expected Min='hello', got %v", stat.Min)
 	}
-	if stat.Max == nil || string(stat.Max) != "hello" {
+	if stat.Max == nil || string(stat.Max) != testStrHello {
 		t.Errorf("expected Max='hello', got %v", stat.Max)
 	}
 }
@@ -105,7 +105,7 @@ func TestComputeStringStatsShortOffsets(t *testing.T) {
 func TestComputeStringStatsEmptyOffsets(t *testing.T) {
 	t.Parallel()
 
-	data := []byte("hello")
+	data := []byte(testStrHello)
 	rowCount := uint32(3)
 
 	stat := &ColumnStat{}

@@ -364,3 +364,135 @@ func TestEngineWriteVersionIncrement(t *testing.T) {
 		t.Errorf("期望版本号 10，得到 %d", row.Version)
 	}
 }
+
+// TestEngineWriteGroupCommitMode 测试 GroupCommit 同步模式下写入多条记录并验证持久化
+func TestEngineWriteGroupCommitMode(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir:      t.TempDir(),
+		SyncMode:     SyncGroupCommit,
+		SyncInterval: 1 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine 失败: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	// 写入多条记录
+	keys := []string{"gc_key1", "gc_key2", "gc_key3"}
+	for i, key := range keys {
+		if err := eng.Write(key, map[string]common.Value{colVal: common.NewInt64(int64(i * 100))}); err != nil {
+			t.Fatalf("Write %s 失败: %v", key, err)
+		}
+	}
+
+	// 等待 GroupCommitter 刷盘完成
+	time.Sleep(50 * time.Millisecond)
+
+	// 验证所有记录均可读取
+	for i, key := range keys {
+		row, ok := eng.Get(key)
+		if !ok {
+			t.Errorf("%s 未找到", key)
+			continue
+		}
+		if row.Columns[colVal].Int64 != int64(i*100) {
+			t.Errorf("%s: 期望 %d，得到 %d", key, i*100, row.Columns[colVal].Int64)
+		}
+	}
+}
+
+// TestEngineWriteMultipleColumnTypes 测试写入包含所有列类型（int64, float64, string, bool, timestamp）的记录并验证读取
+func TestEngineWriteMultipleColumnTypes(t *testing.T) {
+	eng, err := NewEngine(EngineConfig{
+		DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewEngine 失败: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	ts := time.Date(2025, 6, 1, 12, 30, 45, 0, time.UTC)
+	vals := map[string]common.Value{
+		"int_col":  common.NewInt64(42),
+		"flt_col":  common.NewFloat64(3.14),
+		"str_col":  common.NewString("hello"),
+		"bool_col": common.NewBool(true),
+		"ts_col":   common.NewTimestamp(ts),
+	}
+
+	if err := eng.Write("multi_type_key", vals); err != nil {
+		t.Fatalf("Write 失败: %v", err)
+	}
+
+	row, ok := eng.Get("multi_type_key")
+	if !ok {
+		t.Fatal("multi_type_key 未找到")
+	}
+
+	if row.Columns["int_col"].Int64 != 42 {
+		t.Errorf("int_col: 期望 42，得到 %d", row.Columns["int_col"].Int64)
+	}
+	if row.Columns["flt_col"].Float64 != 3.14 {
+		t.Errorf("flt_col: 期望 3.14，得到 %f", row.Columns["flt_col"].Float64)
+	}
+	if row.Columns["str_col"].Str != "hello" {
+		t.Errorf("str_col: 期望 %q，得到 %q", "hello", row.Columns["str_col"].Str)
+	}
+	if row.Columns["bool_col"].Int64 != 1 {
+		t.Errorf("bool_col: 期望 1（true），得到 %d", row.Columns["bool_col"].Int64)
+	}
+	if !row.Columns["ts_col"].Time.Equal(ts) {
+		t.Errorf("ts_col: 期望 %v，得到 %v", ts, row.Columns["ts_col"].Time)
+	}
+}
+
+// TestEngineWriteAfterFlush 测试写入数据后刷盘，再写入更多数据，验证所有数据均可访问
+func TestEngineWriteAfterFlush(t *testing.T) {
+	dir := t.TempDir()
+	eng, err := NewEngine(EngineConfig{
+		DataDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine 失败: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	// 第一批写入
+	if err := eng.Write("flush_key1", map[string]common.Value{colVal: common.NewInt64(100)}); err != nil {
+		t.Fatalf("Write flush_key1 失败: %v", err)
+	}
+	if err := eng.Write("flush_key2", map[string]common.Value{colVal: common.NewInt64(200)}); err != nil {
+		t.Fatalf("Write flush_key2 失败: %v", err)
+	}
+
+	// 刷盘
+	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
+	if err := eng.Flush(cols); err != nil {
+		t.Fatalf("Flush 失败: %v", err)
+	}
+
+	// 第二批写入（刷盘后继续写入）
+	if err := eng.Write("flush_key3", map[string]common.Value{colVal: common.NewInt64(300)}); err != nil {
+		t.Fatalf("Write flush_key3 失败: %v", err)
+	}
+
+	// 验证所有数据均可访问
+	tests := []struct {
+		key      string
+		expected int64
+	}{
+		{"flush_key1", 100},
+		{"flush_key2", 200},
+		{"flush_key3", 300},
+	}
+	for _, tt := range tests {
+		row, ok := eng.Get(tt.key)
+		if !ok {
+			t.Errorf("%s 未找到", tt.key)
+			continue
+		}
+		if row.Columns[colVal].Int64 != tt.expected {
+			t.Errorf("%s: 期望 %d，得到 %d", tt.key, tt.expected, row.Columns[colVal].Int64)
+		}
+	}
+}

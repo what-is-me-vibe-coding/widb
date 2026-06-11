@@ -167,7 +167,7 @@ func TestOpenWALWithExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWAL failed: %v", err)
 	}
-	_ = w.AppendWrite([]byte("record1"))
+	_ = w.AppendWrite([]byte(walRec1))
 	_ = w.AppendWrite([]byte("record2"))
 	_ = w.AppendCheckpoint([]byte("checkpoint1"))
 	_ = w.Sync()
@@ -184,7 +184,7 @@ func TestOpenWALWithExistingFile(t *testing.T) {
 		t.Fatalf("expected 3 records, got %d", len(recs))
 	}
 
-	if recs[0].Type != walTypeWrite || string(recs[0].Payload) != "record1" {
+	if recs[0].Type != walTypeWrite || string(recs[0].Payload) != walRec1 {
 		t.Errorf("record 0: unexpected type=%d payload=%q", recs[0].Type, recs[0].Payload)
 	}
 	if recs[2].Type != walTypeCheckpoint {

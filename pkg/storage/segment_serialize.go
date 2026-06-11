@@ -9,10 +9,19 @@ import (
 
 // SerializeColumnBlock 将 EncodedColumn 序列化为字节流。
 func SerializeColumnBlock(enc *EncodedColumn) []byte {
-	var buf []byte
+	// 预估大小：4(colID) + 1(encoding) + 1(compressed) + 1(type) + 4(rowCount) +
+	// 4(nullsLen) + len(nulls) + 4(dataLen) + len(data) + 4(offsetsLen) + len(offsets)*4 +
+	// 4(dictLen) + dict数据
+	estimatedSize := 14 + len(enc.Nulls) + len(enc.Data) + len(enc.Offsets)*4 + 4
+	for _, s := range enc.Dict {
+		estimatedSize += 4 + len(s)
+	}
+	buf := make([]byte, 0, estimatedSize)
 
-	colID := make([]byte, 4)
-	buf = append(buf, colID...)
+	var tmp [4]byte
+
+	// colID placeholder (will be overwritten by caller)
+	buf = append(buf, tmp[:4]...)
 
 	buf = append(buf, byte(enc.Encoding))
 
@@ -21,37 +30,31 @@ func SerializeColumnBlock(enc *EncodedColumn) []byte {
 
 	buf = append(buf, byte(enc.Type))
 
-	rowCount := make([]byte, 4)
-	binary.LittleEndian.PutUint32(rowCount, enc.RowCount)
-	buf = append(buf, rowCount...)
+	binary.LittleEndian.PutUint32(tmp[:], enc.RowCount)
+	buf = append(buf, tmp[:]...)
 
-	nullsLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(nullsLen, uint32(len(enc.Nulls)))
-	buf = append(buf, nullsLen...)
+	binary.LittleEndian.PutUint32(tmp[:], uint32(len(enc.Nulls)))
+	buf = append(buf, tmp[:]...)
 	buf = append(buf, enc.Nulls...)
 
-	dataLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(dataLen, uint32(len(enc.Data)))
-	buf = append(buf, dataLen...)
+	binary.LittleEndian.PutUint32(tmp[:], uint32(len(enc.Data)))
+	buf = append(buf, tmp[:]...)
 	buf = append(buf, enc.Data...)
 
 	offsetsBytes := make([]byte, len(enc.Offsets)*4)
 	for i, off := range enc.Offsets {
 		binary.LittleEndian.PutUint32(offsetsBytes[i*4:], off)
 	}
-	offsetsLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(offsetsLen, uint32(len(enc.Offsets)))
-	buf = append(buf, offsetsLen...)
+	binary.LittleEndian.PutUint32(tmp[:], uint32(len(enc.Offsets)))
+	buf = append(buf, tmp[:]...)
 	buf = append(buf, offsetsBytes...)
 
-	dictLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(dictLen, uint32(len(enc.Dict)))
-	buf = append(buf, dictLen...)
+	binary.LittleEndian.PutUint32(tmp[:], uint32(len(enc.Dict)))
+	buf = append(buf, tmp[:]...)
 	for _, s := range enc.Dict {
 		strBytes := []byte(s)
-		strLen := make([]byte, 4)
-		binary.LittleEndian.PutUint32(strLen, uint32(len(strBytes)))
-		buf = append(buf, strLen...)
+		binary.LittleEndian.PutUint32(tmp[:], uint32(len(strBytes)))
+		buf = append(buf, tmp[:]...)
 		buf = append(buf, strBytes...)
 	}
 
@@ -177,45 +180,46 @@ func readDict(data []byte, pos int, enc *EncodedColumn) (int, error) {
 
 // serializeFooter 将 SegmentFooter 序列化为字节流。
 func serializeFooter(footer *SegmentFooter) []byte {
-	var buf []byte
+	// 预估大小：4(colCount) + 每列(4+4+len(min)+4+len(max)+4) + 4+bloom + 4+rawKeys + 8
+	estimatedSize := 4 + 8 + 4 + 4
+	for _, stat := range footer.ColumnStats {
+		estimatedSize += 4 + 4 + len(stat.Min) + 4 + len(stat.Max) + 4
+	}
+	estimatedSize += len(footer.BloomFilter) + len(footer.RawKeys)
+	buf := make([]byte, 0, estimatedSize)
 
-	colCount := make([]byte, 4)
-	binary.LittleEndian.PutUint32(colCount, uint32(len(footer.ColumnStats)))
-	buf = append(buf, colCount...)
+	var tmp4 [4]byte
+	var tmp8 [8]byte
+
+	binary.LittleEndian.PutUint32(tmp4[:], uint32(len(footer.ColumnStats)))
+	buf = append(buf, tmp4[:]...)
 
 	for _, stat := range footer.ColumnStats {
-		colID := make([]byte, 4)
-		binary.LittleEndian.PutUint32(colID, stat.ColumnID)
-		buf = append(buf, colID...)
+		binary.LittleEndian.PutUint32(tmp4[:], stat.ColumnID)
+		buf = append(buf, tmp4[:]...)
 
-		minLen := make([]byte, 4)
-		binary.LittleEndian.PutUint32(minLen, uint32(len(stat.Min)))
-		buf = append(buf, minLen...)
+		binary.LittleEndian.PutUint32(tmp4[:], uint32(len(stat.Min)))
+		buf = append(buf, tmp4[:]...)
 		buf = append(buf, stat.Min...)
 
-		maxLen := make([]byte, 4)
-		binary.LittleEndian.PutUint32(maxLen, uint32(len(stat.Max)))
-		buf = append(buf, maxLen...)
+		binary.LittleEndian.PutUint32(tmp4[:], uint32(len(stat.Max)))
+		buf = append(buf, tmp4[:]...)
 		buf = append(buf, stat.Max...)
 
-		nullCount := make([]byte, 4)
-		binary.LittleEndian.PutUint32(nullCount, stat.NullCount)
-		buf = append(buf, nullCount...)
+		binary.LittleEndian.PutUint32(tmp4[:], stat.NullCount)
+		buf = append(buf, tmp4[:]...)
 	}
 
-	bloomLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bloomLen, uint32(len(footer.BloomFilter)))
-	buf = append(buf, bloomLen...)
+	binary.LittleEndian.PutUint32(tmp4[:], uint32(len(footer.BloomFilter)))
+	buf = append(buf, tmp4[:]...)
 	buf = append(buf, footer.BloomFilter...)
 
-	rawKeysLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(rawKeysLen, uint32(len(footer.RawKeys)))
-	buf = append(buf, rawKeysLen...)
+	binary.LittleEndian.PutUint32(tmp4[:], uint32(len(footer.RawKeys)))
+	buf = append(buf, tmp4[:]...)
 	buf = append(buf, footer.RawKeys...)
 
-	indexOffset := make([]byte, 8)
-	binary.LittleEndian.PutUint64(indexOffset, uint64(footer.IndexOffset))
-	buf = append(buf, indexOffset...)
+	binary.LittleEndian.PutUint64(tmp8[:], uint64(footer.IndexOffset))
+	buf = append(buf, tmp8[:]...)
 
 	return buf
 }
@@ -345,37 +349,44 @@ func readRawKeys(data []byte, pos int) (int, []byte, error) {
 
 // Serialize 将 Segment 序列化为完整的文件字节流。
 func (s *Segment) Serialize() ([]byte, error) {
-	var buf []byte
+	var tmp4 [4]byte
+	var tmp8 [8]byte
 
-	magic := make([]byte, 4)
-	binary.LittleEndian.PutUint32(magic, segmentMagic)
-	buf = append(buf, magic...)
+	// 预估总大小：6(header) + 各列数据 + footer + 4(footerLen) + 8(footerOffset)
+	estimatedSize := 6
+	for i := range s.Columns {
+		estimatedSize += 14 + len(s.Columns[i].Nulls) + len(s.Columns[i].Data) + len(s.Columns[i].Offsets)*4 + 4
+		for _, s := range s.Columns[i].Dict {
+			estimatedSize += 4 + len(s)
+		}
+	}
+	buf := make([]byte, 0, estimatedSize)
 
-	version := make([]byte, 2)
-	binary.LittleEndian.PutUint16(version, segmentVersion)
-	buf = append(buf, version...)
+	binary.LittleEndian.PutUint32(tmp4[:], segmentMagic)
+	buf = append(buf, tmp4[:]...)
+
+	var tmp2 [2]byte
+	binary.LittleEndian.PutUint16(tmp2[:], segmentVersion)
+	buf = append(buf, tmp2[:]...)
 
 	for i := range s.Columns {
-		colID := make([]byte, 4)
-		binary.LittleEndian.PutUint32(colID, uint32(i))
 		colData := SerializeColumnBlock(&s.Columns[i])
-		colData[0] = colID[0]
-		colData[1] = colID[1]
-		colData[2] = colID[2]
-		colData[3] = colID[3]
+		binary.LittleEndian.PutUint32(tmp4[:], uint32(i))
+		colData[0] = tmp4[0]
+		colData[1] = tmp4[1]
+		colData[2] = tmp4[2]
+		colData[3] = tmp4[3]
 		buf = append(buf, colData...)
 	}
 
 	footerBytes := serializeFooter(&s.Footer)
-	footerLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(footerLen, uint32(len(footerBytes)))
-	buf = append(buf, footerLen...)
+	binary.LittleEndian.PutUint32(tmp4[:], uint32(len(footerBytes)))
+	buf = append(buf, tmp4[:]...)
 	buf = append(buf, footerBytes...)
 
 	footerOffset := uint64(len(buf) - len(footerBytes))
-	footerOffsetBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(footerOffsetBytes, footerOffset)
-	buf = append(buf, footerOffsetBytes...)
+	binary.LittleEndian.PutUint64(tmp8[:], footerOffset)
+	buf = append(buf, tmp8[:]...)
 
 	return buf, nil
 }

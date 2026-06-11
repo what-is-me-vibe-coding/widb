@@ -45,22 +45,38 @@ func NewBlockCache(capacity int64) *BlockCache {
 
 // get 从缓存中获取指定列的已解码数据。
 // 返回 (decodedColumn, true) 表示命中，(decodedColumn{}, false) 表示未命中。
+// 使用 RLock 快速路径检查存在性，仅在命中时升级为写锁以更新 LRU 顺序。
 func (c *BlockCache) get(key CacheKey) (decodedColumn, bool) {
 	if c == nil || c.capacity <= 0 {
 		return decodedColumn{}, false
 	}
 
+	// 快速路径：读锁检查是否存在
+	c.mu.RLock()
+	_, ok := c.items[key]
+	c.mu.RUnlock()
+
+	if !ok {
+		c.mu.Lock()
+		c.misses++
+		c.mu.Unlock()
+		return decodedColumn{}, false
+	}
+
+	// 命中：写锁更新 LRU 顺序和计数
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if elem, ok := c.items[key]; ok {
-		c.order.MoveToFront(elem)
-		c.hits++
-		return elem.Value.(*cacheEntry).data, true
+	elem, ok := c.items[key]
+	if !ok {
+		// 双检：在 RLock 和 Lock 之间可能被淘汰
+		c.misses++
+		return decodedColumn{}, false
 	}
 
-	c.misses++
-	return decodedColumn{}, false
+	c.order.MoveToFront(elem)
+	c.hits++
+	return elem.Value.(*cacheEntry).data, true
 }
 
 // put 将已解码的列数据放入缓存。
@@ -267,6 +283,7 @@ func NewIndexCache(capacity int) *IndexCache {
 }
 
 // GetColumnStats 从缓存中获取指定 Segment 的列统计信息。
+// 使用 RLock 快速路径检查存在性，仅在命中时升级为写锁以更新 LRU 顺序。
 func (c *IndexCache) GetColumnStats(segmentID uint64) ([]ColumnStat, bool) {
 	if c == nil || c.capacity <= 0 {
 		return nil, false

@@ -127,25 +127,39 @@ func TestNeedsProjection_SimpleColumnsNoProjection(t *testing.T) {
 
 // --- buildChunksFromEntries 覆盖率提升测试 ---
 
-// TestBuildChunksFromEntries_EmptyEntries 测试空 entries 返回 nil。
-func TestBuildChunksFromEntries_EmptyEntries(t *testing.T) {
-	schema := []ColumnDef{
-		{Name: testColID, Type: common.TypeInt64, Nullable: false},
-	}
-	chunks := buildChunksFromEntries(nil, schema, 1024)
-	if chunks != nil {
-		t.Errorf("buildChunksFromEntries(空entries) = %v, want nil", chunks)
-	}
-}
-
-// TestBuildChunksFromEntries_EmptySchema 测试空 schema 返回 nil。
-func TestBuildChunksFromEntries_EmptySchema(t *testing.T) {
+// TestBuildChunksFromEntries_EmptyInputs 测试空 entries/schema 返回 nil。
+func TestBuildChunksFromEntries_EmptyInputs(t *testing.T) {
+	schema := []ColumnDef{{Name: testColID, Type: common.TypeInt64, Nullable: false}}
 	entries := []storage.ScanEntry{
 		{Key: "a", Value: storage.Row{Columns: map[string]common.Value{testColID: common.NewInt64(1)}}},
 	}
-	chunks := buildChunksFromEntries(entries, nil, 1024)
+	chunks, err := buildChunksFromEntries(nil, schema, 1024)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
+	if chunks != nil {
+		t.Errorf("buildChunksFromEntries(空entries) = %v, want nil", chunks)
+	}
+	chunks, err = buildChunksFromEntries(entries, nil, 1024)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
 	if chunks != nil {
 		t.Errorf("buildChunksFromEntries(空schema) = %v, want nil", chunks)
+	}
+	chunks, err = buildChunksFromEntries(nil, nil, 1024)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
+	if chunks != nil {
+		t.Errorf("buildChunksFromEntries(空entries和schema) = %v, want nil", chunks)
+	}
+	chunks, err = buildChunksFromEntries([]storage.ScanEntry{}, schema, 1024)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
+	if chunks != nil {
+		t.Errorf("buildChunksFromEntries(空entries切片) = %v, want nil", chunks)
 	}
 }
 
@@ -162,7 +176,10 @@ func TestBuildChunksFromEntries_MissingColumn(t *testing.T) {
 			// name 列缺失，应填充 NULL
 		}}},
 	}
-	chunks := buildChunksFromEntries(entries, schema, 1024)
+	chunks, err := buildChunksFromEntries(entries, schema, 1024)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(chunks))
 	}
@@ -184,7 +201,10 @@ func TestBuildChunksFromEntries_MultipleChunks(t *testing.T) {
 		}
 	}
 	// chunkSize=2，5 条 entries 应生成 3 个 chunk（2+2+1）
-	chunks := buildChunksFromEntries(entries, schema, 2)
+	chunks, err := buildChunksFromEntries(entries, schema, 2)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
 	if len(chunks) != 3 {
 		t.Fatalf("expected 3 chunks, got %d", len(chunks))
 	}
@@ -235,7 +255,10 @@ func TestBuildChunksFromEntries_CoerceValue(t *testing.T) {
 			testColID: common.NewFloat64(42.7),
 		}}},
 	}
-	chunks := buildChunksFromEntries(entries, schema, 1024)
+	chunks, err := buildChunksFromEntries(entries, schema, 1024)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(chunks))
 	}
@@ -424,20 +447,6 @@ func TestConvertLimit_InvalidCountValue(t *testing.T) {
 	}
 }
 
-// TestBuildChunksFromEntries_EmptyEntriesAndSchema 测试空 entries 和空 schema 都返回 nil。
-func TestBuildChunksFromEntries_EmptyEntriesAndSchema(t *testing.T) {
-	chunks := buildChunksFromEntries(nil, nil, 1024)
-	if chunks != nil {
-		t.Errorf("buildChunksFromEntries(空entries和schema) = %v, want nil", chunks)
-	}
-
-	// 空 entries 切片（非 nil）也应返回 nil
-	chunks = buildChunksFromEntries([]storage.ScanEntry{}, []ColumnDef{{Name: testColID, Type: common.TypeInt64}}, 1024)
-	if chunks != nil {
-		t.Errorf("buildChunksFromEntries(空entries切片) = %v, want nil", chunks)
-	}
-}
-
 // TestNeedsProjection_MultipleColumnsOneAlias 测试多列中一列有别名时需要投影。
 func TestNeedsProjection_MultipleColumnsOneAlias(t *testing.T) {
 	analyzer := NewAnalyzer(testCatalog())
@@ -477,7 +486,10 @@ func TestBuildChunksFromEntries_MissingColumnWithCoerce(t *testing.T) {
 			}},
 		},
 	}
-	chunks := buildChunksFromEntries(entries, schema, 1024)
+	chunks, err := buildChunksFromEntries(entries, schema, 1024)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(chunks))
 	}
