@@ -232,16 +232,15 @@ func (e *Executor) executeLimit(limit *LimitNode) (*execResult, error) {
 }
 
 // sliceChunk 从 Chunk 中截取指定行范围。
+// 使用 ColumnVector.Slice 直接内存拷贝，避免逐行 Append 的开销。
 func sliceChunk(chunk *storage.Chunk, startRow, endRow uint32) (*storage.Chunk, error) {
-	result := storage.NewChunk(defaultChunkSize)
+	result := storage.NewChunk(endRow - startRow)
 	for _, col := range chunk.Columns() {
-		newCol := storage.NewColumnVector(col.ColumnID, col.Typ, endRow-startRow)
-		for row := startRow; row < endRow; row++ {
-			if err := newCol.Append(col.GetValue(row)); err != nil {
-				return nil, fmt.Errorf("executor limit: slice column %d row %d: %w", col.ColumnID, row, err)
-			}
+		sliced, err := col.Slice(startRow, endRow)
+		if err != nil {
+			return nil, fmt.Errorf("executor limit: slice column %d: %w", col.ColumnID, err)
 		}
-		if err := result.AddColumn(newCol); err != nil {
+		if err := result.AddColumn(sliced); err != nil {
 			return nil, fmt.Errorf("executor limit: add column %d: %w", col.ColumnID, err)
 		}
 	}

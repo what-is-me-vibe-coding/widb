@@ -244,6 +244,49 @@ func (cv *ColumnVector) NullCount() uint32 {
 	return count
 }
 
+// Slice 返回当前列向量在 [startRow, endRow) 范围内的切片。
+// 使用直接内存拷贝，避免逐行 Append 的开销。
+func (cv *ColumnVector) Slice(startRow, endRow uint32) (*ColumnVector, error) {
+	if endRow > cv.len {
+		return nil, fmt.Errorf("column slice: end %d exceeds length %d", endRow, cv.len)
+	}
+	if startRow > endRow {
+		return nil, fmt.Errorf("column slice: start %d > end %d", startRow, endRow)
+	}
+
+	rowCount := endRow - startRow
+	result := NewColumnVector(cv.ColumnID, cv.Typ, rowCount)
+	result.len = rowCount
+
+	switch cv.Typ {
+	case common.TypeInt64:
+		copy(result.int64s, cv.int64s[startRow:endRow])
+	case common.TypeFloat64:
+		copy(result.float64s, cv.float64s[startRow:endRow])
+	case common.TypeString:
+		copy(result.strings, cv.strings[startRow:endRow])
+	case common.TypeTimestamp:
+		copy(result.times, cv.times[startRow:endRow])
+	case common.TypeBool:
+		// 按 word 拷贝 bool bitmap
+		startWord := startRow / 64
+		endWord := (endRow + 63) / 64
+		if endWord > uint32(len(cv.bools)) {
+			endWord = uint32(len(cv.bools))
+		}
+		copy(result.bools, cv.bools[startWord:endWord])
+	}
+
+	// 拷贝 null bitmap
+	for i := uint32(0); i < rowCount; i++ {
+		if cv.nulls.Get(startRow + i) {
+			result.nulls.Set(i)
+		}
+	}
+
+	return result, nil
+}
+
 // NullBitmap 返回内部的 NULL 位图（只读引用，不要修改）。
 func (cv *ColumnVector) NullBitmap() *common.Bitmap {
 	return cv.nulls

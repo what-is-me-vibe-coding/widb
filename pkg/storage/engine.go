@@ -329,76 +329,19 @@ func (e *Engine) Close() error {
 	return nil
 }
 
-// StartScheduler 启动后台任务调度器，定时执行刷盘、Compaction 和 WAL 清理。
-// 如果调度器已在运行，则不做任何操作。
-func (e *Engine) StartScheduler(cfg SchedulerConfig) {
-	e.mu.Lock()
-	if e.scheduler != nil {
-		e.mu.Unlock()
-		return
-	}
-	e.mu.Unlock()
-
-	sched := NewScheduler(e, cfg)
-	sched.Start()
-
-	e.mu.Lock()
-	e.scheduler = sched
-	e.mu.Unlock()
-}
-
-// SchedulerStats 返回后台调度器的运行统计信息。
-// 如果调度器未启动，ok 为 false。
-func (e *Engine) SchedulerStats() (stats SchedulerStats, ok bool) {
-	e.mu.RLock()
-	sched := e.scheduler
-	e.mu.RUnlock()
-
-	if sched == nil {
-		return SchedulerStats{}, false
-	}
-	return sched.Stats(), true
-}
-
-// registerSegmentIndexes 将 Segment 注册到所有索引（主键、布隆、稀疏），
-// 并将列统计信息缓存到 IndexCache。
-func (e *Engine) registerSegmentIndexes(seg *Segment, level int) error {
-	segMeta := index.SegmentMeta{
-		ID:     seg.ID,
-		MinKey: seg.MinKey,
-		MaxKey: seg.MaxKey,
-		Level:  level,
-	}
-	if err := e.primaryIndex.RegisterSegment(segMeta); err != nil {
-		return fmt.Errorf("engine: register primary index for segment %d: %w", seg.ID, err)
-	}
-
-	if len(seg.Footer.BloomFilter) > 0 {
-		if err := e.bloomIndex.RegisterFromBytes(seg.ID, seg.Footer.BloomFilter); err != nil {
-			return fmt.Errorf("engine: register bloom index for segment %d: %w", seg.ID, err)
+func (e *Engine) collectSegmentsByLevel(level int) ([]*Segment, []int) {
+	var segments []*Segment
+	var indices []int
+	for i, lvl := range e.segmentLevels {
+		if lvl == level {
+			segments = append(segments, e.segments[i])
+			indices = append(indices, i)
 		}
 	}
-
-	e.sparseIndex.LoadFromSegment(seg, seg.MinKey, seg.MaxKey, level)
-
-	// 缓存列统计信息到 IndexCache
-	if len(seg.Footer.ColumnStats) > 0 {
-		stats := make([]ColumnStat, len(seg.Footer.ColumnStats))
-		copy(stats, seg.Footer.ColumnStats)
-		e.indexCache.PutColumnStats(seg.ID, stats)
-	}
-
-	return nil
+	return segments, indices
 }
 
-// unregisterSegmentIndexes 从所有索引中注销 Segment，并清除相关缓存。
-func (e *Engine) unregisterSegmentIndexes(segID uint64) {
-	_ = e.primaryIndex.UnregisterSegment(segID) // 注销失败不影响后续清理
-	e.bloomIndex.Unregister(segID)
-	e.sparseIndex.UnregisterSegment(segID)
-	e.blockCache.Invalidate(segID)
-	e.indexCache.Invalidate(segID)
-}
+// --- Engine Accessors ---
 
 // Segments 返回所有 Segment 的副本。
 func (e *Engine) Segments() []*Segment {
@@ -461,34 +404,33 @@ func (e *Engine) ColumnMeta() []ColumnMeta {
 	return result
 }
 
-func (e *Engine) rotateMemTable() error {
-	if e.activeMem.Len() == 0 {
-		return nil
+// SchedulerStats 返回后台调度器的运行统计信息。
+// 如果调度器未启动，ok 为 false。
+func (e *Engine) SchedulerStats() (stats SchedulerStats, ok bool) {
+	e.mu.RLock()
+	sched := e.scheduler
+	e.mu.RUnlock()
+
+	if sched == nil {
+		return SchedulerStats{}, false
 	}
-	e.activeMem.Freeze()
-	e.immutable = append(e.immutable, e.activeMem)
-	e.activeMem = NewMemTableWithSize(e.activeMem.maxSize)
-	return nil
+	return sched.Stats(), true
 }
 
-func (e *Engine) l0Count() int {
-	count := 0
-	for _, lvl := range e.segmentLevels {
-		if lvl == 0 {
-			count++
-		}
+// StartScheduler 启动后台任务调度器，定时执行刷盘、Compaction 和 WAL 清理。
+// 如果调度器已在运行，则不做任何操作。
+func (e *Engine) StartScheduler(cfg SchedulerConfig) {
+	e.mu.Lock()
+	if e.scheduler != nil {
+		e.mu.Unlock()
+		return
 	}
-	return count
-}
+	e.mu.Unlock()
 
-func (e *Engine) collectSegmentsByLevel(level int) ([]*Segment, []int) {
-	var segments []*Segment
-	var indices []int
-	for i, lvl := range e.segmentLevels {
-		if lvl == level {
-			segments = append(segments, e.segments[i])
-			indices = append(indices, i)
-		}
-	}
-	return segments, indices
+	sched := NewScheduler(e, cfg)
+	sched.Start()
+
+	e.mu.Lock()
+	e.scheduler = sched
+	e.mu.Unlock()
 }

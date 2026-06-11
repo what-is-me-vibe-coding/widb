@@ -11,7 +11,9 @@ import (
 )
 
 // readHeapInUse forces GC and returns HeapInuse bytes.
+// Calls GC twice to ensure finalizers and deferred cleanup are fully processed.
 func readHeapInUse() uint64 {
+	runtime.GC()
 	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)

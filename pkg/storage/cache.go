@@ -1,3 +1,4 @@
+// Package storage 实现存储引擎，包括 WAL、MemTable、Segment、Compaction 与索引缓存。
 package storage
 
 import (

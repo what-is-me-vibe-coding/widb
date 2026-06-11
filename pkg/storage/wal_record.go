@@ -214,9 +214,6 @@ func (e *Engine) replayWALRecords(records []RawRecord) error {
 	return nil
 }
 
-// parseSegmentEntry parses a directory entry into a Segment, returning the segment,
-// its ID, whether the entry was a segment file, and an error if it was a segment file
-// that failed to load.
 func (e *Engine) parseSegmentEntry(entry os.DirEntry) (*Segment, uint64, bool, error) {
 	if entry.IsDir() {
 		return nil, 0, false, nil
@@ -238,7 +235,7 @@ func (e *Engine) parseSegmentEntry(entry os.DirEntry) (*Segment, uint64, bool, e
 	}
 	seg.FilePath = filePath
 
-	// Extract segment ID from filename: segment_<id>.widb
+	// Extract segmentID from filename: segment_<id>.widb
 	idStr := name[len("segment_") : len(name)-len(".widb")]
 	var segID uint64
 	if _, err := fmt.Sscanf(idStr, "%d", &segID); err == nil {

@@ -226,45 +226,45 @@ func (r *ConstantFoldingRule) foldBinaryExpr(e *BinaryExpr) Expression {
 		return e
 	}
 
-	if result, ok := r.foldComparison(e.Op, leftLit.Value, rightLit.Value); ok {
-		return &LiteralExpr{Value: common.NewBool(result)}
+	if result := r.foldComparisonOps(leftLit, rightLit, e.Op); result != nil {
+		return result
 	}
-
-	if result, ok := r.foldLogical(e.Op, leftLit.Value, rightLit.Value); ok {
-		return &LiteralExpr{Value: common.NewBool(result)}
+	if result := r.foldLogicalOps(leftLit, rightLit, e.Op); result != nil {
+		return result
 	}
-
 	return e
 }
 
-// foldComparison 对比较运算符执行常量折叠，返回 (结果, 是否匹配)。
-func (r *ConstantFoldingRule) foldComparison(op BinaryOp, left, right common.Value) (bool, bool) {
+func (r *ConstantFoldingRule) foldComparisonOps(leftLit, rightLit *LiteralExpr, op BinaryOp) Expression {
 	switch op {
 	case OpEq:
-		return left.Equal(right), true
+		return &LiteralExpr{Value: common.NewBool(leftLit.Value.Equal(rightLit.Value))}
 	case OpNe:
-		return !left.Equal(right), true
+		return &LiteralExpr{Value: common.NewBool(!leftLit.Value.Equal(rightLit.Value))}
 	case OpLt:
-		return left.Less(right), true
+		return &LiteralExpr{Value: common.NewBool(leftLit.Value.Less(rightLit.Value))}
 	case OpGt:
-		return right.Less(left), true
+		return &LiteralExpr{Value: common.NewBool(rightLit.Value.Less(leftLit.Value))}
 	case OpLe:
-		return !right.Less(left), true
+		return &LiteralExpr{Value: common.NewBool(!rightLit.Value.Less(leftLit.Value))}
 	case OpGe:
-		return !left.Less(right), true
+		return &LiteralExpr{Value: common.NewBool(!leftLit.Value.Less(rightLit.Value))}
 	}
-	return false, false
+	return nil
 }
 
-// foldLogical 对逻辑运算符执行常量折叠，返回 (结果, 是否匹配)。
-func (r *ConstantFoldingRule) foldLogical(op BinaryOp, left, right common.Value) (bool, bool) {
+func (r *ConstantFoldingRule) foldLogicalOps(leftLit, rightLit *LiteralExpr, op BinaryOp) Expression {
 	switch op {
 	case OpAnd:
-		return isTruthy(left) && isTruthy(right), true
+		lb := isTruthy(leftLit.Value)
+		rb := isTruthy(rightLit.Value)
+		return &LiteralExpr{Value: common.NewBool(lb && rb)}
 	case OpOr:
-		return isTruthy(left) || isTruthy(right), true
+		lb := isTruthy(leftLit.Value)
+		rb := isTruthy(rightLit.Value)
+		return &LiteralExpr{Value: common.NewBool(lb || rb)}
 	}
-	return false, false
+	return nil
 }
 
 func (r *ConstantFoldingRule) foldUnaryExpr(e *UnaryExpr) Expression {

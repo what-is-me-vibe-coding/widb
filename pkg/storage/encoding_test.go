@@ -120,6 +120,9 @@ const (
 	testStrCherry  = "cherry"
 	testStrSame    = "same"
 	testStrAlpha   = "alpha"
+	testStrBeta    = "beta"
+	testStrGamma   = "gamma"
+	testStrDelta   = "delta"
 	testColMissing = "missing_col"
 )
 
