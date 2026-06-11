@@ -24,24 +24,24 @@ func serializeBatchWriteRecord(rows []WriteRow, nextVersion uint64) ([]byte, err
 	}
 	buf := make([]byte, 0, size)
 	// 行数
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint16(b, uint16(len(rows)))
+	var b [8]byte // stack-allocated, eliminates heap allocation per batch
+	binary.LittleEndian.PutUint16(b[:2], uint16(len(rows)))
 	buf = append(buf, b[:2]...)
 	for _, row := range rows {
 		// key
-		binary.LittleEndian.PutUint16(b, uint16(len(row.Key)))
+		binary.LittleEndian.PutUint16(b[:2], uint16(len(row.Key)))
 		buf = append(buf, b[:2]...)
 		buf = append(buf, row.Key...)
 		// version
-		binary.LittleEndian.PutUint64(b, nextVersion)
+		binary.LittleEndian.PutUint64(b[:], nextVersion)
 		buf = append(buf, b[:8]...)
 		nextVersion++
 		// 列数
-		binary.LittleEndian.PutUint16(b, uint16(len(row.Values)))
+		binary.LittleEndian.PutUint16(b[:2], uint16(len(row.Values)))
 		buf = append(buf, b[:2]...)
 		// 每列
 		for colName, v := range row.Values {
-			buf = appendValueBinary(buf, b, colName, v)
+			buf = appendValueBinary(buf, b[:], colName, v)
 		}
 	}
 	return buf, nil
