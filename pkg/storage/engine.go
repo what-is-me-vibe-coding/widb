@@ -133,8 +133,11 @@ func (e *Engine) Write(key string, values map[string]common.Value) error {
 	}
 
 	var syncCh <-chan struct{}
-	if e.groupCommitter != nil {
-		syncCh = e.groupCommitter.Submit()
+	e.mu.RLock()
+	gc := e.groupCommitter
+	e.mu.RUnlock()
+	if gc != nil {
+		syncCh = gc.Submit()
 	} else if err := e.wal.Sync(); err != nil {
 		return fmt.Errorf("engine write: wal sync: %w", err)
 	}
@@ -238,8 +241,11 @@ func (e *Engine) writeCheckpoint(flushVersion uint64) error {
 	colMeta := e.columnMeta
 	e.mu.Unlock()
 
-	if e.groupCommitter != nil {
-		e.groupCommitter.SyncNow()
+	e.mu.RLock()
+	gc := e.groupCommitter
+	e.mu.RUnlock()
+	if gc != nil {
+		gc.SyncNow()
 	}
 
 	checkpointPayload, err := serializeCheckpointRecord(flushVersion, colMeta)
@@ -258,16 +264,20 @@ func (e *Engine) writeCheckpoint(flushVersion uint64) error {
 
 // Close 关闭引擎，停止后台调度器，刷写剩余内存数据，同步并关闭 WAL。
 func (e *Engine) Close() error {
-	// 先停止后台调度器，避免调度器在关闭过程中触发操作
-	if e.scheduler != nil {
-		e.scheduler.Stop()
-		e.scheduler = nil
-	}
+	// 先停止后台调度器和 GroupCommitter，避免在关闭过程中触发操作
+	// 在锁内读取并置空，确保与 Write/StartScheduler 等方法的同步
+	e.mu.Lock()
+	sched := e.scheduler
+	e.scheduler = nil
+	gc := e.groupCommitter
+	e.groupCommitter = nil
+	e.mu.Unlock()
 
-	// 先停止 GroupCommitter，确保所有待同步数据已刷盘
-	if e.groupCommitter != nil {
-		e.groupCommitter.Close()
-		e.groupCommitter = nil
+	if sched != nil {
+		sched.Stop()
+	}
+	if gc != nil {
+		gc.Close()
 	}
 
 	e.mu.Lock()
