@@ -349,13 +349,13 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 	// Sync compactor nextID with flusher to avoid segment ID conflicts
 	e.compactor.SetNextID(e.flusher.NextID())
 
-	l0Segments, _ := e.collectL0Segments()
+	l0Segments, _ := e.collectSegmentsByLevel(0)
 	if len(l0Segments) == 0 {
 		e.mu.Unlock()
 		return nil
 	}
 
-	l1Segments, _ := e.collectL1Segments()
+	l1Segments, _ := e.collectSegmentsByLevel(1)
 
 	allSegments := make([]*Segment, 0, len(l0Segments)+len(l1Segments))
 	allSegments = append(allSegments, l0Segments...)

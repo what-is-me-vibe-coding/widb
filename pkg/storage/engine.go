@@ -473,23 +473,11 @@ func (e *Engine) l0Count() int {
 	return count
 }
 
-func (e *Engine) collectL0Segments() ([]*Segment, []int) {
+func (e *Engine) collectSegmentsByLevel(level int) ([]*Segment, []int) {
 	var segments []*Segment
 	var indices []int
 	for i, lvl := range e.segmentLevels {
-		if lvl == 0 {
-			segments = append(segments, e.segments[i])
-			indices = append(indices, i)
-		}
-	}
-	return segments, indices
-}
-
-func (e *Engine) collectL1Segments() ([]*Segment, []int) {
-	var segments []*Segment
-	var indices []int
-	for i, lvl := range e.segmentLevels {
-		if lvl == 1 {
+		if lvl == level {
 			segments = append(segments, e.segments[i])
 			indices = append(indices, i)
 		}
