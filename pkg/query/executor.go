@@ -69,7 +69,10 @@ func (e *Executor) executeScan(scan *ScanNode) (*execResult, error) {
 		return &execResult{chunks: nil, schema: schema}, nil
 	}
 
-	chunks := buildChunksFromEntries(entries, schema, defaultChunkSize)
+	chunks, err := buildChunksFromEntries(entries, schema, defaultChunkSize)
+	if err != nil {
+		return nil, err
+	}
 	return &execResult{chunks: chunks, schema: schema}, nil
 }
 
@@ -166,9 +169,9 @@ func appendValueSafe(col *storage.ColumnVector, val common.Value, typ common.Dat
 }
 
 // buildChunksFromEntries 将 ScanEntry 切片转换为 Chunk 切片。
-func buildChunksFromEntries(entries []storage.ScanEntry, schema []ColumnDef, chunkSize int) []*storage.Chunk {
+func buildChunksFromEntries(entries []storage.ScanEntry, schema []ColumnDef, chunkSize int) ([]*storage.Chunk, error) {
 	if len(entries) == 0 || len(schema) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var chunks []*storage.Chunk
@@ -190,13 +193,15 @@ func buildChunksFromEntries(entries []storage.ScanEntry, schema []ColumnDef, chu
 				}
 				appendValueSafe(col, val, colDef.Type)
 			}
-			_ = chunk.AddColumn(col)
+			if err := chunk.AddColumn(col); err != nil {
+				return nil, fmt.Errorf("executor scan: add column %d: %w", colIdx, err)
+			}
 		}
 
 		chunks = append(chunks, chunk)
 	}
 
-	return chunks
+	return chunks, nil
 }
 
 // buildColIdxMap 构建列名到索引的映射。

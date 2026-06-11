@@ -54,7 +54,10 @@ func TestBuildChunksFromEntriesEmptySchema(t *testing.T) {
 	entries := []storage.ScanEntry{
 		{Key: "a", Value: storage.Row{Columns: map[string]common.Value{testColID: common.NewInt64(1)}}},
 	}
-	chunks := buildChunksFromEntries(entries, nil, defaultChunkSize)
+	chunks, err := buildChunksFromEntries(entries, nil, defaultChunkSize)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
 	if chunks != nil {
 		t.Errorf("expected nil for empty schema, got %d chunks", len(chunks))
 	}
@@ -63,7 +66,10 @@ func TestBuildChunksFromEntriesEmptySchema(t *testing.T) {
 // TestBuildChunksFromEntriesEmptyEntries 测试 buildChunksFromEntries 空 entries。
 func TestBuildChunksFromEntriesEmptyEntries(t *testing.T) {
 	schema := []ColumnDef{{Name: testColID, Type: common.TypeInt64}}
-	chunks := buildChunksFromEntries(nil, schema, defaultChunkSize)
+	chunks, err := buildChunksFromEntries(nil, schema, defaultChunkSize)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
 	if chunks != nil {
 		t.Errorf("expected nil for empty entries, got %d chunks", len(chunks))
 	}
@@ -78,7 +84,10 @@ func TestBuildChunksFromEntriesMissingColumn(t *testing.T) {
 	entries := []storage.ScanEntry{
 		{Key: "a", Value: storage.Row{Columns: map[string]common.Value{testColID: common.NewInt64(1)}}},
 	}
-	chunks := buildChunksFromEntries(entries, schema, defaultChunkSize)
+	chunks, err := buildChunksFromEntries(entries, schema, defaultChunkSize)
+	if err != nil {
+		t.Fatalf("buildChunksFromEntries: %v", err)
+	}
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(chunks))
 	}

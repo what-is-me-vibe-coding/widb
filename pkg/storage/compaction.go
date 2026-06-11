@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
@@ -116,11 +117,7 @@ func (h *compactionHeap) Pop() any {
 
 // sortSegsByID 按 Segment ID 升序排序（ID 越小越旧）。
 func sortSegsByID(segs []*Segment) {
-	for i := 1; i < len(segs); i++ {
-		for j := i; j > 0 && segs[j].ID < segs[j-1].ID; j-- {
-			segs[j], segs[j-1] = segs[j-1], segs[j]
-		}
-	}
+	sort.Slice(segs, func(i, j int) bool { return segs[i].ID < segs[j].ID })
 }
 
 func (c *Compactor) mergeSegments(segments []*Segment, cols []ColumnMeta) ([]memRow, error) {
