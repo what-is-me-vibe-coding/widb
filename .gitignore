@@ -38,4 +38,4 @@ Thumbs.db
 # Temp
 /tmp/
 *.tmp
-cli
+/cli

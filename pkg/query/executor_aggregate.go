@@ -35,31 +35,51 @@ func newAccumulators(aggs []AggregateExpr) []accumulator {
 func (a *accumulator) update(val common.Value) {
 	switch a.funcType {
 	case AggCount:
-		a.count++
+		a.updateCount()
 	case AggSum:
-		if val.Valid {
-			a.count++
-			a.sum += toFloat64(val)
-		}
+		a.updateSum(val)
 	case AggMin:
-		if val.Valid {
-			if !a.hasValue || val.Less(a.minVal) {
-				a.minVal = val
-			}
-			a.hasValue = true
-		}
+		a.updateMin(val)
 	case AggMax:
-		if val.Valid {
-			if !a.hasValue || a.maxVal.Less(val) {
-				a.maxVal = val
-			}
-			a.hasValue = true
-		}
+		a.updateMax(val)
 	case AggAvg:
-		if val.Valid {
-			a.count++
-			a.sum += toFloat64(val)
+		a.updateAvg(val)
+	}
+}
+
+func (a *accumulator) updateCount() {
+	a.count++
+}
+
+func (a *accumulator) updateSum(val common.Value) {
+	if val.Valid {
+		a.count++
+		a.sum += toFloat64(val)
+	}
+}
+
+func (a *accumulator) updateMin(val common.Value) {
+	if val.Valid {
+		if !a.hasValue || val.Less(a.minVal) {
+			a.minVal = val
 		}
+		a.hasValue = true
+	}
+}
+
+func (a *accumulator) updateMax(val common.Value) {
+	if val.Valid {
+		if !a.hasValue || a.maxVal.Less(val) {
+			a.maxVal = val
+		}
+		a.hasValue = true
+	}
+}
+
+func (a *accumulator) updateAvg(val common.Value) {
+	if val.Valid {
+		a.count++
+		a.sum += toFloat64(val)
 	}
 }
 

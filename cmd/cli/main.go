@@ -194,17 +194,7 @@ func (c *cli) runInteractive(reader io.Reader, writer io.Writer) error {
 			continue
 		}
 
-		// 收集多行 SQL（以分号结尾）
-		sql := line
-		for !strings.HasSuffix(sql, ";") {
-			_, _ = fmt.Fprint(writer, "  ...> ")
-			if !scanner.Scan() {
-				break
-			}
-			sql += " " + scanner.Text()
-		}
-		sql = strings.TrimSuffix(strings.TrimSpace(sql), ";")
-
+		sql := c.readMultiLineSQL(scanner, writer, line)
 		if sql == "" {
 			continue
 		}
@@ -221,6 +211,19 @@ func (c *cli) runInteractive(reader io.Reader, writer io.Writer) error {
 		return fmt.Errorf("读取输入失败: %w", err)
 	}
 	return nil
+}
+
+// readMultiLineSQL 收集多行 SQL（以分号结尾），返回去除分号后的完整语句。
+func (c *cli) readMultiLineSQL(scanner *bufio.Scanner, writer io.Writer, firstLine string) string {
+	sql := firstLine
+	for !strings.HasSuffix(sql, ";") {
+		_, _ = fmt.Fprint(writer, "  ...> ")
+		if !scanner.Scan() {
+			break
+		}
+		sql += " " + scanner.Text()
+	}
+	return strings.TrimSuffix(strings.TrimSpace(sql), ";")
 }
 
 // handleCommand 处理反斜杠命令。

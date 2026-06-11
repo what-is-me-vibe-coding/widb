@@ -226,30 +226,45 @@ func (r *ConstantFoldingRule) foldBinaryExpr(e *BinaryExpr) Expression {
 		return e
 	}
 
-	switch e.Op {
-	case OpEq:
-		return &LiteralExpr{Value: common.NewBool(leftLit.Value.Equal(rightLit.Value))}
-	case OpNe:
-		return &LiteralExpr{Value: common.NewBool(!leftLit.Value.Equal(rightLit.Value))}
-	case OpLt:
-		return &LiteralExpr{Value: common.NewBool(leftLit.Value.Less(rightLit.Value))}
-	case OpGt:
-		return &LiteralExpr{Value: common.NewBool(rightLit.Value.Less(leftLit.Value))}
-	case OpLe:
-		return &LiteralExpr{Value: common.NewBool(!rightLit.Value.Less(leftLit.Value))}
-	case OpGe:
-		return &LiteralExpr{Value: common.NewBool(!leftLit.Value.Less(rightLit.Value))}
-	case OpAnd:
-		lb := isTruthy(leftLit.Value)
-		rb := isTruthy(rightLit.Value)
-		return &LiteralExpr{Value: common.NewBool(lb && rb)}
-	case OpOr:
-		lb := isTruthy(leftLit.Value)
-		rb := isTruthy(rightLit.Value)
-		return &LiteralExpr{Value: common.NewBool(lb || rb)}
+	if result, ok := r.foldComparison(e.Op, leftLit.Value, rightLit.Value); ok {
+		return &LiteralExpr{Value: common.NewBool(result)}
+	}
+
+	if result, ok := r.foldLogical(e.Op, leftLit.Value, rightLit.Value); ok {
+		return &LiteralExpr{Value: common.NewBool(result)}
 	}
 
 	return e
+}
+
+// foldComparison 对比较运算符执行常量折叠，返回 (结果, 是否匹配)。
+func (r *ConstantFoldingRule) foldComparison(op BinaryOp, left, right common.Value) (bool, bool) {
+	switch op {
+	case OpEq:
+		return left.Equal(right), true
+	case OpNe:
+		return !left.Equal(right), true
+	case OpLt:
+		return left.Less(right), true
+	case OpGt:
+		return right.Less(left), true
+	case OpLe:
+		return !right.Less(left), true
+	case OpGe:
+		return !left.Less(right), true
+	}
+	return false, false
+}
+
+// foldLogical 对逻辑运算符执行常量折叠，返回 (结果, 是否匹配)。
+func (r *ConstantFoldingRule) foldLogical(op BinaryOp, left, right common.Value) (bool, bool) {
+	switch op {
+	case OpAnd:
+		return isTruthy(left) && isTruthy(right), true
+	case OpOr:
+		return isTruthy(left) || isTruthy(right), true
+	}
+	return false, false
 }
 
 func (r *ConstantFoldingRule) foldUnaryExpr(e *UnaryExpr) Expression {
