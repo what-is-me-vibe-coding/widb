@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -235,6 +236,39 @@ func TestSegmentIteratorDecodeError(t *testing.T) {
 		t.Error("expected error from iterator with corrupt segment data")
 	}
 	it.Close()
+}
+
+// TestRaceWriteCloseGroupCommitter 验证 Write 与 Close 并发访问 groupCommitter 不会产生数据竞态。
+// 修复前：Write 中读取 e.groupCommitter 未持锁，而 Close 中设置 e.groupCommitter = nil 也未持锁，
+// 导致竞态条件。修复后：两处均通过 e.mu 同步。
+func TestRaceWriteCloseGroupCommitter(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		eng, err := NewEngine(EngineConfig{
+			DataDir:      t.TempDir(),
+			SyncMode:     SyncGroupCommit,
+			SyncInterval: 1 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("new engine: %v", err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = eng.Write(fmt.Sprintf("race_key_%04d", j), map[string]common.Value{
+					colVal: common.NewInt64(int64(j)),
+				})
+			}
+		}()
+
+		// Give writes a chance to start
+		time.Sleep(time.Millisecond)
+
+		_ = eng.Close()
+		wg.Wait()
+	}
 }
 
 // TestRegisterSegmentIndexesErrorHandling 验证 registerSegmentIndexes 返回错误时被正确处理。
