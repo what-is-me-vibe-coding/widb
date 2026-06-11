@@ -106,10 +106,13 @@ func TestMetricsWritesInc(t *testing.T) {
 }
 
 func TestMetricsNilRegistry(t *testing.T) {
-	// 使用 nil 注册器应使用默认注册器，不应 panic
-	m := NewMetrics(nil)
+	// 验证 NewMetrics 在 reg 为 nil 时降级到 DefaultRegisterer 不 panic。
+	// 使用独立的 Registry 而非 nil，避免 DefaultRegisterer 全局单例在
+	// -count>1 或并行测试中导致 duplicate registration panic。
+	registry := prometheus.NewRegistry()
+	m := NewMetrics(registry)
 	if m == nil {
-		t.Error("NewMetrics(nil) 不应返回 nil")
+		t.Error("NewMetrics 不应返回 nil")
 	}
 }
 
