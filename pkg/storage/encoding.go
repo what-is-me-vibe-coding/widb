@@ -21,16 +21,24 @@ const (
 	EncodingBitmap EncodingType = 3
 )
 
+// 编码类型名称常量，供 String() 等方法使用。
+const (
+	encodingPlainName  = "Plain"
+	encodingDictName   = "Dict"
+	encodingRLEName    = "RLE"
+	encodingBitmapName = "Bitmap"
+)
+
 func (e EncodingType) String() string {
 	switch e {
 	case EncodingPlain:
-		return "Plain"
+		return encodingPlainName
 	case EncodingDict:
-		return "Dict"
+		return encodingDictName
 	case EncodingRLE:
-		return "RLE"
+		return encodingRLEName
 	case EncodingBitmap:
-		return "Bitmap"
+		return encodingBitmapName
 	default:
 		return fmt.Sprintf("Unknown(%d)", e)
 	}
