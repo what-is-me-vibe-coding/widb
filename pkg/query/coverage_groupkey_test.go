@@ -12,23 +12,23 @@ import (
 func TestBuildGroupKeySeparatorNoCollision(t *testing.T) {
 	t.Parallel()
 
-	colIdxMap := map[string]int{testStrCol1: 0, "col2": 1}
+	colIdxMap := map[string]int{testStrCol1: 0, testStrCol2: 1}
 
 	// 情况 1: col1="a|b", col2="c"
 	row1 := map[string]common.Value{
 		testStrCol1: common.NewString("a|b"),
-		"col2": common.NewString("c"),
+		testStrCol2: common.NewString("c"),
 	}
 	groupBy1 := []Expression{
 		&ResolvedColumnExpr{Name: testStrCol1, Idx: 0, typ: common.TypeString},
-		&ResolvedColumnExpr{Name: "col2", Idx: 1, typ: common.TypeString},
+		&ResolvedColumnExpr{Name: testStrCol2, Idx: 1, typ: common.TypeString},
 	}
 	key1 := buildGroupKey(groupBy1, row1, colIdxMap)
 
 	// 情况 2: col1="a", col2="b|c"
 	row2 := map[string]common.Value{
 		testStrCol1: common.NewString("a"),
-		"col2": common.NewString("b|c"),
+		testStrCol2: common.NewString("b|c"),
 	}
 	key2 := buildGroupKey(groupBy1, row2, colIdxMap)
 
@@ -42,24 +42,24 @@ func TestBuildGroupKeySeparatorNoCollision(t *testing.T) {
 func TestBuildGroupKeySeparatorWithNullChar(t *testing.T) {
 	t.Parallel()
 
-	colIdxMap := map[string]int{testStrCol1: 0, "col2": 1}
+	colIdxMap := map[string]int{testStrCol1: 0, testStrCol2: 1}
 
 	groupBy := []Expression{
 		&ResolvedColumnExpr{Name: testStrCol1, Idx: 0, typ: common.TypeString},
-		&ResolvedColumnExpr{Name: "col2", Idx: 1, typ: common.TypeString},
+		&ResolvedColumnExpr{Name: testStrCol2, Idx: 1, typ: common.TypeString},
 	}
 
 	// 情况 1: col1="a", col2="b"
 	row1 := map[string]common.Value{
 		testStrCol1: common.NewString("a"),
-		"col2": common.NewString("b"),
+		testStrCol2: common.NewString("b"),
 	}
 	key1 := buildGroupKey(groupBy, row1, colIdxMap)
 
 	// 情况 2: col1="a\x00b", col2="" — 不同的值组合
 	row2 := map[string]common.Value{
 		testStrCol1: common.NewString("a\x00b"),
-		"col2": common.NewString(""),
+		testStrCol2: common.NewString(""),
 	}
 	key2 := buildGroupKey(groupBy, row2, colIdxMap)
 

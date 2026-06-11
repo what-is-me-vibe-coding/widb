@@ -36,4 +36,5 @@ const (
 	testFuncUnknown        = "unknown"
 	testDefaultKeyRangeEnd = "\xff\xff\xff\xff"
 	testStrCol1            = "col1"
+	testStrCol2            = "col2"
 )
