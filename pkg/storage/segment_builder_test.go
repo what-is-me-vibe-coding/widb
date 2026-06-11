@@ -185,7 +185,7 @@ func TestGetColumnValueStringColumn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetColumnValue: %v", err)
 	}
-	if val.Str != "world" {
+	if val.Str != testStrWorld {
 		t.Errorf("expected 'world', got %q", val.Str)
 	}
 }

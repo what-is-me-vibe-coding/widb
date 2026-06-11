@@ -161,7 +161,7 @@ func TestCleanupSegmentsNonExistentFile(t *testing.T) {
 }
 
 func TestDecodeSegmentColumnWithDictAndNulls(t *testing.T) {
-	strs := []string{testStrAlpha, "beta", testStrAlpha, "gamma"}
+	strs := []string{testStrAlpha, testStrBeta, testStrAlpha, testStrGamma}
 	nulls := common.NewBitmap(4)
 	nulls.Set(1)
 

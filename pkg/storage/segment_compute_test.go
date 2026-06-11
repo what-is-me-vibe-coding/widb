@@ -155,7 +155,7 @@ func TestComputeStringStats(t *testing.T) {
 			wantMax:  testStrSame,
 		},
 		{
-			name: "带null的字符串统计", strs: []string{"zebra", "alpha", "middle"},
+			name: "带null的字符串统计", strs: []string{"zebra", testStrAlpha, "middle"},
 			rowCount: 3,
 			nulls:    func() *common.Bitmap { bm := common.NewBitmap(3); bm.Set(1); return bm }(),
 			wantMin:  "middle", wantMax: "zebra",

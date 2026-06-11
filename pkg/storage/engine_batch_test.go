@@ -222,7 +222,7 @@ func TestEngineWriteBatchAllTypesRecovery(t *testing.T) {
 	if v := got.Columns["f"]; v.Float64 != 2.718 {
 		t.Errorf("float: expected 2.718, got %f", v.Float64)
 	}
-	if v := got.Columns["s"]; v.Str != "world" {
+	if v := got.Columns["s"]; v.Str != testStrWorld {
 		t.Errorf("str: expected world, got %s", v.Str)
 	}
 	if v := got.Columns["t"]; !v.Time.Equal(ts) {

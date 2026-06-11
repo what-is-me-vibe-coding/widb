@@ -165,7 +165,7 @@ func TestCoverageStabilitySliceFloat64(t *testing.T) {
 
 func TestCoverageStabilitySliceString(t *testing.T) {
 	cv := NewColumnVector(2, common.TypeString, 8)
-	for _, s := range []string{"alpha", "beta", "gamma", "delta"} {
+	for _, s := range []string{testStrAlpha, testStrBeta, testStrGamma, testStrDelta} {
 		_ = cv.Append(common.NewString(s))
 	}
 	sliced, err := cv.Slice(1, 3)
@@ -328,8 +328,8 @@ func TestCoverageStabilitySliceStringWithNulls(t *testing.T) {
 	if !sliced.GetValue(1).IsNull() {
 		t.Error("row 1 应为 NULL")
 	}
-	if sliced.GetValue(2).Str != "world" {
-		t.Errorf("row 2: got %q, want %q", sliced.GetValue(2).Str, "world")
+	if sliced.GetValue(2).Str != testStrWorld {
+		t.Errorf("row 2: got %q, want %q", sliced.GetValue(2).Str, testStrWorld)
 	}
 }
 

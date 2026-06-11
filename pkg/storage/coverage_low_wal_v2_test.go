@@ -357,7 +357,7 @@ func TestEncodeColumnV2BoolType(t *testing.T) {
 
 // TestEncodeColumnV2StringType tests EncodeColumn with string type selects Dict encoding.
 func TestEncodeColumnV2StringType(t *testing.T) {
-	strs := []string{"alpha", "beta", "gamma"}
+	strs := []string{testStrAlpha, testStrBeta, testStrGamma}
 	enc, err := EncodeColumn(common.TypeString, strs, uint32(len(strs)), nil)
 	if err != nil {
 		t.Fatalf("EncodeColumn with string type failed: %v", err)
