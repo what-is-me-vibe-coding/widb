@@ -157,13 +157,19 @@ func BuildFromKeys(keys []string, fpRate float64) ([]byte, error) {
 }
 
 // BuildAndRegister 构建布隆过滤器并注册到索引。
+// 直接注册 filter 对象，避免 marshal/unmarshal 往返开销。
 func (bi *BloomIndex) BuildAndRegister(segID uint64, keys []string, fpRate float64) error {
-	data, err := BuildFromKeys(keys, fpRate)
-	if err != nil {
-		return err
-	}
-	if data == nil {
+	if len(keys) == 0 {
 		return nil
 	}
-	return bi.RegisterFromBytes(segID, data)
+	if fpRate <= 0 || fpRate >= 1 {
+		fpRate = DefaultBloomFPRate
+	}
+
+	filter := bloom.NewWithEstimates(uint(len(keys)), fpRate)
+	for _, k := range keys {
+		filter.Add([]byte(k))
+	}
+
+	return bi.Register(segID, filter)
 }
