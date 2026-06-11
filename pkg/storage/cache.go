@@ -53,15 +53,15 @@ func (c *BlockCache) get(key CacheKey) (decodedColumn, bool) {
 		return decodedColumn{}, false
 	}
 
-	// Fast path: read-only lookup with RLock (allows concurrent reads)
+	// 快速路径：读锁查找（允许并发读）
 	c.mu.RLock()
 	if elem, ok := c.items[key]; ok {
 		data := elem.Value.(*cacheEntry).data
 		c.mu.RUnlock()
 		atomic.AddInt64(&c.hits, 1)
-		// Slow path: move to front with write lock (brief hold)
+		// 慢路径：短暂写锁更新 LRU 顺序
 		c.mu.Lock()
-		// Re-check since the entry might have been evicted between RUnlock and Lock
+		// 双检：在 RUnlock 和 Lock 之间可能被淘汰
 		if elem, ok = c.items[key]; ok {
 			c.order.MoveToFront(elem)
 		}
@@ -125,13 +125,11 @@ func (c *BlockCache) removeFromSegIndex(key CacheKey) {
 	keys := c.segIndex[key.SegmentID]
 	for i, k := range keys {
 		if k == key {
-			// 用最后一个元素覆盖被删除的位置，然后截断
-			// 不需要保持顺序，因为 Invalidate 会删除整个 segment 的所有缓存
 			lastIdx := len(keys) - 1
 			if i < lastIdx {
 				keys[i] = keys[lastIdx]
 			}
-			keys[lastIdx] = CacheKey{} // 零化防止内存泄漏
+			keys[lastIdx] = CacheKey{}
 			c.segIndex[key.SegmentID] = keys[:lastIdx]
 			break
 		}
@@ -225,7 +223,7 @@ func (c *BlockCache) Stats() CacheStats {
 
 // estimateDecodedSize 估算已解码列数据的内存占用。
 func estimateDecodedSize(dc decodedColumn) int64 {
-	const overhead = 64 // decodedColumn 结构体本身的开销
+	const overhead = 64
 
 	if dc.data == nil {
 		return overhead
@@ -241,15 +239,14 @@ func estimateDecodedSize(dc decodedColumn) int64 {
 		dataSize = int64(len(v)) * 8
 	case []string:
 		for _, s := range v {
-			dataSize += int64(len(s)) + 16 // 字符串头开销
+			dataSize += int64(len(s)) + 16
 		}
 	case []time.Time:
 		dataSize = int64(len(v)) * 24
 	default:
-		dataSize = 256 // 未知类型默认估算
+		dataSize = 256
 	}
 
-	// NULL 位图开销
 	if dc.nulls != nil {
 		dataSize += int64(dc.nulls.Len()/8 + 32)
 	}
@@ -258,14 +255,11 @@ func estimateDecodedSize(dc decodedColumn) int64 {
 }
 
 // IndexCache 缓存 Segment 级别的索引元数据。
-// 当前 BloomIndex 和 SparseIndex 已在内存中维护，
-// IndexCache 主要缓存 Segment Footer 的列统计信息，
-// 避免重复解析 Segment 文件。
 type IndexCache struct {
 	mu       sync.RWMutex
 	capacity int
 	used     int
-	items    map[uint64]*list.Element // key: segmentID
+	items    map[uint64]*list.Element
 	order    *list.List
 }
 
@@ -290,7 +284,7 @@ func (c *IndexCache) GetColumnStats(segmentID uint64) ([]ColumnStat, bool) {
 		return nil, false
 	}
 
-	// Fast path: read-only lookup with RLock
+	// 快速路径：读锁查找
 	c.mu.RLock()
 	elem, ok := c.items[segmentID]
 	if !ok {
@@ -300,8 +294,9 @@ func (c *IndexCache) GetColumnStats(segmentID uint64) ([]ColumnStat, bool) {
 	stats := elem.Value.(*indexCacheEntry).stats
 	c.mu.RUnlock()
 
-	// Slow path: move to front with write lock
+	// 慢路径：短暂写锁更新 LRU 顺序
 	c.mu.Lock()
+	// 双检：在 RUnlock 和 Lock 之间可能被淘汰
 	if elem, ok = c.items[segmentID]; ok {
 		c.order.MoveToFront(elem)
 	}
@@ -326,7 +321,6 @@ func (c *IndexCache) PutColumnStats(segmentID uint64, stats []ColumnStat) {
 		return
 	}
 
-	// LRU 淘汰
 	for c.used >= c.capacity && c.order.Len() > 0 {
 		oldest := c.order.Back()
 		if oldest == nil {

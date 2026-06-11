@@ -42,9 +42,16 @@ type Segment struct {
 	Keys     []string
 
 	// 逐列延迟解码缓存：首次访问某列时解码并缓存，避免点查时解码所有列
-	colCache  []decodedColumn
-	colOnce   []sync.Once
-	cacheInit sync.Once
+	colCache       []decodedColumn
+	colDecodeState []colDecodeState
+	cacheInit      sync.Once
+}
+
+// colDecodeState 跟踪逐列解码状态，支持解码失败时重试。
+// 替代 sync.Once 以解决解码失败后不可重试的问题。
+type colDecodeState struct {
+	mu      sync.Mutex
+	decoded bool
 }
 
 // SegmentID 返回 Segment 的唯一标识。
@@ -175,10 +182,8 @@ func computeDictMinMax(enc *EncodedColumn, stat *ColumnStat) {
 }
 
 func computeRLEMinMax(enc *EncodedColumn, stat *ColumnStat) {
-	// 直接从 RLE runs 计算 min/max，避免完整解码
 	runCount := len(enc.Data) / 16
 	if runCount == 0 {
-		// 无有效 run 数据，但 RowCount>0 时，旧行为是全零数组
 		if enc.RowCount > 0 {
 			stat.Min = int64ToBytes(0)
 			stat.Max = int64ToBytes(0)
@@ -281,6 +286,9 @@ func computeStringStats(data []byte, offsets []uint32, rowCount uint32, nulls *c
 		if nulls != nil && nulls.Get(i) {
 			continue
 		}
+		if int(i)+1 >= len(offsets) {
+			break
+		}
 		start := offsets[i]
 		end := offsets[i+1]
 		s := string(data[start:end])
@@ -315,21 +323,17 @@ func float64ToBytes(v float64) []byte {
 }
 
 // Build 构建 Segment，返回序列化后的字节流。
-// 优化：先计算统计信息（需要未压缩数据），再原地压缩 b.columns，
-// 避免额外的深拷贝。Build 后 builder 不可复用。
 func (b *SegmentBuilder) Build() (*Segment, error) {
 	if len(b.columns) == 0 {
 		return nil, fmt.Errorf("segment builder: no columns added")
 	}
 
-	// 先计算统计信息（需要未压缩的原始数据）
 	stats := make([]ColumnStat, len(b.columns))
 	for i := range b.columns {
 		stats[i] = computeColumnStat(&b.columns[i])
 		stats[i].ColumnID = uint32(i)
 	}
 
-	// 原地压缩 b.columns，无需额外拷贝
 	for i := range b.columns {
 		if err := CompressColumn(&b.columns[i]); err != nil {
 			return nil, fmt.Errorf("segment builder: compress column %d: %w", i, err)
