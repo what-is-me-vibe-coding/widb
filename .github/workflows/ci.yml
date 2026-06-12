@@ -37,11 +37,13 @@ jobs:
         run: go test -race -p=1 ./...
         env:
           TMPDIR: ${{ runner.temp }}/gotest
+          GOCACHE: ${{ runner.temp }}/go-build-cache
 
       - name: Run tests with coverage
         run: go test -race -coverprofile=coverage.out -p=1 ./...
         env:
           TMPDIR: ${{ runner.temp }}/gotest
+          GOCACHE: ${{ runner.temp }}/go-build-cache
 
       - name: Check coverage threshold (>=90%)
         run: |

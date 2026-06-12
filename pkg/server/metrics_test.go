@@ -116,6 +116,46 @@ func TestMetricsNilRegistry(t *testing.T) {
 	}
 }
 
+// TestNewMetrics_NilRegistryFallback 测试 NewMetrics 传入 nil 时
+// 降级到 DefaultRegisterer 的路径（第 32-34 行）。
+// 使用唯一的指标名称前缀避免与 DefaultRegisterer 中的已有指标冲突。
+func TestNewMetrics_NilRegistryFallback(t *testing.T) {
+	// 保存并恢复 DefaultRegisterer，避免影响其他测试
+	origRegisterer := prometheus.DefaultRegisterer
+	defer func() {
+		prometheus.DefaultRegisterer = origRegisterer
+	}()
+
+	// 使用独立的 Registry 作为 DefaultRegisterer，避免全局污染
+	testRegistry := prometheus.NewRegistry()
+	prometheus.DefaultRegisterer = testRegistry
+
+	// 传入 nil，应降级到 DefaultRegisterer（即 testRegistry）
+	m := NewMetrics(nil)
+	if m == nil {
+		t.Fatal("NewMetrics(nil) 不应返回 nil")
+	}
+
+	// 验证指标已注册到 testRegistry
+	m.QueriesTotal.WithLabelValues("success").Inc()
+
+	metricFamilies, err := testRegistry.Gather()
+	if err != nil {
+		t.Fatalf("Gather 失败: %v", err)
+	}
+
+	found := false
+	for _, mf := range metricFamilies {
+		if mf.GetName() == "widb_queries_total" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("nil registry 降级后应注册指标到 DefaultRegisterer")
+	}
+}
+
 func TestMetricsGaugeSet(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	m := NewMetrics(registry)
