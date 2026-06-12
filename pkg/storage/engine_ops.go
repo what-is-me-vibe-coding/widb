@@ -61,6 +61,7 @@ func (e *Engine) WriteBatch(rows []WriteRow) error {
 		return fmt.Errorf("engine write batch: wal: %w", err)
 	}
 
+	// 根据同步模式选择同步策略，与 Engine.Write 保持一致
 	var syncCh <-chan struct{}
 	e.mu.RLock()
 	gc := e.groupCommitter
@@ -87,7 +88,7 @@ func (e *Engine) WriteBatch(rows []WriteRow) error {
 	}
 	e.mu.Unlock()
 
-	// Step 5: Wait for WAL sync completion (outside engine lock)
+	// Step 5: Wait for WAL sync completion (outside engine lock, GroupCommit 模式)
 	if syncCh != nil {
 		<-syncCh
 	}
