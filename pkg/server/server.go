@@ -340,6 +340,7 @@ func (s *Server) convertWriteRow(
 }
 
 // buildPrimaryKey 从行数据中提取主键值，拼接为存储 key。
+// 使用 \x00 作为分隔符，避免主键值包含分隔符时产生碰撞。
 func (s *Server) buildPrimaryKey(
 	tbl *catalog.Table, row map[string]any,
 ) (string, error) {
@@ -350,7 +351,7 @@ func (s *Server) buildPrimaryKey(
 			return "", fmt.Errorf("主键列 %s 缺失", pk)
 		}
 		if i > 0 {
-			builder.WriteString("|")
+			builder.WriteByte(0)
 		}
 		fmt.Fprintf(&builder, "%v", rawVal)
 	}
