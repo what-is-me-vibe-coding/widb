@@ -422,6 +422,14 @@ func (e *Engine) buildScanIterators(start, end string) []ScanIterator {
 // deduplicated results across all data sources.
 // Caller must hold e.mu.RLock.
 func (e *Engine) ScanRange(start, end string) []ScanEntry {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.scanRangeUnlocked(start, end)
+}
+
+// scanRangeUnlocked performs the actual scan without acquiring the lock.
+// Caller must hold e.mu.RLock.
+func (e *Engine) scanRangeUnlocked(start, end string) []ScanEntry {
 	iters := e.buildScanIterators(start, end)
 	if len(iters) == 0 {
 		return nil

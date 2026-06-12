@@ -162,15 +162,10 @@ func TestServerDoubleStop(t *testing.T) {
 		t.Fatalf("第一次 Stop 失败: %v", err)
 	}
 
-	// 第二次 Stop 应该 panic（关闭已关闭的 channel）
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("预期第二次 Stop 会 panic，但没有发生")
-		} else {
-			t.Logf("第二次 Stop 如预期 panic: %v", r)
-		}
-	}()
-	_ = srv.Stop()
+	// 第二次 Stop 应该安全返回（sync.Once 保护，不会 panic）
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("第二次 Stop 不应返回错误: %v", err)
+	}
 }
 
 // TestRunServerStopFailure 测试 run() 函数在服务器 Stop() 失败时的行为。

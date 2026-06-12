@@ -188,8 +188,8 @@ func TestBuildGroupKeyMultipleColumns(t *testing.T) {
 		&ResolvedColumnExpr{Name: testColAge, Idx: 1, typ: common.TypeInt64},
 	}, row, colIdxMap)
 
-	if key != "alice|30" {
-		t.Errorf("buildGroupKey multiple columns: got %q, want 'alice|30'", key)
+	if key != "alice\x0030" {
+		t.Errorf("buildGroupKey multiple columns: got %q, want 'alice\\x0030'", key)
 	}
 }
 

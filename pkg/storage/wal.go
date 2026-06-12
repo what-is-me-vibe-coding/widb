@@ -227,6 +227,13 @@ func (w *WAL) maybeRotate() error {
 		return fmt.Errorf("wal rotate create temp: %w", err)
 	}
 
+	// 确保新文件的目录条目已持久化到磁盘，避免 rename 后崩溃导致新文件丢失
+	if err := newF.Sync(); err != nil {
+		_ = newF.Close()
+		_ = os.Remove(w.path + ".tmp")
+		return fmt.Errorf("wal rotate sync temp: %w", err)
+	}
+
 	// 关闭旧文件
 	old := w.file
 	if err := old.Close(); err != nil {

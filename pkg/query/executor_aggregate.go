@@ -207,6 +207,7 @@ func (e *Executor) buildAggregateOutput(agg *AggregateNode, schema []ColumnDef, 
 
 // buildGroupKey 构建分组键。
 // 使用 strings.Builder 避免创建临时字符串切片，减少内存分配。
+// 使用 '\x00' 作为分隔符，避免列值中包含可打印字符时产生碰撞。
 func buildGroupKey(groupBy []Expression, row map[string]common.Value, colIdxMap map[string]int) string {
 	if len(groupBy) == 0 {
 		return ""
@@ -214,7 +215,7 @@ func buildGroupKey(groupBy []Expression, row map[string]common.Value, colIdxMap 
 	var b strings.Builder
 	for i, gb := range groupBy {
 		if i > 0 {
-			b.WriteByte('|')
+			b.WriteByte('\x00')
 		}
 		val, _ := evalExpr(gb, row, colIdxMap)
 		b.WriteString(val.String())

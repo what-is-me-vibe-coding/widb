@@ -358,3 +358,51 @@ func TestToInt64ValueErrors(t *testing.T) {
 		t.Error("期望返回类型不匹配错误")
 	}
 }
+
+// TestDecodePacketWrongVersion 验证 DecodePacket 拒绝错误版本号的包。
+// 修复前可能未检查版本号，导致不兼容的客户端请求被错误接受。
+func TestDecodePacketWrongVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		version uint16
+	}{
+		{"版本0", 0},
+		{"版本2", 2},
+		{"版本255", 255},
+		{"版本999", 999},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkt := &Packet{
+				Magic:   Magic,
+				Version: tt.version,
+				Type:    PacketQuery,
+				Length:  0,
+			}
+			encoded := pkt.Encode()
+
+			_, err := DecodePacket(bytes.NewReader(encoded))
+			if err == nil {
+				t.Fatalf("期望返回版本错误，但成功解码（version=%d）", tt.version)
+			}
+			if !strings.Contains(err.Error(), "unsupported version") {
+				t.Errorf("错误信息应包含 'unsupported version'，实际: %v", err)
+			}
+		})
+	}
+}
+
+// TestDecodePacketCorrectVersion 验证 DecodePacket 接受正确版本号的包。
+func TestDecodePacketCorrectVersion(t *testing.T) {
+	pkt := NewPacket(PacketPing, nil)
+	encoded := pkt.Encode()
+
+	decoded, err := DecodePacket(bytes.NewReader(encoded))
+	if err != nil {
+		t.Fatalf("期望成功解码，但返回错误: %v", err)
+	}
+	if decoded.Version != ProtocolVersion {
+		t.Errorf("Version = %d, 期望 %d", decoded.Version, ProtocolVersion)
+	}
+}

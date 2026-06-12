@@ -49,6 +49,7 @@ type Server struct {
 	connCount int64 // 当前活跃 TCP 连接数
 	wg        sync.WaitGroup
 	done      chan struct{}
+	stopOnce  sync.Once
 }
 
 // storageAdapter 适配 storage.Engine 以实现 query.StorageProvider 接口。
@@ -193,35 +194,40 @@ func (s *Server) Catalog() *catalog.Catalog {
 }
 
 // Stop 优雅关闭服务器，等待所有活跃连接完成。
+// 多次调用是安全的，仅第一次调用会执行关闭逻辑。
 func (s *Server) Stop() error {
-	close(s.done)
+	var stopErr error
+	s.stopOnce.Do(func() {
+		close(s.done)
 
-	if s.tcpListener != nil {
-		if err := s.tcpListener.Close(); err != nil {
-			log.Printf("server: close tcp listener: %v", err)
+		if s.tcpListener != nil {
+			if err := s.tcpListener.Close(); err != nil {
+				log.Printf("server: close tcp listener: %v", err)
+			}
 		}
-	}
-	if s.httpListener != nil {
-		if err := s.httpListener.Close(); err != nil {
-			log.Printf("server: close http listener: %v", err)
+		if s.httpListener != nil {
+			if err := s.httpListener.Close(); err != nil {
+				log.Printf("server: close http listener: %v", err)
+			}
 		}
-	}
-	if s.httpServer != nil {
-		if err := s.httpServer.Close(); err != nil {
-			log.Printf("server: close http server: %v", err)
+		if s.httpServer != nil {
+			if err := s.httpServer.Close(); err != nil {
+				log.Printf("server: close http server: %v", err)
+			}
 		}
-	}
 
-	s.wg.Wait()
+		s.wg.Wait()
 
-	if s.storage != nil {
-		if err := s.storage.Close(); err != nil {
-			return fmt.Errorf("server: close storage: %w", err)
+		if s.storage != nil {
+			if err := s.storage.Close(); err != nil {
+				stopErr = fmt.Errorf("server: close storage: %w", err)
+				return
+			}
 		}
-	}
 
-	log.Println("服务器已关闭")
-	return nil
+		log.Println("服务器已关闭")
+	})
+	return stopErr
 }
 
 // serveHTTP 启动 HTTP 服务。

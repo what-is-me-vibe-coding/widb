@@ -291,6 +291,9 @@ func computeStringStats(data []byte, offsets []uint32, rowCount uint32, nulls *c
 		}
 		start := offsets[i]
 		end := offsets[i+1]
+		if int(end) > len(data) || int(start) > len(data) {
+			break
+		}
 		s := string(data[start:end])
 		if first {
 			minStr, maxStr = s, s

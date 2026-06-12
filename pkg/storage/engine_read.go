@@ -91,7 +91,7 @@ func (e *Engine) Scan(start, end string) []struct {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	entries := e.ScanRange(start, end)
+	entries := e.scanRangeUnlocked(start, end)
 	results := make([]struct {
 		Key   string
 		Value Row

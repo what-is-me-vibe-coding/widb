@@ -435,3 +435,44 @@ func TestHandleWritePacketValid(t *testing.T) {
 		t.Errorf("response type = %d, want %d", resp.Type, PacketResponse)
 	}
 }
+
+// TestServerStopDoubleCall 验证多次调用 Stop() 不会 panic。
+// 修复前双重调用可能因重复关闭 channel 而崩溃。
+func TestServerStopDoubleCall(t *testing.T) {
+	srv := newTestServer(t)
+
+	// 第一次 Stop
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("第一次 Stop 失败: %v", err)
+	}
+
+	// 第二次 Stop 不应 panic
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("第二次 Stop 不应返回错误: %v", err)
+	}
+
+	// 第三次 Stop 也不应 panic
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("第三次 Stop 不应返回错误: %v", err)
+	}
+}
+
+// TestServerStopDoubleCallAfterStart 验证启动后多次调用 Stop() 不会 panic。
+func TestServerStopDoubleCallAfterStart(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start 失败: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// 第一次 Stop
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("第一次 Stop 失败: %v", err)
+	}
+
+	// 第二次 Stop 不应 panic
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("第二次 Stop 不应返回错误: %v", err)
+	}
+}

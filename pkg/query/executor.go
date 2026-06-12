@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
@@ -147,6 +148,7 @@ func (e *Executor) filterEntriesByPredicate(entries []storage.ScanEntry, pred Ex
 	for _, entry := range entries {
 		val, err := evalExpr(pred, entry.Value.Columns, colIdxMap)
 		if err != nil {
+			log.Printf("executor: filter predicate eval error for key %s: %v", entry.Key, err)
 			continue
 		}
 		if isTruthyValue(val) {

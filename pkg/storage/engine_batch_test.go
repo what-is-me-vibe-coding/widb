@@ -144,7 +144,7 @@ func TestEngineWriteBatchAllTypes(t *testing.T) {
 				"bool_col": common.NewBool(true),
 				"int":      common.NewInt64(-42),
 				"float":    common.NewFloat64(3.14),
-				"str":      common.NewString("hello"),
+				"str":      common.NewString(testStrHello),
 				"time":     common.NewTimestamp(ts),
 			},
 		},
@@ -167,7 +167,7 @@ func TestEngineWriteBatchAllTypes(t *testing.T) {
 	if v := got.Columns["float"]; v.Float64 != 3.14 {
 		t.Errorf("float: expected 3.14, got %f", v.Float64)
 	}
-	if v := got.Columns["str"]; v.Str != "hello" {
+	if v := got.Columns["str"]; v.Str != testStrHello {
 		t.Errorf("str: expected hello, got %s", v.Str)
 	}
 	if v := got.Columns["time"]; !v.Time.Equal(ts) {

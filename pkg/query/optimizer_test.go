@@ -125,7 +125,7 @@ func TestOptimizerConstantFoldingProjectNode(t *testing.T) {
 			&BinaryExpr{Op: OpAdd, Left: &LiteralExpr{Value: common.NewInt64(1)}, Right: &LiteralExpr{Value: common.NewInt64(2)}},
 		},
 		Aliases: []string{""},
-		schema:  []ColumnDef{{Name: "col1", Type: common.TypeInt64}},
+		schema:  []ColumnDef{{Name: testStrCol1, Type: common.TypeInt64}},
 	}
 
 	result := rule.Apply(proj)
