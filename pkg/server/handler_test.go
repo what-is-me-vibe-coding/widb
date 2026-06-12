@@ -160,8 +160,34 @@ func TestBuildCompositePrimaryKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildPrimaryKey 失败: %v", err)
 	}
-	if key != "us|42" {
-		t.Errorf("复合主键 = %q, 期望 'us|42'", key)
+	expected := "us\x0042"
+	if key != expected {
+		t.Errorf("复合主键 = %q, 期望 %q", key, expected)
+	}
+}
+
+func TestBuildPrimaryKeySeparatorNoCollision(t *testing.T) {
+	srv := newTestServer(t)
+	tbl := &catalog.Table{Name: testTableName, PrimaryKey: []string{"a", "b"}}
+
+	tests := []struct {
+		name string
+		row  map[string]interface{}
+	}{
+		{"值包含竖线-1", map[string]interface{}{"a": "x|y", "b": "z"}},
+		{"值包含竖线-2", map[string]interface{}{"a": "x", "b": "y|z"}},
+	}
+
+	keys := make(map[string]string)
+	for _, tt := range tests {
+		key, err := srv.buildPrimaryKey(tbl, tt.row)
+		if err != nil {
+			t.Fatalf("%s: buildPrimaryKey 失败: %v", tt.name, err)
+		}
+		if prev, exists := keys[key]; exists {
+			t.Errorf("主键碰撞: %q 和 %q 生成了相同 key %q", prev, tt.name, key)
+		}
+		keys[key] = tt.name
 	}
 }
 

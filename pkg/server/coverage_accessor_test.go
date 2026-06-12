@@ -313,7 +313,7 @@ func TestBuildPrimaryKey_MultiplePKColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildPrimaryKey failed: %v", err)
 	}
-	if key != "42|hello" {
-		t.Errorf("key = %q, want %q", key, "42|hello")
+	if key != "42\x00hello" {
+		t.Errorf("key = %q, want %q", key, "42\x00hello")
 	}
 }
