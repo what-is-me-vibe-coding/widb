@@ -115,6 +115,8 @@ func (gc *GroupCommitter) run() {
 }
 
 // doSync 执行一次 WAL sync 并通知所有等待的写入者。
+// 如果 sync 失败，不通知等待者（channel 不会被关闭），
+// 调用者可通过 select + timeout 检测到 sync 超时。
 func (gc *GroupCommitter) doSync() {
 	gc.mu.Lock()
 	pending := gc.pending
@@ -125,9 +127,14 @@ func (gc *GroupCommitter) doSync() {
 		return
 	}
 
-	// 忽略 sync 错误：与 Engine.Write 中原行为一致，
-	// sync 失败时数据仍在 OS 缓冲区，后续 sync 可能成功。
-	_ = gc.wal.Sync()
+	if err := gc.wal.Sync(); err != nil {
+		// sync 失败：不通知等待者，让他们继续等待下一次 sync 尝试。
+		// 将失败的请求放回 pending 队列，下次 sync 时重试。
+		gc.mu.Lock()
+		gc.pending = append(pending, gc.pending...)
+		gc.mu.Unlock()
+		return
+	}
 
 	for _, ch := range pending {
 		close(ch)

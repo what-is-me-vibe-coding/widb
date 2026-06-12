@@ -90,6 +90,13 @@ func (b *Bitmap) Count() uint32 {
 	return count
 }
 
+// Reset 将位图所有位清零，保留已分配的容量。
+func (b *Bitmap) Reset() {
+	for i := range b.bits {
+		b.bits[i] = 0
+	}
+}
+
 // IsEmpty 判断位图是否全为 false。
 func (b *Bitmap) IsEmpty() bool {
 	for _, word := range b.bits {
@@ -207,15 +214,16 @@ func (b *Bitmap) Clone() *Bitmap {
 }
 
 // ForEach 遍历所有为 true 的位置，调用回调函数。
+// 使用 bits.TrailingZeros64 快速跳过零位，复杂度 O(popcount) 而非 O(64)。
 func (b *Bitmap) ForEach(fn func(idx uint32)) {
 	for i, word := range b.bits {
 		if word == 0 {
 			continue
 		}
-		for j := 0; j < 64; j++ {
-			if (word & (1 << j)) != 0 {
-				fn(uint32(i*64 + j))
-			}
+		for word != 0 {
+			j := bits.TrailingZeros64(word)
+			fn(uint32(i*64 + j))
+			word &^= 1 << j
 		}
 	}
 }

@@ -225,23 +225,17 @@ func (cv *ColumnVector) Append(v common.Value) error {
 }
 
 // Reset 重置列向量为空状态，保留已分配的容量。
+// 直接将 nulls bitmap 底层清零，避免逐位 Clear。
 func (cv *ColumnVector) Reset() {
 	cv.len = 0
 	cv.strLen = 0
-	for i := uint32(0); i < cv.capacity; i++ {
-		cv.nulls.Clear(i)
-	}
+	cv.nulls.Reset()
 }
 
 // NullCount 返回 NULL 值的个数。
+// 使用 Bitmap.Count() 一次计算，避免逐行遍历。
 func (cv *ColumnVector) NullCount() uint32 {
-	count := uint32(0)
-	for i := uint32(0); i < cv.len; i++ {
-		if cv.IsNull(i) {
-			count++
-		}
-	}
-	return count
+	return cv.nulls.Count()
 }
 
 // Slice 返回当前列向量在 [startRow, endRow) 范围内的切片。

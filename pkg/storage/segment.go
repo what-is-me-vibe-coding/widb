@@ -314,15 +314,15 @@ func computeStringStats(data []byte, offsets []uint32, rowCount uint32, nulls *c
 }
 
 func int64ToBytes(v int64) []byte {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, uint64(v))
-	return b
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(v))
+	return b[:]
 }
 
 func float64ToBytes(v float64) []byte {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, math.Float64bits(v))
-	return b
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], math.Float64bits(v))
+	return b[:]
 }
 
 // Build 构建 Segment，返回序列化后的字节流。
