@@ -162,7 +162,7 @@ var httpWriteNonZeroCodeTests = []struct {
 	body       string
 	wantStatus int
 }{
-	{"非零响应码_表不存在", `{"table":"nonexistent_v7","rows":[{"id":1}]}`, http.StatusBadRequest},
+	{"非零响应码_表不存在_v8", `{"table":"nonexistent_v7","rows":[{"id":1}]}`, http.StatusBadRequest},
 	{"非零响应码_缺少主键_v8", `{"table":"users","rows":[{"name":"alice"}]}`, http.StatusBadRequest},
 	{"非零响应码_类型不匹配", `{"table":"users","rows":[{"id":1,"name":true}]}`, http.StatusBadRequest},
 }

@@ -493,9 +493,7 @@ func TestCoverageV20_Engine_MemTableSize(t *testing.T) {
 	if err := eng.Write("key1", map[string]common.Value{colVal: common.NewInt64(1)}); err != nil {
 		t.Fatalf("Write 失败: %v", err)
 	}
-
-	size = eng.MemTableSize()
-	if size == 0 {
+	if size = eng.MemTableSize(); size == 0 {
 		t.Error("期望写入后 MemTable 大小 > 0")
 	}
 }
