@@ -11,6 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+const maxRequestBodySize = 10 << 20 // 10MB，限制 HTTP 请求体大小，防止 OOM
+
 // registerHTTPHandlers 注册 HTTP REST 路由。
 func (s *Server) registerHTTPHandlers() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -41,7 +43,7 @@ func (s *Server) httpQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req QueryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodySize)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, &Response{
 			Code: -1, Message: fmt.Sprintf("解析请求体失败: %v", err),
 		})
@@ -72,7 +74,7 @@ func (s *Server) httpWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req WriteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodySize)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, &Response{
 			Code: -1, Message: fmt.Sprintf("解析请求体失败: %v", err),
 		})

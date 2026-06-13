@@ -31,6 +31,7 @@ type Engine struct {
 	blockCache             *BlockCache
 	indexCache             *IndexCache
 	scheduler              *Scheduler
+	schedulerOnce          sync.Once
 	groupCommitter         *GroupCommitter
 	syncMode               SyncMode
 	blockCacheMaxEntrySize int64 // 单个缓存条目的最大允许大小，超过此值不缓存
@@ -306,6 +307,7 @@ func (e *Engine) Close() error {
 	for _, mem := range immutable {
 		seg, err := e.flusher.Flush(mem, cols)
 		if err != nil {
+			log.Printf("engine close: flush memtable failed (data recoverable from WAL): %v", err)
 			continue
 		}
 		e.mu.Lock()
@@ -417,19 +419,14 @@ func (e *Engine) SchedulerStats() (stats SchedulerStats, ok bool) {
 }
 
 // StartScheduler 启动后台任务调度器，定时执行刷盘、Compaction 和 WAL 清理。
-// 如果调度器已在运行，则不做任何操作。
+// 如果调度器已在运行，则不做任何操作。使用 sync.Once 保证只启动一次。
 func (e *Engine) StartScheduler(cfg SchedulerConfig) {
-	e.mu.Lock()
-	if e.scheduler != nil {
+	e.schedulerOnce.Do(func() {
+		sched := NewScheduler(e, cfg)
+		sched.Start()
+
+		e.mu.Lock()
+		e.scheduler = sched
 		e.mu.Unlock()
-		return
-	}
-	e.mu.Unlock()
-
-	sched := NewScheduler(e, cfg)
-	sched.Start()
-
-	e.mu.Lock()
-	e.scheduler = sched
-	e.mu.Unlock()
+	})
 }

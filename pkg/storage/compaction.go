@@ -26,15 +26,7 @@ type Compactor struct {
 
 // SetNextID updates the compactor's nextID if the given id is larger.
 func (c *Compactor) SetNextID(id uint64) {
-	for {
-		current := c.nextID.Load()
-		if id <= current {
-			return
-		}
-		if c.nextID.CompareAndSwap(current, id) {
-			return
-		}
-	}
+	setNextIDAtomic(&c.nextID, id)
 }
 
 // NextID 无锁读取 compactor 的当前 nextID。

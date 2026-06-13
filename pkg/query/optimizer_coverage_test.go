@@ -329,8 +329,8 @@ func TestIsTruthyAllTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isTruthy(tt.input); got != tt.want {
-				t.Errorf("isTruthy(%v) = %v, want %v", tt.input, got, tt.want)
+			if got := isTruthyValue(tt.input); got != tt.want {
+				t.Errorf("isTruthyValue(%v) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
 	}

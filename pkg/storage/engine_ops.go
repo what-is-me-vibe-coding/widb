@@ -2,10 +2,24 @@ package storage
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
 )
+
+// setNextIDAtomic 使用 CAS 将 id 设置到 target，仅当 id 大于当前值时更新。
+func setNextIDAtomic(target *atomic.Uint64, id uint64) {
+	for {
+		current := target.Load()
+		if id <= current {
+			return
+		}
+		if target.CompareAndSwap(current, id) {
+			return
+		}
+	}
+}
 
 // --- Engine Helpers ---
 

@@ -68,7 +68,7 @@ func OpenWAL(path string) (*WAL, []RawRecord, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, fmt.Errorf("wal open: %w", err)
+			return nil, nil, fmt.Errorf("wal open: file not found: %w", err)
 		}
 		return nil, nil, fmt.Errorf("wal open: %w", err)
 	}

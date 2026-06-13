@@ -119,6 +119,6 @@ func parseAggFunc(name string) AggregateFunc {
 	case aggNameAvg:
 		return AggAvg
 	default:
-		return AggCount
+		return AggUnknown
 	}
 }
