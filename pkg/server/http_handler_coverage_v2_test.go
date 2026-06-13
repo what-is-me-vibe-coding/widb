@@ -9,7 +9,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// httpQuery: POST 有效 SQL、POST 无效 JSON、GET 方法拒绝（86.7% → >90%）
+// V7: httpQuery / httpWrite comprehensive coverage
 // ---------------------------------------------------------------------------
 
 // TestHTTPQuery_PostValidSQLV7 测试 httpQuery 使用 POST 方法发送有效 SQL 查询。
@@ -146,10 +146,6 @@ func TestHTTPQuery_PutMethodRejectedV7(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// httpWrite: POST 有效数据、POST 无效 JSON、GET 方法拒绝（86.7% → >90%）
-// ---------------------------------------------------------------------------
-
 // TestHTTPWrite_PostValidDataV7 测试 httpWrite 使用 POST 方法发送有效写入数据。
 func TestHTTPWrite_PostValidDataV7(t *testing.T) {
 	srv := newTestServerWithTable(t)
@@ -276,10 +272,6 @@ func TestHTTPWrite_DeleteMethodRejectedV7(t *testing.T) {
 		t.Errorf("状态码 = %d，期望 %d", w.Code, http.StatusMethodNotAllowed)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// httpQuery / httpWrite: Content-Type 验证
-// ---------------------------------------------------------------------------
 
 // TestHTTPQuery_ResponseContentTypeV7 测试 httpQuery 响应的 Content-Type 为 JSON。
 func TestHTTPQuery_ResponseContentTypeV7(t *testing.T) {
