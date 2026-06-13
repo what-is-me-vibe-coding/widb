@@ -30,7 +30,10 @@ func (e *Engine) getFromSegments(key string) (Row, bool) {
 		return Row{}, false
 	}
 
-	sort.Slice(segIDs, func(i, j int) bool { return segIDs[i] < segIDs[j] })
+	// 仅在多个 segment 时排序，单 segment 跳过排序减少开销
+	if len(segIDs) > 1 {
+		sort.Slice(segIDs, func(i, j int) bool { return segIDs[i] < segIDs[j] })
+	}
 
 	for i := len(segIDs) - 1; i >= 0; i-- {
 		segID := segIDs[i]
