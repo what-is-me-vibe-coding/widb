@@ -30,10 +30,10 @@ func TestCoverageLowHandlerV7_HandleQueryPacket_JSONUnmarshalError(t *testing.T)
 	}{
 		{"无效JSON字符串", []byte("<<<不是json>>>")},
 		{"空负载", []byte{}},
-		{"不完整JSON对象", []byte("{")},
+		{"不完整JSON对象_v7", []byte("{")},
 		{"纯数字", []byte("42")},
 		{"JSON数组非对象", []byte("[]")},
-		{"JSON布尔值", []byte("true")},
+		{"JSON布尔值_v7", []byte("true")},
 	}
 
 	for _, tt := range tests {
@@ -108,10 +108,10 @@ func TestCoverageLowHandlerV7_HandleWritePacket_JSONUnmarshalError(t *testing.T)
 	}{
 		{"无效JSON字符串", []byte("<<<不是json>>>")},
 		{"空负载", []byte{}},
-		{"不完整JSON对象", []byte("{")},
+		{"不完整JSON对象_v7", []byte("{")},
 		{"纯数字", []byte("42")},
 		{"JSON数组非对象", []byte("[]")},
-		{"JSON布尔值", []byte("true")},
+		{"JSON布尔值_v7", []byte("true")},
 	}
 
 	for _, tt := range tests {
