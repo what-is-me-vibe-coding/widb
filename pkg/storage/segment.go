@@ -185,8 +185,8 @@ func computeRLEMinMax(enc *EncodedColumn, stat *ColumnStat) {
 	runCount := len(enc.Data) / 16
 	if runCount == 0 {
 		if enc.RowCount > 0 {
-			stat.Min = int64ToBytes(0)
-			stat.Max = int64ToBytes(0)
+			stat.Min = appendInt64Bytes(nil, 0)
+			stat.Max = appendInt64Bytes(nil, 0)
 		}
 		return
 	}
@@ -215,8 +215,8 @@ func computeRLEMinMax(enc *EncodedColumn, stat *ColumnStat) {
 		}
 	}
 	if !first {
-		stat.Min = int64ToBytes(minVal)
-		stat.Max = int64ToBytes(maxVal)
+		stat.Min = appendInt64Bytes(nil, minVal)
+		stat.Max = appendInt64Bytes(nil, maxVal)
 	}
 }
 
@@ -248,8 +248,8 @@ func computeIntStats(data []byte, rowCount uint32, nulls *common.Bitmap, stat *C
 		}
 	}
 	if !first {
-		stat.Min = int64ToBytes(minVal)
-		stat.Max = int64ToBytes(maxVal)
+		stat.Min = appendInt64Bytes(nil, minVal)
+		stat.Max = appendInt64Bytes(nil, maxVal)
 	}
 }
 
@@ -274,13 +274,13 @@ func computeFloatStats(data []byte, rowCount uint32, nulls *common.Bitmap, stat 
 		}
 	}
 	if !first {
-		stat.Min = float64ToBytes(minVal)
-		stat.Max = float64ToBytes(maxVal)
+		stat.Min = appendFloat64Bytes(nil, minVal)
+		stat.Max = appendFloat64Bytes(nil, maxVal)
 	}
 }
 
 func computeStringStats(data []byte, offsets []uint32, rowCount uint32, nulls *common.Bitmap, stat *ColumnStat) {
-	var minStr, maxStr string
+	var minBytes, maxBytes []byte
 	first := true
 	for i := uint32(0); i < rowCount; i++ {
 		if nulls != nil && nulls.Get(i) {
@@ -294,35 +294,46 @@ func computeStringStats(data []byte, offsets []uint32, rowCount uint32, nulls *c
 		if int(end) > len(data) || int(start) > len(data) {
 			break
 		}
-		s := string(data[start:end])
+		s := data[start:end]
 		if first {
-			minStr, maxStr = s, s
+			minBytes = s
+			maxBytes = s
 			first = false
 		} else {
-			if s < minStr {
-				minStr = s
+			if string(s) < string(minBytes) {
+				minBytes = s
 			}
-			if s > maxStr {
-				maxStr = s
+			if string(s) > string(maxBytes) {
+				maxBytes = s
 			}
 		}
 	}
 	if !first {
-		stat.Min = []byte(minStr)
-		stat.Max = []byte(maxStr)
+		stat.Min = make([]byte, len(minBytes))
+		copy(stat.Min, minBytes)
+		stat.Max = make([]byte, len(maxBytes))
+		copy(stat.Max, maxBytes)
 	}
 }
 
-func int64ToBytes(v int64) []byte {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, uint64(v))
-	return b
+// appendInt64Bytes 将 int64 值以小端字节序追加到 buf，避免中间堆分配。
+func appendInt64Bytes(buf []byte, v int64) []byte {
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(v))
+	return append(buf, b[:]...)
 }
 
-func float64ToBytes(v float64) []byte {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, math.Float64bits(v))
-	return b
+// appendFloat64Bytes 将 float64 值以小端字节序追加到 buf，避免中间堆分配。
+func appendFloat64Bytes(buf []byte, v float64) []byte {
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], math.Float64bits(v))
+	return append(buf, b[:]...)
+}
+
+// int64ToBytes 将 int64 值转换为小端字节切片。
+// 保留此函数供测试代码使用，内部使用 appendInt64Bytes 避免堆分配。
+func int64ToBytes(v int64) []byte {
+	return appendInt64Bytes(nil, v)
 }
 
 // Build 构建 Segment，返回序列化后的字节流。

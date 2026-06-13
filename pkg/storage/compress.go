@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	encoderPool sync.Pool
-	decoderPool sync.Pool
+	encoderPool     sync.Pool
+	decoderPool     sync.Pool
+	compressBufPool sync.Pool
 )
 
 // getEncoder 从池中获取或创建 ZSTD 编码器。
@@ -46,8 +47,30 @@ func putDecoder(dec *zstd.Decoder) {
 	decoderPool.Put(dec)
 }
 
+// getCompressBuf 从池中获取压缩输出缓冲区。
+func getCompressBuf(minCap int) *[]byte {
+	if v := compressBufPool.Get(); v != nil {
+		buf := v.(*[]byte)
+		if cap(*buf) >= minCap {
+			return buf
+		}
+		// 容量不足，分配新的
+		newBuf := make([]byte, 0, minCap)
+		return &newBuf
+	}
+	buf := make([]byte, 0, minCap)
+	return &buf
+}
+
+// putCompressBuf 将压缩输出缓冲区归还到池中。
+func putCompressBuf(buf *[]byte) {
+	if cap(*buf) <= 1<<20 { // 只缓存不超过 1MB 的缓冲区，防止内存膨胀
+		*buf = (*buf)[:0]
+		compressBufPool.Put(buf)
+	}
+}
+
 // Compress 使用 ZSTD 压缩数据，返回压缩后的字节切片。
-// 预分配输出缓冲区以减少内存分配，ZSTD 压缩后大小通常不超过输入大小。
 func Compress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
@@ -57,10 +80,15 @@ func Compress(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer putEncoder(enc)
-	// 预分配输出缓冲区：ZSTD 压缩后通常小于输入，但最坏情况略大
-	// 使用 EncodeAll 的 dst 参数预分配，避免内部多次扩容
-	dst := make([]byte, 0, len(data)+len(data)/4)
-	return enc.EncodeAll(data, dst), nil
+
+	// 使用池化缓冲区作为输出，减少堆分配
+	dst := getCompressBuf(len(data))
+	result := enc.EncodeAll(data, *dst)
+	// result 可能引用了 dst 的底层数组，需要拷贝到独立切片
+	out := make([]byte, len(result))
+	copy(out, result)
+	putCompressBuf(dst)
+	return out, nil
 }
 
 // Decompress 解压 ZSTD 压缩的数据，返回原始字节切片。
@@ -73,11 +101,23 @@ func Decompress(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer putDecoder(dec)
-	result, err := dec.DecodeAll(data, nil)
+
+	// 预估解压后大小约为压缩数据的 4 倍，使用池化缓冲区
+	estimatedCap := len(data) * 4
+	if estimatedCap < 64 {
+		estimatedCap = 64
+	}
+	dst := getCompressBuf(estimatedCap)
+	result, err := dec.DecodeAll(data, *dst)
 	if err != nil {
+		putCompressBuf(dst)
 		return nil, fmt.Errorf("zstd decompress: %w", err)
 	}
-	return result, nil
+	// result 可能引用了 dst 的底层数组，需要拷贝到独立切片
+	out := make([]byte, len(result))
+	copy(out, result)
+	putCompressBuf(dst)
+	return out, nil
 }
 
 // CompressColumn 压缩 EncodedColumn 中的编码数据。

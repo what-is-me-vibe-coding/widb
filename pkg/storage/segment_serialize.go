@@ -41,13 +41,14 @@ func SerializeColumnBlock(enc *EncodedColumn) []byte {
 	buf = append(buf, tmp[:]...)
 	buf = append(buf, enc.Data...)
 
-	offsetsBytes := make([]byte, len(enc.Offsets)*4)
-	for i, off := range enc.Offsets {
-		binary.LittleEndian.PutUint32(offsetsBytes[i*4:], off)
-	}
 	binary.LittleEndian.PutUint32(tmp[:], uint32(len(enc.Offsets)))
 	buf = append(buf, tmp[:]...)
-	buf = append(buf, offsetsBytes...)
+	// 直接将 offsets 写入 buf，避免中间分配 offsetsBytes
+	offsetsStart := len(buf)
+	buf = append(buf, make([]byte, len(enc.Offsets)*4)...)
+	for i, off := range enc.Offsets {
+		binary.LittleEndian.PutUint32(buf[offsetsStart+i*4:], off)
+	}
 
 	binary.LittleEndian.PutUint32(tmp[:], uint32(len(enc.Dict)))
 	buf = append(buf, tmp[:]...)
