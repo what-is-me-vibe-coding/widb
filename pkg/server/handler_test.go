@@ -13,17 +13,21 @@ import (
 )
 
 const (
-	testSelectAll      = "SELECT * FROM users"
-	testTable          = "users"
-	testName           = "alice"
-	testTableName      = "test"
-	testListenAddr     = "127.0.0.1:0"
-	testColScore       = "score"
-	testStrHello       = "hello"
-	testColName        = "name"
-	testNameBob        = "bob"
-	testWriteAliceBody = `{"table":"users","rows":[{"id":1,"name":"alice"}]}`
-	testInvalidSQLBody = `{"sql":"INVALID SQL !!!"}`
+	testSelectAll         = "SELECT * FROM users"
+	testTable             = "users"
+	testName              = "alice"
+	testTableName         = "test"
+	testListenAddr        = "127.0.0.1:0"
+	testColScore          = "score"
+	testStrHello          = "hello"
+	testColName           = "name"
+	testNameBob           = "bob"
+	testWriteAliceBody    = `{"table":"users","rows":[{"id":1,"name":"alice"}]}`
+	testInvalidSQLBody    = `{"sql":"INVALID SQL !!!"}`
+	testPlainText         = "纯文本"
+	testJSONArray         = "JSON数组"
+	testInvalidSQL        = "INVALID SQL !!!"
+	testSelectNonexistent = "SELECT * FROM nonexistent"
 )
 
 // --- handleQuery / handleWrite 直接测试 ---
@@ -41,7 +45,7 @@ func TestHandleQuerySelectFromTable(t *testing.T) {
 
 func TestHandleQueryInvalidSQL(t *testing.T) {
 	srv := newTestServer(t)
-	resp, err := srv.handleQuery(&QueryRequest{SQL: "INVALID SQL !!!"})
+	resp, err := srv.handleQuery(&QueryRequest{SQL: testInvalidSQL})
 	if err != nil {
 		t.Fatalf("handleQuery 失败: %v", err)
 	}
@@ -52,7 +56,7 @@ func TestHandleQueryInvalidSQL(t *testing.T) {
 
 func TestHandleQueryTableNotExist(t *testing.T) {
 	srv := newTestServer(t)
-	resp, err := srv.handleQuery(&QueryRequest{SQL: "SELECT * FROM nonexistent"})
+	resp, err := srv.handleQuery(&QueryRequest{SQL: testSelectNonexistent})
 	if err != nil {
 		t.Fatalf("handleQuery 失败: %v", err)
 	}

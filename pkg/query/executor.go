@@ -144,7 +144,8 @@ func (e *Executor) extractKeyRange(pred Expression) keyRange {
 func (e *Executor) filterEntriesByPredicate(entries []storage.ScanEntry, pred Expression, cols []string) []storage.ScanEntry {
 	colIdxMap := buildColIdxMap(cols)
 
-	var result []storage.ScanEntry
+	// 预分配结果切片，假设约一半条目通过过滤，减少扩容开销
+	result := make([]storage.ScanEntry, 0, len(entries)/2+1)
 	for _, entry := range entries {
 		val, err := evalExpr(pred, entry.Value.Columns, colIdxMap)
 		if err != nil {

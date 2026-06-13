@@ -170,8 +170,8 @@ func TestHandleQueryPacket_ErrorResponses(t *testing.T) {
 		name string
 		sql  string
 	}{
-		{"parse error", "INVALID SQL !!!"},
-		{"table not exist", "SELECT * FROM nonexistent"},
+		{"parse error", testInvalidSQL},
+		{"table not exist", testSelectNonexistent},
 		{"empty SQL", ""},
 	}
 	for _, tt := range tests {

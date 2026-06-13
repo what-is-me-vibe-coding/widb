@@ -245,13 +245,12 @@ func (e *Engine) flushImmutable(immutable []*MemTable, cols []ColumnMeta) error 
 
 // writeCheckpoint 在成功刷写后写入 WAL checkpoint 记录。
 func (e *Engine) writeCheckpoint(flushVersion uint64) error {
-	e.mu.Lock()
-	colMeta := e.columnMeta
-	e.mu.Unlock()
-
+	// 合并两次加锁为一次，减少锁竞争
 	e.mu.RLock()
+	colMeta := e.columnMeta
 	gc := e.groupCommitter
 	e.mu.RUnlock()
+
 	if gc != nil {
 		gc.SyncNow()
 	}
