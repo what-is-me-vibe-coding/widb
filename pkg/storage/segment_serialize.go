@@ -52,10 +52,9 @@ func SerializeColumnBlock(enc *EncodedColumn) []byte {
 	binary.LittleEndian.PutUint32(tmp[:], uint32(len(enc.Dict)))
 	buf = append(buf, tmp[:]...)
 	for _, s := range enc.Dict {
-		strBytes := []byte(s)
-		binary.LittleEndian.PutUint32(tmp[:], uint32(len(strBytes)))
+		binary.LittleEndian.PutUint32(tmp[:], uint32(len(s)))
 		buf = append(buf, tmp[:]...)
-		buf = append(buf, strBytes...)
+		buf = append(buf, s...)
 	}
 
 	return buf

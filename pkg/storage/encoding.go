@@ -13,7 +13,7 @@ const rleThreshold = 0.5
 // EncodingType 表示列数据的编码方式。
 type EncodingType byte
 
-// EncodingType 常量定义。
+// EncodingType 常量定义
 const (
 	EncodingPlain  EncodingType = 0
 	EncodingDict   EncodingType = 1
@@ -21,7 +21,7 @@ const (
 	EncodingBitmap EncodingType = 3
 )
 
-// 编码类型名称常量，供 String() 等方法使用。
+// 编码类型名称常量
 const (
 	encodingPlainName  = "Plain"
 	encodingDictName   = "Dict"
@@ -44,7 +44,7 @@ func (e EncodingType) String() string {
 	}
 }
 
-// EncodedColumn 表示编码后的列数据。
+// EncodedColumn 表示编码后的列数据
 type EncodedColumn struct {
 	Encoding EncodingType
 	Type     common.DataType
@@ -55,7 +55,7 @@ type EncodedColumn struct {
 	Nulls    []byte
 }
 
-// EncodeColumn 根据数据类型和编码策略对列数据进行编码。
+// EncodeColumn 根据数据类型和编码策略对列数据进行编码
 func EncodeColumn(typ common.DataType, data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	encoding := selectEncoding(typ, data, rowCount)
 	switch encoding {
@@ -72,7 +72,7 @@ func EncodeColumn(typ common.DataType, data any, rowCount uint32, nulls *common.
 	}
 }
 
-// DecodeColumn 解码 EncodedColumn 为原始数据。
+// DecodeColumn 解码 EncodedColumn 为原始数据
 func DecodeColumn(enc *EncodedColumn) (any, *common.Bitmap, error) {
 	switch enc.Encoding {
 	case EncodingPlain:
@@ -140,7 +140,7 @@ func encodePlain(typ common.DataType, data any, rowCount uint32, nulls *common.B
 	}
 }
 
-// encodePlainInt64 将 int64 列编码为 Plain 格式。
+// encodePlainInt64 将 int64 列编码为 Plain 格式
 func encodePlainInt64(data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	ints, ok := data.([]int64)
 	if !ok {
@@ -150,7 +150,7 @@ func encodePlainInt64(data any, rowCount uint32, nulls *common.Bitmap) (*Encoded
 	return newPlainEncodedColumn(common.TypeInt64, rowCount, buf, nulls), nil
 }
 
-// encodePlainFloat64 将 float64 列编码为 Plain 格式。
+// encodePlainFloat64 将 float64 列编码为 Plain 格式
 func encodePlainFloat64(data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	floats, ok := data.([]float64)
 	if !ok {
@@ -163,7 +163,7 @@ func encodePlainFloat64(data any, rowCount uint32, nulls *common.Bitmap) (*Encod
 	return newPlainEncodedColumn(common.TypeFloat64, rowCount, buf, nulls), nil
 }
 
-// encodePlainTimestamp 将 timestamp 列编码为 Plain 格式。
+// encodePlainTimestamp 将 timestamp 列编码为 Plain 格式
 func encodePlainTimestamp(data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	times, ok := data.([]int64)
 	if !ok {
@@ -173,7 +173,7 @@ func encodePlainTimestamp(data any, rowCount uint32, nulls *common.Bitmap) (*Enc
 	return newPlainEncodedColumn(common.TypeTimestamp, rowCount, buf, nulls), nil
 }
 
-// encodeUint64Batch 将 int64 切片编码为小端字节序列。
+// encodeUint64Batch 将 int64 切片编码为小端字节序列
 func encodeUint64Batch(ints []int64, rowCount uint32) []byte {
 	buf := make([]byte, rowCount*8)
 	for i := uint32(0); i < rowCount; i++ {
@@ -182,7 +182,7 @@ func encodeUint64Batch(ints []int64, rowCount uint32) []byte {
 	return buf
 }
 
-// newPlainEncodedColumn 创建 Plain 编码的 EncodedColumn，处理 nulls 位图。
+// newPlainEncodedColumn 创建 Plain 编码的 EncodedColumn
 func newPlainEncodedColumn(typ common.DataType, rowCount uint32, data []byte, nulls *common.Bitmap) *EncodedColumn {
 	enc := &EncodedColumn{
 		Encoding: EncodingPlain,
@@ -198,16 +198,21 @@ func newPlainEncodedColumn(typ common.DataType, rowCount uint32, data []byte, nu
 
 func encodePlainStrings(strs []string, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	offsets := make([]uint32, rowCount+1)
-	var dataBuf []byte
-
+	// 预计算总字节数，一次性分配 dataBuf
+	totalBytes := 0
+	for i := uint32(0); i < rowCount; i++ {
+		if nulls == nil || !nulls.Get(i) {
+			totalBytes += len(strs[i])
+		}
+	}
+	dataBuf := make([]byte, 0, totalBytes)
 	for i := uint32(0); i < rowCount; i++ {
 		offsets[i] = uint32(len(dataBuf))
 		if nulls == nil || !nulls.Get(i) {
-			dataBuf = append(dataBuf, []byte(strs[i])...)
+			dataBuf = append(dataBuf, strs[i]...)
 		}
 	}
 	offsets[rowCount] = uint32(len(dataBuf))
-
 	enc := &EncodedColumn{
 		Encoding: EncodingPlain,
 		Type:     common.TypeString,
@@ -225,17 +230,14 @@ func encodeDict(typ common.DataType, data any, rowCount uint32, nulls *common.Bi
 	if typ != common.TypeString {
 		return nil, fmt.Errorf("dict encode: only string type supported, got %v", typ)
 	}
-
 	strs, ok := data.([]string)
 	if !ok {
 		return nil, fmt.Errorf("dict encode: expected []string, got %T", data)
 	}
-
 	dictMap := make(map[string]uint32)
 	dict := make([]string, 0)
 	indices := make([]uint32, rowCount)
 	hasNulls := false
-
 	for i := uint32(0); i < rowCount; i++ {
 		if nulls != nil && nulls.Get(i) {
 			hasNulls = true
@@ -253,7 +255,6 @@ func encodeDict(typ common.DataType, data any, rowCount uint32, nulls *common.Bi
 	idxWidth := indexWidth(uint32(len(dict)), hasNulls)
 	nullMarker := nullMarkerForWidth(idxWidth)
 	idxBuf := make([]byte, rowCount*uint32(idxWidth))
-
 	for i := uint32(0); i < rowCount; i++ {
 		if nulls != nil && nulls.Get(i) {
 			writeIndex(idxBuf, i, idxWidth, nullMarker)
@@ -261,7 +262,6 @@ func encodeDict(typ common.DataType, data any, rowCount uint32, nulls *common.Bi
 			writeIndex(idxBuf, i, idxWidth, indices[i])
 		}
 	}
-
 	return &EncodedColumn{
 		Encoding: EncodingDict,
 		Type:     typ,

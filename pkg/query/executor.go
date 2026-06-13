@@ -177,7 +177,9 @@ func buildChunksFromEntries(entries []storage.ScanEntry, schema []ColumnDef, chu
 		return nil, nil
 	}
 
-	var chunks []*storage.Chunk
+	// 预分配 chunks 切片，避免 append 扩容
+	numChunks := (len(entries) + chunkSize - 1) / chunkSize
+	chunks := make([]*storage.Chunk, 0, numChunks)
 	for start := 0; start < len(entries); start += chunkSize {
 		end := start + chunkSize
 		if end > len(entries) {

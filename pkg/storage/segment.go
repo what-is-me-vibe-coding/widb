@@ -314,15 +314,15 @@ func computeStringStats(data []byte, offsets []uint32, rowCount uint32, nulls *c
 }
 
 func int64ToBytes(v int64) []byte {
-	var b [8]byte
-	binary.LittleEndian.PutUint64(b[:], uint64(v))
-	return b[:]
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, uint64(v))
+	return b
 }
 
 func float64ToBytes(v float64) []byte {
-	var b [8]byte
-	binary.LittleEndian.PutUint64(b[:], math.Float64bits(v))
-	return b[:]
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, math.Float64bits(v))
+	return b
 }
 
 // Build 构建 Segment，返回序列化后的字节流。
@@ -373,16 +373,19 @@ func serializeKeys(keys []string) []byte {
 	if len(keys) == 0 {
 		return nil
 	}
-	var buf []byte
-	count := make([]byte, 4)
-	binary.LittleEndian.PutUint32(count, uint32(len(keys)))
-	buf = append(buf, count...)
+	// 预计算总大小：4(count) + 每个key的 4(len) + len(key)
+	totalSize := 4
 	for _, k := range keys {
-		kb := []byte(k)
-		kl := make([]byte, 4)
-		binary.LittleEndian.PutUint32(kl, uint32(len(kb)))
-		buf = append(buf, kl...)
-		buf = append(buf, kb...)
+		totalSize += 4 + len(k)
+	}
+	buf := make([]byte, 0, totalSize)
+	var tmp [4]byte
+	binary.LittleEndian.PutUint32(tmp[:], uint32(len(keys)))
+	buf = append(buf, tmp[:]...)
+	for _, k := range keys {
+		binary.LittleEndian.PutUint32(tmp[:], uint32(len(k)))
+		buf = append(buf, tmp[:]...)
+		buf = append(buf, k...)
 	}
 	return buf
 }

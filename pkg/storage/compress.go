@@ -47,6 +47,7 @@ func putDecoder(dec *zstd.Decoder) {
 }
 
 // Compress 使用 ZSTD 压缩数据，返回压缩后的字节切片。
+// 预分配输出缓冲区以减少内存分配，ZSTD 压缩后大小通常不超过输入大小。
 func Compress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
@@ -56,7 +57,10 @@ func Compress(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer putEncoder(enc)
-	return enc.EncodeAll(data, nil), nil
+	// 预分配输出缓冲区：ZSTD 压缩后通常小于输入，但最坏情况略大
+	// 使用 EncodeAll 的 dst 参数预分配，避免内部多次扩容
+	dst := make([]byte, 0, len(data)+len(data)/4)
+	return enc.EncodeAll(data, dst), nil
 }
 
 // Decompress 解压 ZSTD 压缩的数据，返回原始字节切片。
