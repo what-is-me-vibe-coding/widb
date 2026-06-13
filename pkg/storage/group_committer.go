@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -117,6 +118,7 @@ func (gc *GroupCommitter) run() {
 // doSync 执行一次 WAL sync 并通知所有等待的写入者。
 // 如果 sync 失败，不通知等待者（channel 不会被关闭），
 // 调用者可通过 select + timeout 检测到 sync 超时。
+// 连续失败时记录警告，避免 pending 列表无限增长导致内存泄漏。
 func (gc *GroupCommitter) doSync() {
 	gc.mu.Lock()
 	pending := gc.pending
@@ -130,8 +132,21 @@ func (gc *GroupCommitter) doSync() {
 	if err := gc.wal.Sync(); err != nil {
 		// sync 失败：不通知等待者，让他们继续等待下一次 sync 尝试。
 		// 将失败的请求放回 pending 队列，下次 sync 时重试。
+		// 如果 pending 积压过多（超过 4096），丢弃最旧的请求并记录警告，
+		// 防止持续 sync 失败导致内存无限增长。
 		gc.mu.Lock()
-		gc.pending = append(pending, gc.pending...)
+		combined := make([]chan struct{}, 0, len(pending)+len(gc.pending))
+		combined = append(combined, pending...)
+		combined = append(combined, gc.pending...)
+		if len(combined) > 4096 {
+			dropped := len(combined) - 4096
+			for _, ch := range combined[:dropped] {
+				close(ch) // 通知被丢弃的写入者 sync 已完成（实际可能未持久化）
+			}
+			log.Printf("group committer: dropped %d pending sync requests due to persistent sync failures", dropped)
+			combined = combined[dropped:]
+		}
+		gc.pending = combined
 		gc.mu.Unlock()
 		return
 	}

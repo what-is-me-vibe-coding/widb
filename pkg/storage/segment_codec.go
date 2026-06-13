@@ -196,46 +196,42 @@ func (s *Segment) GetAllColumnValues(rowIdx uint32, colMeta []ColumnMeta) (map[s
 // --- Segment Footer Serialize ---
 
 // serializeFooter 将 SegmentFooter 序列化为字节流。
+// 使用栈上临时缓冲区减少堆分配。
 func serializeFooter(footer *SegmentFooter) []byte {
-	var buf []byte
+	// 预估总大小：列统计 + bloom + rawKeys + indexOffset
+	estSize := 4 + 8*len(footer.ColumnStats) + 4 + len(footer.BloomFilter) + 4 + len(footer.RawKeys) + 8
+	buf := make([]byte, 0, estSize)
+	var tmp [8]byte // 栈上临时缓冲区，消除每字段 make([]byte, N) 的堆分配
 
-	colCount := make([]byte, 4)
-	binary.LittleEndian.PutUint32(colCount, uint32(len(footer.ColumnStats)))
-	buf = append(buf, colCount...)
+	binary.LittleEndian.PutUint32(tmp[:4], uint32(len(footer.ColumnStats)))
+	buf = append(buf, tmp[:4]...)
 
 	for _, stat := range footer.ColumnStats {
-		colID := make([]byte, 4)
-		binary.LittleEndian.PutUint32(colID, stat.ColumnID)
-		buf = append(buf, colID...)
+		binary.LittleEndian.PutUint32(tmp[:4], stat.ColumnID)
+		buf = append(buf, tmp[:4]...)
 
-		minLen := make([]byte, 4)
-		binary.LittleEndian.PutUint32(minLen, uint32(len(stat.Min)))
-		buf = append(buf, minLen...)
+		binary.LittleEndian.PutUint32(tmp[:4], uint32(len(stat.Min)))
+		buf = append(buf, tmp[:4]...)
 		buf = append(buf, stat.Min...)
 
-		maxLen := make([]byte, 4)
-		binary.LittleEndian.PutUint32(maxLen, uint32(len(stat.Max)))
-		buf = append(buf, maxLen...)
+		binary.LittleEndian.PutUint32(tmp[:4], uint32(len(stat.Max)))
+		buf = append(buf, tmp[:4]...)
 		buf = append(buf, stat.Max...)
 
-		nullCount := make([]byte, 4)
-		binary.LittleEndian.PutUint32(nullCount, stat.NullCount)
-		buf = append(buf, nullCount...)
+		binary.LittleEndian.PutUint32(tmp[:4], stat.NullCount)
+		buf = append(buf, tmp[:4]...)
 	}
 
-	bloomLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bloomLen, uint32(len(footer.BloomFilter)))
-	buf = append(buf, bloomLen...)
+	binary.LittleEndian.PutUint32(tmp[:4], uint32(len(footer.BloomFilter)))
+	buf = append(buf, tmp[:4]...)
 	buf = append(buf, footer.BloomFilter...)
 
-	rawKeysLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(rawKeysLen, uint32(len(footer.RawKeys)))
-	buf = append(buf, rawKeysLen...)
+	binary.LittleEndian.PutUint32(tmp[:4], uint32(len(footer.RawKeys)))
+	buf = append(buf, tmp[:4]...)
 	buf = append(buf, footer.RawKeys...)
 
-	indexOffset := make([]byte, 8)
-	binary.LittleEndian.PutUint64(indexOffset, uint64(footer.IndexOffset))
-	buf = append(buf, indexOffset...)
+	binary.LittleEndian.PutUint64(tmp[:8], uint64(footer.IndexOffset))
+	buf = append(buf, tmp[:8]...)
 
 	return buf
 }
@@ -315,6 +311,11 @@ func readStatBytes(data []byte, pos int, field string, idx uint32) (int, []byte,
 	}
 	byteLen := binary.LittleEndian.Uint32(data[pos:])
 	pos += 4
+	// 校验单列统计值长度上限，防止损坏数据导致 OOM
+	const maxStatSize = 1 << 20 // 1MB
+	if byteLen > maxStatSize {
+		return pos, nil, fmt.Errorf("segment: %s length %d for column %d exceeds max %d, possibly corrupted", field, byteLen, idx, maxStatSize)
+	}
 	if byteLen > 0 {
 		if pos+int(byteLen) > len(data) {
 			return pos, nil, fmt.Errorf("segment: footer truncated at %s data for column %d", field, idx)
@@ -333,6 +334,11 @@ func readBloomFilter(data []byte, pos int) (int, []byte, error) {
 	}
 	bloomLen := binary.LittleEndian.Uint32(data[pos:])
 	pos += 4
+	// 校验 bloom filter 长度上限，防止损坏数据导致 OOM
+	const maxBloomSize = 16 << 20 // 16MB，远超正常布隆过滤器大小
+	if bloomLen > maxBloomSize {
+		return pos, nil, fmt.Errorf("segment: bloom filter length %d exceeds max %d, possibly corrupted", bloomLen, maxBloomSize)
+	}
 	if bloomLen > 0 {
 		if pos+int(bloomLen) > len(data) {
 			return pos, nil, fmt.Errorf("segment: footer truncated at bloom data")
@@ -351,6 +357,11 @@ func readRawKeys(data []byte, pos int) (int, []byte, error) {
 	}
 	rawKeysLen := binary.LittleEndian.Uint32(data[pos:])
 	pos += 4
+	// 校验 rawKeys 长度上限，防止损坏数据导致 OOM
+	const maxRawKeysSize = 64 << 20 // 64MB
+	if rawKeysLen > maxRawKeysSize {
+		return pos, nil, fmt.Errorf("segment: raw keys length %d exceeds max %d, possibly corrupted", rawKeysLen, maxRawKeysSize)
+	}
 	if rawKeysLen > 0 {
 		if pos+int(rawKeysLen) > len(data) {
 			return pos, nil, fmt.Errorf("segment: footer truncated at raw keys data")

@@ -307,10 +307,13 @@ func (e *Engine) loadSegments() error {
 }
 
 // recoverOpen 尝试重新打开 WAL 文件用于错误恢复，失败时记录日志。
+// 重置 offset 为 0，因为恢复打开后文件偏移量不确定，
+// 避免残留的旧 offset 导致 maybeRotate 误判是否需要切分。
 func (w *WAL) recoverOpen() {
 	f, err := os.OpenFile(w.path, os.O_RDWR|os.O_CREATE, 0644)
 	if err == nil {
 		w.file = f
+		w.offset.Store(0)
 	} else {
 		log.Printf("wal: recovery open failed: %v", err)
 	}
