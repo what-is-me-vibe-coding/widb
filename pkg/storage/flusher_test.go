@@ -23,7 +23,7 @@ func TestFlusherFlush(t *testing.T) {
 			colName: common.NewString("alice"),
 			colAge:  common.NewInt64(30),
 		}}},
-		{"key2", Row{Version: 1, Columns: map[string]common.Value{
+		{crKey2, Row{Version: 1, Columns: map[string]common.Value{
 			"id":    common.NewInt64(2),
 			colName: common.NewString("bob"),
 			colAge:  common.NewInt64(25),
@@ -59,7 +59,7 @@ func TestFlusherFlush(t *testing.T) {
 	if seg.MinKey != crKey1 {
 		t.Errorf("expected minKey=key1, got %s", seg.MinKey)
 	}
-	if seg.MaxKey != "key3" {
+	if seg.MaxKey != crKey3 {
 		t.Errorf("expected maxKey=key3, got %s", seg.MaxKey)
 	}
 	if seg.RowCount != 3 {

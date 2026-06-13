@@ -242,7 +242,7 @@ func TestHTTPQuery_NonZeroResponseCode_V6(t *testing.T) {
 	defer func() { _ = srv.Stop() }()
 
 	// 发送无效 SQL，handleQuery 返回 Response{Code: -1}
-	body := `{"sql":"INVALID SQL !!!"}`
+	body := testInvalidSQLBody
 	req := httptest.NewRequest(http.MethodPost, "/query", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	srv.httpQuery(w, req)
@@ -265,7 +265,7 @@ func TestHTTPQuery_ValidQuery_V6(t *testing.T) {
 	srv := newTestServerWithTable(t)
 	defer func() { _ = srv.Stop() }()
 
-	body := `{"sql":"SELECT * FROM users"}` + "\n"
+	body := benchSelectAllSQL + "\n"
 	req := httptest.NewRequest(http.MethodPost, "/query", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	srv.httpQuery(w, req)
@@ -366,7 +366,7 @@ func TestHTTPWrite_ValidWrite_V6(t *testing.T) {
 	srv := newTestServerWithTable(t)
 	defer func() { _ = srv.Stop() }()
 
-	body := `{"table":"users","rows":[{"id":1,"name":"alice"}]}`
+	body := testWriteAliceBody
 	req := httptest.NewRequest(http.MethodPost, "/write", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	srv.httpWrite(w, req)

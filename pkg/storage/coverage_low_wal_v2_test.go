@@ -21,7 +21,7 @@ import (
 // Note: On Linux, Seek on /dev/null actually succeeds, so this test verifies
 // the Truncate error path instead (which is the more reliably triggerable path).
 func TestOpenWALSeekErrorAfterTruncate(t *testing.T) {
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != skipNonLinux {
 		t.Skip("seek/truncate error test relies on Linux-specific behavior")
 	}
 

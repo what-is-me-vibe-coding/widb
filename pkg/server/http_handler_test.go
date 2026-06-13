@@ -91,7 +91,7 @@ func TestHTTPQueryInvalidBody(t *testing.T) {
 
 func TestHTTPQueryValidSQL(t *testing.T) {
 	srv := newTestServerWithTable(t)
-	body := `{"sql":"SELECT * FROM users"}`
+	body := benchSelectAllSQL
 	req := httptest.NewRequest(http.MethodPost, "/query", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	srv.httpQuery(w, req)
@@ -111,7 +111,7 @@ func TestHTTPQueryValidSQL(t *testing.T) {
 
 func TestHTTPQueryInvalidSQL(t *testing.T) {
 	srv := newTestServer(t)
-	body := `{"sql":"INVALID SQL !!!"}`
+	body := testInvalidSQLBody
 	req := httptest.NewRequest(http.MethodPost, "/query", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	srv.httpQuery(w, req)
@@ -230,7 +230,7 @@ func TestMetricsRecordedOnQuery(t *testing.T) {
 	mux := srv.registerHTTPHandlers()
 
 	// 执行一次查询
-	body := `{"sql":"SELECT * FROM users"}`
+	body := benchSelectAllSQL
 	req := httptest.NewRequest(http.MethodPost, "/query", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -251,7 +251,7 @@ func TestMetricsRecordedOnWrite(t *testing.T) {
 	mux := srv.registerHTTPHandlers()
 
 	// 执行一次写入
-	body := `{"table":"users","rows":[{"id":1,"name":"alice"}]}`
+	body := testWriteAliceBody
 	req := httptest.NewRequest(http.MethodPost, "/write", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)

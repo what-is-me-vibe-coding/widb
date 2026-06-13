@@ -140,7 +140,7 @@ func TestOpenWALTruncateError(t *testing.T) {
 // due to the append-only file flag. This requires root on a filesystem that
 // supports file attributes (e.g. ext4).
 func TestOpenWALTruncateErrorAppendOnly(t *testing.T) {
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != skipNonLinux {
 		t.Skip("append-only flag test is Linux-specific")
 	}
 	if os.Getuid() != 0 {

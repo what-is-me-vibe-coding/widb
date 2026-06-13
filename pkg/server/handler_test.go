@@ -13,15 +13,17 @@ import (
 )
 
 const (
-	testSelectAll  = "SELECT * FROM users"
-	testTable      = "users"
-	testName       = "alice"
-	testTableName  = "test"
-	testListenAddr = "127.0.0.1:0"
-	testColScore   = "score"
-	testStrHello   = "hello"
-	testColName    = "name"
-	testNameBob    = "bob"
+	testSelectAll      = "SELECT * FROM users"
+	testTable          = "users"
+	testName           = "alice"
+	testTableName      = "test"
+	testListenAddr     = "127.0.0.1:0"
+	testColScore       = "score"
+	testStrHello       = "hello"
+	testColName        = "name"
+	testNameBob        = "bob"
+	testWriteAliceBody = `{"table":"users","rows":[{"id":1,"name":"alice"}]}`
+	testInvalidSQLBody = `{"sql":"INVALID SQL !!!"}`
 )
 
 // --- handleQuery / handleWrite 直接测试 ---
