@@ -19,21 +19,18 @@ type decodedColumn struct {
 }
 
 // prepareEncodedColumn 准备 EncodedColumn 的可变副本用于解码。
-// Data 字段深拷贝（DecompressColumn 会原地替换），Offsets/Dict/Nulls 只读可共享。
+// 优化：Data 字段无需深拷贝，因为 DecompressColumn 会直接替换 enc.Data
+// 为新分配的解压切片，不会修改原始压缩数据。Offsets/Dict/Nulls 只读可共享。
 func prepareEncodedColumn(src *EncodedColumn) *EncodedColumn {
-	enc := &EncodedColumn{
+	return &EncodedColumn{
 		Encoding: src.Encoding,
 		Type:     src.Type,
 		RowCount: src.RowCount,
+		Data:     src.Data,    // 共享引用，DecompressColumn 会替换为新切片
+		Offsets:  src.Offsets, // 只读，共享引用
+		Dict:     src.Dict,    // 只读，共享引用
+		Nulls:    src.Nulls,   // 只读，共享引用
 	}
-	if len(src.Data) > 0 {
-		enc.Data = make([]byte, len(src.Data))
-		copy(enc.Data, src.Data)
-	}
-	enc.Offsets = src.Offsets
-	enc.Dict = src.Dict
-	enc.Nulls = src.Nulls
-	return enc
 }
 
 // decodeColumnFromEncoded 解压并解码单个 EncodedColumn，返回 decodedColumn。

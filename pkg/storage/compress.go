@@ -8,9 +8,8 @@ import (
 )
 
 var (
-	encoderPool     sync.Pool
-	decoderPool     sync.Pool
-	compressBufPool sync.Pool
+	encoderPool sync.Pool
+	decoderPool sync.Pool
 )
 
 // getEncoder 从池中获取或创建 ZSTD 编码器。
@@ -47,30 +46,9 @@ func putDecoder(dec *zstd.Decoder) {
 	decoderPool.Put(dec)
 }
 
-// getCompressBuf 从池中获取压缩输出缓冲区。
-func getCompressBuf(minCap int) *[]byte {
-	if v := compressBufPool.Get(); v != nil {
-		buf := v.(*[]byte)
-		if cap(*buf) >= minCap {
-			return buf
-		}
-		// 容量不足，分配新的
-		newBuf := make([]byte, 0, minCap)
-		return &newBuf
-	}
-	buf := make([]byte, 0, minCap)
-	return &buf
-}
-
-// putCompressBuf 将压缩输出缓冲区归还到池中。
-func putCompressBuf(buf *[]byte) {
-	if cap(*buf) <= 1<<20 { // 只缓存不超过 1MB 的缓冲区，防止内存膨胀
-		*buf = (*buf)[:0]
-		compressBufPool.Put(buf)
-	}
-}
-
 // Compress 使用 ZSTD 压缩数据，返回压缩后的字节切片。
+// 优化：直接让编码器分配输出缓冲区，避免池化缓冲区的额外拷贝开销。
+// 对于大块数据（如列 Block），省去一次 memcpy 和额外分配可显著提升写入吞吐。
 func Compress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
@@ -81,20 +59,15 @@ func Compress(data []byte) ([]byte, error) {
 	}
 	defer putEncoder(enc)
 
-	// 使用池化缓冲区作为输出，减少堆分配
-	dst := getCompressBuf(len(data))
-	result := enc.EncodeAll(data, *dst)
-	// 检查 result 是否引用了 dst 的底层数组：
-	// 如果 result 的容量大于其长度，说明它可能引用了 dst；
-	// 如果 result 的指针与 dst 的底层数组相同，需要拷贝。
-	// 简化判断：如果 len(result) <= cap(*dst) 且 result 与 dst 有重叠，则拷贝。
-	out := make([]byte, len(result))
-	copy(out, result)
-	putCompressBuf(dst)
-	return out, nil
+	// 直接传入 nil，让编码器自行分配输出缓冲区并返回，
+	// 避免池化缓冲区 → 拷贝到新切片的双重分配开销。
+	result := enc.EncodeAll(data, nil)
+	return result, nil
 }
 
 // Decompress 解压 ZSTD 压缩的数据，返回原始字节切片。
+// 优化：直接让解码器分配输出缓冲区，避免池化缓冲区的额外拷贝开销。
+// 解压后的列 Block 通常较大，省去 memcpy 可显著降低读取路径延迟。
 func Decompress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
@@ -105,22 +78,13 @@ func Decompress(data []byte) ([]byte, error) {
 	}
 	defer putDecoder(dec)
 
-	// 预估解压后大小约为压缩数据的 4 倍，使用池化缓冲区
-	estimatedCap := len(data) * 4
-	if estimatedCap < 64 {
-		estimatedCap = 64
-	}
-	dst := getCompressBuf(estimatedCap)
-	result, err := dec.DecodeAll(data, *dst)
+	// 直接传入 nil，让解码器自行分配输出缓冲区并返回，
+	// 避免池化缓冲区 → 拷贝到新切片的双重分配开销。
+	result, err := dec.DecodeAll(data, nil)
 	if err != nil {
-		putCompressBuf(dst)
 		return nil, fmt.Errorf("zstd decompress: %w", err)
 	}
-	// result 可能引用了 dst 的底层数组，需要拷贝到独立切片
-	out := make([]byte, len(result))
-	copy(out, result)
-	putCompressBuf(dst)
-	return out, nil
+	return result, nil
 }
 
 // CompressColumn 压缩 EncodedColumn 中的编码数据。

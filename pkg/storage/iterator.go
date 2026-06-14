@@ -405,13 +405,14 @@ func (e *Engine) ScanRange(start, end string) []ScanEntry {
 // scanRangeUnlocked performs the actual scan without acquiring the lock.
 // Caller must hold e.mu.RLock.
 // Returns scan results and any error encountered during iteration.
+// 优化：使用更精确的容量估算，减少结果切片的扩容次数。
 func (e *Engine) scanRangeUnlocked(start, end string) ([]ScanEntry, error) {
 	iters := e.buildScanIterators(start, end)
 	if len(iters) == 0 {
 		return nil, nil
 	}
 
-	// Pre-allocate results slice with estimated capacity from MemTable and segments.
+	// 精确估算：仅统计满足范围条件的 Segment 行数
 	estimatedSize := e.activeMem.Len()
 	for _, imm := range e.immutable {
 		estimatedSize += imm.Len()
@@ -420,6 +421,10 @@ func (e *Engine) scanRangeUnlocked(start, end string) ([]ScanEntry, error) {
 		if seg.MinKey <= end && seg.MaxKey >= start {
 			estimatedSize += int(seg.RowCount)
 		}
+	}
+	// 上限截断，防止极端情况下的过度分配
+	if estimatedSize > 1<<20 {
+		estimatedSize = 1 << 20
 	}
 
 	mi := NewMergeIterator(iters...)

@@ -156,10 +156,7 @@ func encodePlainFloat64(data any, rowCount uint32, nulls *common.Bitmap) (*Encod
 	if !ok {
 		return nil, fmt.Errorf("plain encode: expected []float64, got %T", data)
 	}
-	buf := make([]byte, rowCount*8)
-	for i := uint32(0); i < rowCount; i++ {
-		binary.LittleEndian.PutUint64(buf[i*8:], math.Float64bits(floats[i]))
-	}
+	buf := encodeFloat64Batch(floats, rowCount)
 	return newPlainEncodedColumn(common.TypeFloat64, rowCount, buf, nulls), nil
 }
 
@@ -178,6 +175,15 @@ func encodeUint64Batch(ints []int64, rowCount uint32) []byte {
 	buf := make([]byte, rowCount*8)
 	for i := uint32(0); i < rowCount; i++ {
 		binary.LittleEndian.PutUint64(buf[i*8:], uint64(ints[i]))
+	}
+	return buf
+}
+
+// encodeFloat64Batch 将 float64 切片编码为小端字节序列
+func encodeFloat64Batch(floats []float64, rowCount uint32) []byte {
+	buf := make([]byte, rowCount*8)
+	for i := uint32(0); i < rowCount; i++ {
+		binary.LittleEndian.PutUint64(buf[i*8:], math.Float64bits(floats[i]))
 	}
 	return buf
 }

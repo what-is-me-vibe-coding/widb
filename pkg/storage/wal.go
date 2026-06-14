@@ -124,6 +124,7 @@ func (w *WAL) Append(tp byte, payload []byte) error {
 }
 
 // AppendBatch 批量追加多条记录，在单次锁获取内写入，减少锁竞争。
+// 优化：预计算总大小并合并为单次 Write 调用，减少系统调用次数和缓冲区分配。
 func (w *WAL) AppendBatch(records []BatchRecord) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -132,18 +133,27 @@ func (w *WAL) AppendBatch(records []BatchRecord) error {
 		return err
 	}
 
+	// 预计算总编码大小，一次性分配缓冲区
+	totalSize := 0
 	for _, rec := range records {
 		if len(rec.Payload) > maxRecordPayload {
 			return fmt.Errorf("wal append batch: payload too large (%d bytes)", len(rec.Payload))
 		}
-		buf := encodeRecord(rec.Type, rec.Payload)
-		n, err := w.file.Write(buf)
-		putRecordBuf(buf)
-		if err != nil {
-			return fmt.Errorf("wal write batch: %w", err)
-		}
-		w.offset.Add(int64(n))
+		totalSize += walHeaderSize + walTypeSize + len(rec.Payload) + walCRCSize
 	}
+
+	combined := make([]byte, 0, totalSize)
+	for _, rec := range records {
+		encoded := encodeRecord(rec.Type, rec.Payload)
+		combined = append(combined, encoded...)
+		putRecordBuf(encoded)
+	}
+
+	n, err := w.file.Write(combined)
+	if err != nil {
+		return fmt.Errorf("wal write batch: %w", err)
+	}
+	w.offset.Add(int64(n))
 	return nil
 }
 
