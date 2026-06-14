@@ -2,11 +2,12 @@ package storage
 
 import (
 	"encoding/binary"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
+	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
 )
 
 // ---------------------------------------------------------------------------

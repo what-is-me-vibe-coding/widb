@@ -2,13 +2,14 @@ package server
 
 import (
 	"encoding/json"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
+	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
 // newTestServerForCoverage 创建用于 HTTP handler 覆盖率测试的服务器。

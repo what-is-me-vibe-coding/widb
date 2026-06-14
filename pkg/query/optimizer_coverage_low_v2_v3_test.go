@@ -1,9 +1,10 @@
 package query
 
 import (
-	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"strings"
 	"testing"
+
+	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
 // ---------------------------------------------------------------------------

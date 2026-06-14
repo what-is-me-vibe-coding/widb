@@ -1,12 +1,13 @@
 package storage
 
 import (
-	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
 // TestOpenWALTruncateOnNonRegularFile 测试 OpenWAL 在 Truncate 失败时的错误路径

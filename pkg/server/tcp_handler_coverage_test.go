@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/prometheus/client_golang/prometheus"
 	"io"
 	"net"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // covV2TransientErrListener 包装 net.Listener，在前 N 次 Accept 调用中注入瞬态错误
