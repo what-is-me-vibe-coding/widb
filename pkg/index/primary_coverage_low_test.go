@@ -298,4 +298,3 @@ func TestCoverageLowPrimaryV2_LookupForwardScanBreak(t *testing.T) {
 		t.Errorf("Lookup(\"e\") = %v, 期望 [2]", ids)
 	}
 }
-
