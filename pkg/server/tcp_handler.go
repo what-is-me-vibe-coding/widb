@@ -35,7 +35,7 @@ func (s *Server) acceptTCP() {
 		}
 
 		// 检查连接数限制
-		if s.cfg.MaxConnections > 0 && s.connCount >= int64(s.cfg.MaxConnections) {
+		if s.cfg.MaxConnections > 0 && atomic.LoadInt64(&s.connCount) >= int64(s.cfg.MaxConnections) {
 			log.Printf("TCP 连接数已达上限 %d，拒绝新连接", s.cfg.MaxConnections)
 			_ = conn.Close() // 拒绝连接，忽略关闭错误
 			continue

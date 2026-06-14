@@ -256,12 +256,12 @@ func (r *ConstantFoldingRule) foldComparisonOps(leftLit, rightLit *LiteralExpr, 
 func (r *ConstantFoldingRule) foldLogicalOps(leftLit, rightLit *LiteralExpr, op BinaryOp) Expression {
 	switch op {
 	case OpAnd:
-		lb := isTruthy(leftLit.Value)
-		rb := isTruthy(rightLit.Value)
+		lb := isTruthyValue(leftLit.Value)
+		rb := isTruthyValue(rightLit.Value)
 		return &LiteralExpr{Value: common.NewBool(lb && rb)}
 	case OpOr:
-		lb := isTruthy(leftLit.Value)
-		rb := isTruthy(rightLit.Value)
+		lb := isTruthyValue(leftLit.Value)
+		rb := isTruthyValue(rightLit.Value)
 		return &LiteralExpr{Value: common.NewBool(lb || rb)}
 	}
 	return nil
@@ -270,27 +270,10 @@ func (r *ConstantFoldingRule) foldLogicalOps(leftLit, rightLit *LiteralExpr, op 
 func (r *ConstantFoldingRule) foldUnaryExpr(e *UnaryExpr) Expression {
 	if e.Op == OpNot {
 		if lit, ok := e.Expr.(*LiteralExpr); ok && lit.Value.Valid {
-			return &LiteralExpr{Value: common.NewBool(!isTruthy(lit.Value))}
+			return &LiteralExpr{Value: common.NewBool(!isTruthyValue(lit.Value))}
 		}
 	}
 	return e
-}
-
-func isTruthy(v common.Value) bool {
-	if !v.Valid {
-		return false
-	}
-	switch v.Typ {
-	case common.TypeBool:
-		return v.Int64 != 0
-	case common.TypeInt64:
-		return v.Int64 != 0
-	case common.TypeFloat64:
-		return v.Float64 != 0
-	case common.TypeString:
-		return v.Str != ""
-	}
-	return true
 }
 
 // ColumnPruningRule removes unnecessary columns from scan nodes

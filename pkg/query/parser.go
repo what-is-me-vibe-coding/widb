@@ -152,16 +152,11 @@ func (p *Parser) convertDDL(ddl *sqlparser.DDL, originalSQL string) (*CreateTabl
 	var primaryKeys []string
 
 	if ddl.TableSpec != nil {
-		colDefs, primaryKeys, err := p.convertTableSpec(ddl.TableSpec)
+		var err error
+		colDefs, primaryKeys, err = p.convertTableSpec(ddl.TableSpec)
 		if err != nil {
 			return nil, err
 		}
-		return &CreateTableStatement{
-			Table:       tableName,
-			Columns:     colDefs,
-			PrimaryKey:  primaryKeys,
-			IfNotExists: ifNotExists,
-		}, nil
 	}
 
 	return &CreateTableStatement{

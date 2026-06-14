@@ -37,15 +37,7 @@ func (f *Flusher) NextID() uint64 {
 
 // SetNextID updates the flusher's nextID if the given id is larger.
 func (f *Flusher) SetNextID(id uint64) {
-	for {
-		current := f.nextID.Load()
-		if id <= current {
-			return
-		}
-		if f.nextID.CompareAndSwap(current, id) {
-			return
-		}
-	}
+	setNextIDAtomic(&f.nextID, id)
 }
 
 // NewFlusher 创建一个 Flusher 实例。

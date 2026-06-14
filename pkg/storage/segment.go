@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -300,10 +301,10 @@ func computeStringStats(data []byte, offsets []uint32, rowCount uint32, nulls *c
 			maxBytes = s
 			first = false
 		} else {
-			if string(s) < string(minBytes) {
+			if bytes.Compare(s, minBytes) < 0 {
 				minBytes = s
 			}
-			if string(s) > string(maxBytes) {
+			if bytes.Compare(s, maxBytes) > 0 {
 				maxBytes = s
 			}
 		}

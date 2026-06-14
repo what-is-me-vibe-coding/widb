@@ -188,7 +188,8 @@ type AggregateFunc int
 
 // Aggregate function constants.
 const (
-	AggCount AggregateFunc = iota
+	AggUnknown AggregateFunc = iota
+	AggCount
 	AggSum
 	AggMin
 	AggMax
@@ -197,6 +198,8 @@ const (
 
 func (f AggregateFunc) String() string {
 	switch f {
+	case AggUnknown:
+		return aggNameUnknown
 	case AggCount:
 		return aggNameCountUpper
 	case AggSum:
