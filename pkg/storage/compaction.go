@@ -203,9 +203,13 @@ func (c *Compactor) readSegmentRows(seg *Segment, _ []ColumnMeta) ([]memRow, err
 		decodedCols[i] = cd
 	}
 
+	// 预分配连续的 values 缓冲区，每行从中切片，避免逐行分配 []common.Value
+	// 减少 GC 压力，特别是大 Segment（百万行级别）时效果显著
+	valuesBuf := make([]common.Value, int(seg.RowCount)*numCols)
 	rows := make([]memRow, 0, seg.RowCount)
 	for r := uint32(0); r < seg.RowCount; r++ {
-		values := make([]common.Value, numCols)
+		offset := int(r) * numCols
+		values := valuesBuf[offset : offset+numCols]
 		for i := range decodedCols {
 			values[i] = extractValue(decodedCols[i], r)
 		}

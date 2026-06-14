@@ -150,10 +150,18 @@ func (sl *skipList) scanRange(start, end string) []struct {
 	Key   string
 	Value Row
 } {
+	// 根据跳表大小估算结果容量，减少 append 扩容次数
+	estCap := sl.size / 4
+	if estCap < 16 {
+		estCap = 16
+	}
+	if estCap > sl.size {
+		estCap = sl.size
+	}
 	result := make([]struct {
 		Key   string
 		Value Row
-	}, 0, 16)
+	}, 0, estCap)
 
 	// 使用 findLess 在 O(log n) 内定位 >= start 的第一个节点
 	x := sl.findLess(start, nil)
