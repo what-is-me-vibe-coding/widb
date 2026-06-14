@@ -154,28 +154,11 @@ func (e *Executor) aggregateRows(agg *AggregateNode, childResult *execResult, in
 
 			if _, ok := groupAccum[groupKey]; !ok {
 				groupAccum[groupKey] = newAccumulators(agg.Aggregates)
-				// 新分组需要复制当前行值，因为 rowVals 会被后续行覆盖
-				groupRowVals := make(map[string]common.Value, len(rowVals))
-				for k, v := range rowVals {
-					groupRowVals[k] = v
-				}
-				groupRows[groupKey] = &groupRow{key: groupKey, values: groupRowVals}
+				groupRows[groupKey] = newGroupRow(groupKey, rowVals)
 				groupOrder = append(groupOrder, groupKey)
 			}
 
-			for i := range groupAccum[groupKey] {
-				if agg.Aggregates[i].Arg != nil {
-					val, evalErr := evalExpr(agg.Aggregates[i].Arg, rowVals, colIdxMap)
-					if evalErr != nil {
-						// 表达式求值失败时跳过该聚合列的更新，避免零值污染累加器
-						continue
-					}
-					groupAccum[groupKey][i].update(val)
-				} else {
-					// COUNT(*) 等无参数聚合函数，直接更新
-					groupAccum[groupKey][i].update(common.NewNull())
-				}
-			}
+			e.updateAccumulators(groupAccum[groupKey], agg.Aggregates, rowVals, colIdxMap)
 		}
 	}
 
@@ -186,6 +169,32 @@ func (e *Executor) aggregateRows(agg *AggregateNode, childResult *execResult, in
 	}
 
 	return groupAccum, groupRows, groupOrder
+}
+
+// newGroupRow 创建分组行，复制当前行值避免后续行覆盖。
+func newGroupRow(key string, rowVals map[string]common.Value) *groupRow {
+	copied := make(map[string]common.Value, len(rowVals))
+	for k, v := range rowVals {
+		copied[k] = v
+	}
+	return &groupRow{key: key, values: copied}
+}
+
+// updateAccumulators 更新一组累加器。
+func (e *Executor) updateAccumulators(accs []accumulator, aggs []AggregateExpr, rowVals map[string]common.Value, colIdxMap map[string]int) {
+	for i := range accs {
+		if aggs[i].Arg != nil {
+			val, evalErr := evalExpr(aggs[i].Arg, rowVals, colIdxMap)
+			if evalErr != nil {
+				// 表达式求值失败时跳过该聚合列的更新，避免零值污染累加器
+				continue
+			}
+			accs[i].update(val)
+		} else {
+			// COUNT(*) 等无参数聚合函数，直接更新
+			accs[i].update(common.NewNull())
+		}
+	}
 }
 
 func (e *Executor) buildAggregateOutput(agg *AggregateNode, schema []ColumnDef, groupAccum map[string][]accumulator, groupRows map[string]*groupRow, groupOrder []string, colIdxMap map[string]int) ([]*storage.ColumnVector, error) {

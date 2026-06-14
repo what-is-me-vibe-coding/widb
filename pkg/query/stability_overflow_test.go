@@ -162,17 +162,17 @@ func TestIntNormalArithmetic(t *testing.T) {
 
 // TestBuildGroupKeyWithError 验证 buildGroupKey 在表达式求值失败时不会 panic
 func TestBuildGroupKeyWithError(t *testing.T) {
-	row := map[string]common.Value{"col1": common.NewInt64(42)}
-	colIdxMap := map[string]int{"col1": 0}
+	row := map[string]common.Value{testStrCol1: common.NewInt64(42)}
+	colIdxMap := map[string]int{testStrCol1: 0}
 
 	// 正常情况
-	key := buildGroupKey([]Expression{&ResolvedColumnExpr{Name: "col1", Idx: 0, typ: common.TypeInt64}}, row, colIdxMap)
+	key := buildGroupKey([]Expression{&ResolvedColumnExpr{Name: testStrCol1, Idx: 0, typ: common.TypeInt64}}, row, colIdxMap)
 	if key != "42" {
 		t.Errorf("expected group key '42', got %q", key)
 	}
 
 	// 不存在的列应返回 NULL 的字符串表示
-	key = buildGroupKey([]Expression{&ResolvedColumnExpr{Name: "nonexistent", Idx: 99, typ: common.TypeInt64}}, row, colIdxMap)
+	key = buildGroupKey([]Expression{&ResolvedColumnExpr{Name: testColNonexistent, Idx: 99, typ: common.TypeInt64}}, row, colIdxMap)
 	if key == "" {
 		t.Errorf("expected non-empty group key for missing column, got empty")
 	}

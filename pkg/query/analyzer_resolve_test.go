@@ -131,7 +131,7 @@ func TestBuildScanSchema(t *testing.T) {
 func TestBuildScanSchemaWithUnknownColumn(t *testing.T) {
 	table, _ := testCatalog().GetTable(testTableUsers)
 
-	colNames := []string{"id", "nonexistent"}
+	colNames := []string{"id", testColNonexistent}
 	schema := buildScanSchema(colNames, table)
 
 	if len(schema) != 2 {
