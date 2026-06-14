@@ -88,6 +88,12 @@ func (e *Engine) findSegmentByID(segID uint64) *Segment {
 
 // Scan 扫描指定键范围内的所有行，直接返回 ScanEntry 切片，避免额外结构体复制。
 func (e *Engine) Scan(start, end string) []ScanEntry {
+	entries, _ := e.ScanWithError(start, end)
+	return entries
+}
+
+// ScanWithError 扫描指定键范围内的所有行，同时返回迭代过程中遇到的错误。
+func (e *Engine) ScanWithError(start, end string) ([]ScanEntry, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.scanRangeUnlocked(start, end)

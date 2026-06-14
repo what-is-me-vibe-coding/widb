@@ -49,8 +49,19 @@ func TestStabilityGroupCommitterSyncFailureOverflow(t *testing.T) {
 	// 手动触发 doSync，Sync 会失败，pending 被放回队列
 	gc.SyncNow()
 
-	// 再次触发 doSync，此时 combined 列表长度 > 4096，应丢弃最旧的请求
+	// 等待后台 goroutine 处理完成
+	time.Sleep(10 * time.Millisecond)
+
+	// 再次提交一批请求，使 combined 列表长度 > 4096
+	for i := 0; i < 10; i++ {
+		gc.Submit()
+	}
+
+	// 再次触发 doSync，此时应丢弃最旧的请求
 	gc.SyncNow()
+
+	// 等待后台 goroutine 处理完成
+	time.Sleep(10 * time.Millisecond)
 
 	// 验证有 channel 被关闭（被丢弃的请求）
 	closedCount := 0

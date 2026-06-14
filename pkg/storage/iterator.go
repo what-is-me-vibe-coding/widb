@@ -398,17 +398,17 @@ func (e *Engine) buildScanIterators(start, end string) []ScanIterator {
 // deduplicated results across all data sources.
 // Caller must hold e.mu.RLock.
 func (e *Engine) ScanRange(start, end string) []ScanEntry {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.scanRangeUnlocked(start, end)
+	entries, _ := e.scanRangeUnlocked(start, end)
+	return entries
 }
 
 // scanRangeUnlocked performs the actual scan without acquiring the lock.
 // Caller must hold e.mu.RLock.
-func (e *Engine) scanRangeUnlocked(start, end string) []ScanEntry {
+// Returns scan results and any error encountered during iteration.
+func (e *Engine) scanRangeUnlocked(start, end string) ([]ScanEntry, error) {
 	iters := e.buildScanIterators(start, end)
 	if len(iters) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Pre-allocate results slice with estimated capacity from MemTable and segments.
@@ -430,9 +430,9 @@ func (e *Engine) scanRangeUnlocked(start, end string) []ScanEntry {
 		results = append(results, mi.Entry())
 	}
 
-	if mi.Err() != nil {
-		return nil
+	if err := mi.Err(); err != nil {
+		return nil, fmt.Errorf("scan range [%q,%q]: %w", start, end, err)
 	}
 
-	return results
+	return results, nil
 }

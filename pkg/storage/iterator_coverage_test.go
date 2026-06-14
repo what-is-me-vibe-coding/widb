@@ -20,9 +20,12 @@ func TestScanRangeUnlockedEmpty_V7(t *testing.T) {
 
 	// 空引擎，无数据，scanRangeUnlocked 应返回空结果
 	eng.mu.RLock()
-	results := eng.scanRangeUnlocked("a", "z")
+	results, err := eng.scanRangeUnlocked("a", "z")
 	eng.mu.RUnlock()
 
+	if err != nil {
+		t.Errorf("期望无错误，实际 %v", err)
+	}
 	if len(results) != 0 {
 		t.Errorf("期望 0 条结果，实际 %d 条", len(results))
 	}
