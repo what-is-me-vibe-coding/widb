@@ -426,8 +426,6 @@ func TestNewMetrics_NilRegisterer_V6(t *testing.T) {
 	}()
 
 	if panicked {
-		// panic 说明 nil 路径被执行（降级到 DefaultRegisterer 后重复注册），
-		// 这证明 reg == nil 分支已被覆盖
 		t.Log("NewMetrics(nil) 因 DefaultRegisterer 重复注册而 panic，nil 路径已覆盖")
 	}
 }

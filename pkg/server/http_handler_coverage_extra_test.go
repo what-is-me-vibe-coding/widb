@@ -9,7 +9,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// V7: httpQuery / httpWrite comprehensive coverage
+// httpQuery / httpWrite comprehensive coverage (extra tests)
 // ---------------------------------------------------------------------------
 
 // TestHTTPQuery_PostValidSQLV7 测试 httpQuery 使用 POST 方法发送有效 SQL 查询。

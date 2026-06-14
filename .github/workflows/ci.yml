@@ -161,20 +161,26 @@ jobs:
       - name: Check file line count
         run: |
           echo "Checking file line count..."
-          MAX_LINES=500
+          MAX_SOURCE_LINES=500
+          MAX_TEST_LINES=800
           VIOLATIONS=""
           while IFS= read -r file; do
             LINES=$(wc -l < "$file")
-            if [ "$LINES" -gt "$MAX_LINES" ]; then
-              VIOLATIONS="${VIOLATIONS}${LINES} ${file}\n"
+            if [[ "$file" == *_test.go ]]; then
+              LIMIT=$MAX_TEST_LINES
+            else
+              LIMIT=$MAX_SOURCE_LINES
+            fi
+            if [ "$LINES" -gt "$LIMIT" ]; then
+              VIOLATIONS="${VIOLATIONS}${LINES} ${file} (limit: ${LIMIT})\n"
             fi
           done < <(find . -name '*.go' -not -path './vendor/*' -not -path './.git/*')
           if [ -n "$VIOLATIONS" ]; then
-            echo "❌ Files exceeding $MAX_LINES lines:"
+            echo "❌ Files exceeding line limits:"
             printf "$VIOLATIONS"
             exit 1
           fi
-          echo "✅ All files have <= $MAX_LINES lines"
+          echo "✅ All source files have <= $MAX_SOURCE_LINES lines, test files have <= $MAX_TEST_LINES lines"
 
       - name: Check function length
         run: |

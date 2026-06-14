@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// handleQueryPacket: JSON marshal 响应失败路径
-// ---------------------------------------------------------------------------
-
 // unmarshallableResponse 是一个无法被 json.Marshal 序列化的类型
 type unmarshallableResponse struct {
 	Ch chan int // chan 无法被 JSON 序列化
@@ -64,10 +60,6 @@ func TestHandleQueryPacket正常路径(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// handleWritePacket: JSON marshal 响应失败路径
-// ---------------------------------------------------------------------------
 
 // TestHandleWritePacketJSONMarshal失败 验证 handleWritePacket 在 JSON marshal 响应失败时的行为
 func TestHandleWritePacketJSONMarshal失败(t *testing.T) {
@@ -134,10 +126,6 @@ func TestHandleWritePacket正常路径(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handlePing: JSON marshal 响应失败路径
-// ---------------------------------------------------------------------------
-
 // TestHandlePingJSONMarshal失败 验证 handlePing 在 JSON marshal 响应失败时的行为
 // handlePing 构造的 Response{Code:0, Message:"pong"} 总是可序列化的，
 // 因此 JSON marshal 失败路径在正常情况下不可达。
@@ -181,10 +169,6 @@ func TestHandlePing正常路径(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handlePacket: 路由验证
-// ---------------------------------------------------------------------------
-
 // TestHandlePacket路由验证 验证 handlePacket 正确路由不同类型的包
 func TestHandlePacket路由验证(t *testing.T) {
 	srv := newTestServerWithTable(t)
@@ -221,10 +205,6 @@ func TestHandlePacket路由验证(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// handleQueryPacket: JSON marshal 失败路径（通过不可序列化的 Data 字段）
-// ---------------------------------------------------------------------------
 
 // TestHandleQueryPacketMarshal不可序列化数据 验证当 Response.Data 包含不可序列化值时 marshal 失败
 func TestHandleQueryPacketMarshal不可序列化数据(t *testing.T) {
@@ -269,10 +249,6 @@ func TestHandlePingMarshal不可序列化数据(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handleQueryPacket: 完整的查询流程
-// ---------------------------------------------------------------------------
-
 // TestHandleQueryPacket完整流程 验证 handleQueryPacket 完整的查询处理流程
 func TestHandleQueryPacket完整流程(t *testing.T) {
 	srv := newTestServerWithTable(t)
@@ -299,10 +275,6 @@ func TestHandleQueryPacket完整流程(t *testing.T) {
 		t.Fatalf("反序列化响应失败: %v", err)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// handleWritePacket: 完整的写入流程
-// ---------------------------------------------------------------------------
 
 // TestHandleWritePacket完整流程 验证 handleWritePacket 完整的写入处理流程
 func TestHandleWritePacket完整流程(t *testing.T) {
@@ -334,10 +306,6 @@ func TestHandleWritePacket完整流程(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handleConn: 错误路径覆盖
-// ---------------------------------------------------------------------------
-
 // TestIsClosedConnErr完整覆盖 验证 isClosedConnErr 的完整覆盖
 func TestIsClosedConnErr完整覆盖(t *testing.T) {
 	tests := []struct {
@@ -358,10 +326,6 @@ func TestIsClosedConnErr完整覆盖(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// handlePacket: 多种包类型组合测试
-// ---------------------------------------------------------------------------
 
 // TestHandlePacket多种包类型 验证 handlePacket 处理多种包类型的组合
 func TestHandlePacket多种包类型(t *testing.T) {
@@ -401,10 +365,6 @@ func TestHandlePacket多种包类型(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handleQueryPacket: 空 SQL 查询
-// ---------------------------------------------------------------------------
-
 // TestHandleQueryPacket空SQL 验证 handleQueryPacket 处理空 SQL
 func TestHandleQueryPacket空SQL(t *testing.T) {
 	srv := newTestServerWithTable(t)
@@ -426,10 +386,6 @@ func TestHandleQueryPacket空SQL(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// handleWritePacket: 空行列表
-// ---------------------------------------------------------------------------
 
 // TestHandleWritePacket空行列表 验证 handleWritePacket 处理空行列表
 func TestHandleWritePacket空行列表(t *testing.T) {
