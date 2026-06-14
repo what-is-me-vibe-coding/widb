@@ -150,10 +150,21 @@ func (sl *skipList) scanRange(start, end string) []struct {
 	Key   string
 	Value Row
 } {
+	// 根据跳表大小估算结果容量，减少 append 扩容次数。
+	// 估算因子 1/4：大多数范围查询仅命中跳表的一小部分数据，
+	// 1/4 是在"小范围查询避免过度分配"与"大范围查询减少扩容"之间的折中。
+	// 实际命中比例取决于业务负载，此处为经验值；若场景偏向全表扫描可适当增大。
+	estCap := sl.size / 4
+	if estCap < 16 {
+		estCap = 16
+	}
+	if estCap > sl.size {
+		estCap = sl.size
+	}
 	result := make([]struct {
 		Key   string
 		Value Row
-	}, 0, 16)
+	}, 0, estCap)
 
 	// 使用 findLess 在 O(log n) 内定位 >= start 的第一个节点
 	x := sl.findLess(start, nil)
