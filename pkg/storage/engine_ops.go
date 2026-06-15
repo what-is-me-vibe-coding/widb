@@ -25,6 +25,29 @@ func setNextIDAtomic(target *atomic.Uint64, id uint64) {
 
 // --- Engine Helpers ---
 
+// addSegment 将 Segment 添加到引擎的内部数据结构并注册索引。
+// 调用者必须持有 e.mu 写锁。如果索引注册失败，已添加的数据会被回滚。
+func (e *Engine) addSegment(seg *Segment, level int) error {
+	e.segments = append(e.segments, seg)
+	e.segmentMap[seg.ID] = seg
+	e.segmentLevels = append(e.segmentLevels, level)
+	if level == 0 {
+		e.l0SegmentCount++
+	}
+
+	if err := e.registerSegmentIndexes(seg, level); err != nil {
+		// 回滚已添加的数据
+		e.segments = e.segments[:len(e.segments)-1]
+		delete(e.segmentMap, seg.ID)
+		e.segmentLevels = e.segmentLevels[:len(e.segmentLevels)-1]
+		if level == 0 {
+			e.l0SegmentCount--
+		}
+		return err
+	}
+	return nil
+}
+
 func (e *Engine) rotateMemTable() error {
 	if e.activeMem.Len() == 0 {
 		return nil

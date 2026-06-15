@@ -278,11 +278,7 @@ func (e *Engine) flushImmutable(immutable []*MemTable, cols []ColumnMeta) error 
 		}
 
 		e.mu.Lock()
-		e.segments = append(e.segments, seg)
-		e.segmentMap[seg.ID] = seg
-		e.segmentLevels = append(e.segmentLevels, 0)
-		e.l0SegmentCount++
-		if err := e.registerSegmentIndexes(seg, 0); err != nil {
+		if err := e.addSegment(seg, 0); err != nil {
 			e.mu.Unlock()
 			remaining := immutable[flushedIdx+1:]
 			if len(remaining) > 0 {
@@ -358,12 +354,8 @@ func (e *Engine) Close() error {
 			continue
 		}
 		e.mu.Lock()
-		e.segments = append(e.segments, seg)
-		e.segmentMap[seg.ID] = seg
-		e.segmentLevels = append(e.segmentLevels, 0)
-		e.l0SegmentCount++
-		if err := e.registerSegmentIndexes(seg, 0); err != nil {
-			log.Printf("engine close: register segment %d indexes: %v", seg.ID, err)
+		if err := e.addSegment(seg, 0); err != nil {
+			log.Printf("engine close: register segment %d: %v", seg.ID, err)
 		}
 		e.mu.Unlock()
 	}

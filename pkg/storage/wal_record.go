@@ -27,9 +27,9 @@ type walColMeta struct {
 
 func serializeWriteRecord(key string, version uint64, columns map[string]common.Value) ([]byte, error) {
 	// 直接生成二进制格式，避免 []WriteRow 中间分配
-	size := 2 + 2 + len(key) + 8 + 2
+	size := walFieldUint16 + walFieldUint16 + len(key) + walFieldUint64 + walFieldUint16
 	for colName, v := range columns {
-		size += 2 + len(colName) + 1 + 1 + valueBinarySize(v)
+		size += walFieldUint16 + len(colName) + walFieldType + walFieldValid + valueBinarySize(v)
 	}
 	buf := make([]byte, 0, size)
 	var b [8]byte // stack-allocated, eliminates one heap allocation per write

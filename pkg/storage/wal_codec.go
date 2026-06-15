@@ -11,15 +11,24 @@ import (
 
 // --- 二进制批量写入序列化 ---
 
+// WAL 二进制记录格式的字段大小常量
+const (
+	walFieldUint16 = 2 // uint16 字段大小（行数、key长度、列数、列名长度、字符串长度）
+	walFieldUint64 = 8 // uint64 字段大小（版本号、int64、float64、timestamp）
+	walFieldType   = 1 // 数据类型字段大小
+	walFieldValid  = 1 // valid 标志字段大小
+	walFieldBool   = 1 // bool 值字段大小
+)
+
 // serializeBatchWriteRecord 将多行数据序列化为二进制格式。
 // 格式：uint16(行数) + 每行[keyLen(uint16)+key+version(uint64)+colCount(uint16)+每列...]
 func serializeBatchWriteRecord(rows []WriteRow, nextVersion uint64) ([]byte, error) {
 	// 预估大小
-	size := 2 // uint16 行数
+	size := walFieldUint16 // uint16 行数
 	for _, row := range rows {
-		size += 2 + len(row.Key) + 8 + 2 // keyLen + key + version + colCount
+		size += walFieldUint16 + len(row.Key) + walFieldUint64 + walFieldUint16 // keyLen + key + version + colCount
 		for colName, v := range row.Values {
-			size += 2 + len(colName) + 1 + 1 + valueBinarySize(v)
+			size += walFieldUint16 + len(colName) + walFieldType + walFieldValid + valueBinarySize(v)
 		}
 	}
 	buf := make([]byte, 0, size)
