@@ -160,7 +160,8 @@ test-db/
 │   ├── index.md        # 索引模块详解
 │   ├── catalog.md      # 元数据管理详解
 │   ├── common.md       # 公共模块详解
-│   └── api.md          # API 参考
+│   ├── api.md          # API 参考
+│   └── performance.md  # 性能调优指南
 └── .agent_plan/        # 开发设计文档
 ```
 
