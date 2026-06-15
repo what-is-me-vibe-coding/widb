@@ -256,7 +256,7 @@ func TestCoverageV20_WriteSegment_MkdirAllError(t *testing.T) {
 		t.Fatalf("WriteFile 失败: %v", err)
 	}
 
-	flusher := NewFlusher(blockPath)
+	flusher := NewFlusher(blockPath, newSegmentIDGen())
 	seg := &Segment{
 		ID:       1,
 		MinKey:   "a",
@@ -268,7 +268,7 @@ func TestCoverageV20_WriteSegment_MkdirAllError(t *testing.T) {
 		},
 	}
 
-	_, err := flusher.writeSegment(seg)
+	_, err := writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("期望 MkdirAll 失败时返回错误，得到 nil")
 	}
@@ -281,7 +281,7 @@ func TestCoverageV20_WriteSegment_MkdirAllError(t *testing.T) {
 // TestCoverageV20_Flusher_FlushSuccess 测试 Flusher 正常刷盘路径
 func TestCoverageV20_Flusher_FlushSuccess(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("key1", Row{Version: 1, Columns: map[string]common.Value{colVal: common.NewInt64(1)}})
@@ -307,7 +307,7 @@ func TestCoverageV20_Flusher_FlushSuccess(t *testing.T) {
 // TestCoverageV20_Flusher_FlushEmpty 测试 Flusher 刷盘空 MemTable
 func TestCoverageV20_Flusher_FlushEmpty(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	mem := NewMemTable()
 	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}

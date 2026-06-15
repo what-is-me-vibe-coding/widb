@@ -592,9 +592,9 @@ func TestWriteSegment_MkdirAllError(t *testing.T) {
 	_ = tmpFile.Close()
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	f := NewFlusher(tmpPath + "/subdir")
+	f := NewFlusher(tmpPath+"/subdir", newSegmentIDGen())
 	seg := &Segment{ID: 1, MinKey: "a", MaxKey: "z", RowCount: 1}
-	_, err = f.writeSegment(seg)
+	_, err = writeSegmentFile(f.dataDir, seg)
 	if err == nil {
 		t.Error("期望 MkdirAll 失败时返回错误，得到 nil")
 	}

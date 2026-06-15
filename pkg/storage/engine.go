@@ -6,11 +6,44 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
 )
+
+const (
+	defaultBlockCacheSize     = 256 * 1024 * 1024 // 256MB
+	defaultBlockCacheMaxEntry = 1024 * 1024       // 1MB
+	defaultIndexCacheEntries  = 1000              // 1000 条目
+)
+
+// segmentIDGen 是 Segment ID 的集中式生成器，确保 Flusher 和 Compactor 共享同一个 ID 源，
+// 消除手动同步 nextID 的需要。
+type segmentIDGen struct {
+	nextID atomic.Uint64
+}
+
+// newSegmentIDGen 创建一个 Segment ID 生成器。
+func newSegmentIDGen() *segmentIDGen {
+	return &segmentIDGen{}
+}
+
+// Next 原子地分配并返回下一个 Segment ID。
+func (g *segmentIDGen) Next() uint64 {
+	return g.nextID.Add(1)
+}
+
+// Current 返回当前已分配的最大 ID（无锁读取）。
+func (g *segmentIDGen) Current() uint64 {
+	return g.nextID.Load()
+}
+
+// InitIfLarger 当 id 大于当前值时更新，用于从磁盘恢复时初始化。
+func (g *segmentIDGen) InitIfLarger(id uint64) {
+	setNextIDAtomic(&g.nextID, id)
+}
 
 // Engine 是存储引擎的核心结构。
 type Engine struct {
@@ -20,6 +53,7 @@ type Engine struct {
 	wal                    *WAL
 	flusher                *Flusher
 	compactor              *Compactor
+	segIDGen               *segmentIDGen
 	segments               []*Segment
 	segmentMap             map[uint64]*Segment
 	segmentLevels          []int
@@ -62,23 +96,25 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 
 	blockCacheSize := cfg.BlockCacheSize
 	if blockCacheSize == 0 {
-		blockCacheSize = 256 * 1024 * 1024 // 默认 256MB
+		blockCacheSize = defaultBlockCacheSize
 	}
 
 	blockCacheMaxEntrySize := cfg.BlockCacheMaxEntrySize
 	if blockCacheMaxEntrySize == 0 {
-		blockCacheMaxEntrySize = 1024 * 1024 // 默认 1MB
+		blockCacheMaxEntrySize = defaultBlockCacheMaxEntry
 	}
 
 	indexCacheSize := cfg.IndexCacheSize
 	if indexCacheSize == 0 {
-		indexCacheSize = 1000 // 默认 1000 条目
+		indexCacheSize = defaultIndexCacheEntries
 	}
 
+	idGen := newSegmentIDGen()
 	eng := &Engine{
 		activeMem:              NewMemTableWithSize(maxSize),
-		flusher:                NewFlusher(cfg.DataDir),
-		compactor:              NewCompactor(cfg.DataDir),
+		segIDGen:               idGen,
+		flusher:                NewFlusher(cfg.DataDir, idGen),
+		compactor:              NewCompactor(cfg.DataDir, idGen),
 		segmentMap:             make(map[uint64]*Segment),
 		nextVersion:            1,
 		primaryIndex:           index.NewPrimaryIndex(),

@@ -108,46 +108,43 @@ func TestWALSizeAtomicDuringWrites(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Flusher.NextID() with atomic / SetNextID() with CAS
+// 2. segmentIDGen Next/Current/InitIfLarger with atomic / CAS
 // ---------------------------------------------------------------------------
 
 func TestFlusherNextIDBasic(t *testing.T) {
-	dir := t.TempDir()
-	f := NewFlusher(dir)
+	idGen := newSegmentIDGen()
 
-	if id := f.NextID(); id != 0 {
-		t.Fatalf("expected initial NextID 0, got %d", id)
+	if id := idGen.Current(); id != 0 {
+		t.Fatalf("expected initial Current 0, got %d", id)
 	}
 }
 
 func TestFlusherSetNextIDCAS(t *testing.T) {
-	dir := t.TempDir()
-	f := NewFlusher(dir)
+	idGen := newSegmentIDGen()
 
-	f.SetNextID(10)
-	if id := f.NextID(); id != 10 {
-		t.Fatalf("expected NextID 10 after SetNextID(10), got %d", id)
+	idGen.InitIfLarger(10)
+	if id := idGen.Current(); id != 10 {
+		t.Fatalf("expected Current 10 after InitIfLarger(10), got %d", id)
 	}
 
-	f.SetNextID(5)
-	if id := f.NextID(); id != 10 {
-		t.Fatalf("expected NextID 10 after SetNextID(5) (smaller), got %d", id)
+	idGen.InitIfLarger(5)
+	if id := idGen.Current(); id != 10 {
+		t.Fatalf("expected Current 10 after InitIfLarger(5) (smaller), got %d", id)
 	}
 
-	f.SetNextID(10)
-	if id := f.NextID(); id != 10 {
-		t.Fatalf("expected NextID 10 after SetNextID(10) (same), got %d", id)
+	idGen.InitIfLarger(10)
+	if id := idGen.Current(); id != 10 {
+		t.Fatalf("expected Current 10 after InitIfLarger(10) (same), got %d", id)
 	}
 
-	f.SetNextID(20)
-	if id := f.NextID(); id != 20 {
-		t.Fatalf("expected NextID 20 after SetNextID(20), got %d", id)
+	idGen.InitIfLarger(20)
+	if id := idGen.Current(); id != 20 {
+		t.Fatalf("expected Current 20 after InitIfLarger(20), got %d", id)
 	}
 }
 
 func TestFlusherSetNextIDConcurrent(t *testing.T) {
-	dir := t.TempDir()
-	f := NewFlusher(dir)
+	idGen := newSegmentIDGen()
 
 	const goroutines = 20
 	var wg sync.WaitGroup
@@ -156,19 +153,20 @@ func TestFlusherSetNextIDConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(val uint64) {
 			defer wg.Done()
-			f.SetNextID(val)
+			idGen.InitIfLarger(val)
 		}(uint64(i + 1))
 	}
 	wg.Wait()
 
-	if id := f.NextID(); id != goroutines {
-		t.Fatalf("expected NextID %d after concurrent SetNextID, got %d", goroutines, id)
+	if id := idGen.Current(); id != goroutines {
+		t.Fatalf("expected Current %d after concurrent InitIfLarger, got %d", goroutines, id)
 	}
 }
 
 func TestFlusherNextIDAfterFlush(t *testing.T) {
 	dir := t.TempDir()
-	f := NewFlusher(dir)
+	idGen := newSegmentIDGen()
+	f := NewFlusher(dir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -180,8 +178,8 @@ func TestFlusherNextIDAfterFlush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Flush failed: %v", err)
 	}
-	if id := f.NextID(); id != 1 {
-		t.Fatalf("expected NextID 1 after first flush, got %d", id)
+	if id := idGen.Current(); id != 1 {
+		t.Fatalf("expected Current 1 after first flush, got %d", id)
 	}
 
 	mem2 := NewMemTable()
@@ -192,8 +190,8 @@ func TestFlusherNextIDAfterFlush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Flush failed: %v", err)
 	}
-	if id := f.NextID(); id != 2 {
-		t.Fatalf("expected NextID 2 after second flush, got %d", id)
+	if id := idGen.Current(); id != 2 {
+		t.Fatalf("expected Current 2 after second flush, got %d", id)
 	}
 }
 

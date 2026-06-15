@@ -125,8 +125,8 @@ func TestFlushV13_RegisterSegmentIndexesFailure(t *testing.T) {
 	eng.activeMem.Freeze()
 	eng.immutable = append(eng.immutable, eng.activeMem)
 	eng.activeMem = NewMemTableWithSize(eng.activeMem.maxSize)
-	// 设置 flusher.nextID 为 uint64 最大值，下次 Flush 会产生 ID=0 的 segment
-	eng.flusher.nextID.Store(^uint64(0))
+	// 设置 segIDGen 为 uint64 最大值，下次 Flush 会产生 ID=0 的 segment
+	eng.segIDGen.InitIfLarger(^uint64(0))
 	eng.mu.Unlock()
 
 	err = eng.Flush(cols)
@@ -145,7 +145,7 @@ func TestFlushV13_RegisterSegmentIndexesFailure(t *testing.T) {
 
 	// 恢复以便 Close 成功
 	eng.mu.Lock()
-	eng.flusher.nextID.Store(0)
+	eng.segIDGen.InitIfLarger(0)
 	eng.immutable = nil
 	eng.mu.Unlock()
 	_ = eng.Close()

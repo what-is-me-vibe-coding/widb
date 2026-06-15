@@ -124,7 +124,7 @@ func (it *errorOnInitIterator) Close() {}
 // TestBuildEncodedColumnNullAppendErrorLowCov tests buildEncodedColumn when a null
 // value append fails due to unsupported type on the column vector.
 func TestBuildEncodedColumnNullAppendErrorLowCov(t *testing.T) {
-	flusher := NewFlusher(t.TempDir())
+	flusher := NewFlusher(t.TempDir(), newSegmentIDGen())
 
 	// Create rows where the column is missing, forcing a null append.
 	// With a DataType that doesn't support null append properly.
@@ -147,13 +147,13 @@ func TestBuildEncodedColumnNullAppendErrorLowCov(t *testing.T) {
 // TestWriteSegmentSerializeErrorLowCov tests writeSegment when Serialize fails.
 func TestWriteSegmentSerializeErrorLowCov(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	flusher := NewFlusher(tmpDir, newSegmentIDGen())
 
 	// Create a segment with no columns - Serialize should still work
 	seg := &Segment{ID: 1, Columns: []EncodedColumn{}}
 
 	// This should succeed for Serialize but the resulting file should be valid
-	_, err := flusher.writeSegment(seg)
+	_, err := writeSegmentFile(flusher.dataDir, seg)
 	// An empty segment may or may not error - just verify no panic
 	_ = err
 }
@@ -169,11 +169,11 @@ func TestWriteSegmentMkdirAllErrorLowCov(t *testing.T) {
 	_ = tmpFile.Close()
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	flusher := NewFlusher(tmpPath + "/subdir/data")
+	flusher := NewFlusher(tmpPath+"/subdir/data", newSegmentIDGen())
 	seg := &Segment{ID: 1, RowCount: 1, MinKey: "a", MaxKey: "a", Keys: []string{"a"},
 		Columns: []EncodedColumn{{Encoding: EncodingPlain, Type: common.TypeInt64, RowCount: 1, Data: make([]byte, 8)}}}
 
-	_, err = flusher.writeSegment(seg)
+	_, err = writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("expected error when MkdirAll fails, got nil")
 	}
@@ -402,7 +402,7 @@ func TestBuildNoColumnsLowCov(t *testing.T) {
 
 // TestFlusherFlushEmptyMemTableLowCov tests Flusher.Flush with an empty memtable.
 func TestFlusherFlushEmptyMemTableLowCov(t *testing.T) {
-	flusher := NewFlusher(t.TempDir())
+	flusher := NewFlusher(t.TempDir(), newSegmentIDGen())
 	mem := NewMemTable()
 
 	_, err := flusher.Flush(mem, nil)
@@ -419,8 +419,8 @@ func TestFlusherFlushEmptyMemTableLowCov(t *testing.T) {
 // when colIdx >= len(row.Values), triggering null append.
 func TestCompactorBuildSegmentColIndexOutOfRange(t *testing.T) {
 	tmpDir := t.TempDir()
-	compactor := NewCompactor(tmpDir)
-	compactor.nextID.Store(1)
+	compactor := NewCompactor(tmpDir, newSegmentIDGen())
+	compactor.idGen.InitIfLarger(1)
 
 	// Row with fewer values than columns
 	rows := []memRow{

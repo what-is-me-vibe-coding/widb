@@ -4,10 +4,8 @@ import (
 	"container/heap"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -21,22 +19,12 @@ const (
 type Compactor struct {
 	mu      sync.Mutex
 	dataDir string
-	nextID  atomic.Uint64 // 无锁读取 segment ID
-}
-
-// SetNextID updates the compactor's nextID if the given id is larger.
-func (c *Compactor) SetNextID(id uint64) {
-	setNextIDAtomic(&c.nextID, id)
-}
-
-// NextID 无锁读取 compactor 的当前 nextID。
-func (c *Compactor) NextID() uint64 {
-	return c.nextID.Load()
+	idGen   *segmentIDGen
 }
 
 // NewCompactor 创建一个 Compactor 实例。
-func NewCompactor(dataDir string) *Compactor {
-	return &Compactor{dataDir: dataDir}
+func NewCompactor(dataDir string, idGen *segmentIDGen) *Compactor {
+	return &Compactor{dataDir: dataDir, idGen: idGen}
 }
 
 // Compact 将输入的 segments 合并为一个新的 Segment。
@@ -243,8 +231,8 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 	minKey := rows[0].Key
 	maxKey := rows[len(rows)-1].Key
 
-	c.nextID.Add(1)
-	builder := NewSegmentBuilder(c.nextID.Load(), minKey, maxKey)
+	segID := c.idGen.Next()
+	builder := NewSegmentBuilder(segID, minKey, maxKey)
 
 	keys := make([]string, len(rows))
 	for i, row := range rows {
@@ -265,18 +253,9 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 		return nil, fmt.Errorf("compactor: build segment: %w", err)
 	}
 
-	fileName := filepath.Join(c.dataDir, fmt.Sprintf("segment_%d.widb", c.nextID.Load()))
-	data, err := seg.Serialize()
+	fileName, err := writeSegmentFile(c.dataDir, seg)
 	if err != nil {
-		return nil, fmt.Errorf("compactor: serialize segment: %w", err)
-	}
-
-	if err := os.MkdirAll(c.dataDir, 0755); err != nil {
-		return nil, fmt.Errorf("compactor: create data dir: %w", err)
-	}
-
-	if err := os.WriteFile(fileName, data, 0644); err != nil {
-		return nil, fmt.Errorf("compactor: write segment file: %w", err)
+		return nil, fmt.Errorf("compactor: %w", err)
 	}
 
 	seg.FilePath = fileName
@@ -285,25 +264,12 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 
 // buildColumnEncoded 将行数据中指定列编码为 EncodedColumn。
 func buildColumnEncoded(rows []memRow, colIdx int, colMeta ColumnMeta, rowCount uint32) (*EncodedColumn, error) {
-	cv := NewColumnVector(colMeta.ID, colMeta.Type, rowCount)
-	for _, row := range rows {
-		if colIdx >= len(row.Values) {
-			if err := cv.Append(common.NewNull()); err != nil {
-				return nil, fmt.Errorf("compactor: column %s append null: %w", colMeta.Name, err)
-			}
-			continue
+	return encodeColumnFromProvider(colMeta, rowCount, func(rowIdx int) (common.Value, bool) {
+		if colIdx >= len(rows[rowIdx].Values) {
+			return common.Value{}, false
 		}
-		val := row.Values[colIdx]
-		if err := cv.Append(val); err != nil {
-			return nil, fmt.Errorf("compactor: column %s: %w", colMeta.Name, err)
-		}
-	}
-
-	enc, err := encodeColumnVector(cv)
-	if err != nil {
-		return nil, fmt.Errorf("compactor: encode column %s: %w", colMeta.Name, err)
-	}
-	return enc, nil
+		return rows[rowIdx].Values[colIdx], true
+	})
 }
 
 // CleanupSegments 删除旧 Segment 文件。
@@ -326,9 +292,6 @@ type memRow struct {
 // Compact 执行 Tiered Compaction，将 L0 合并到 L1。
 func (e *Engine) Compact(cols []ColumnMeta) error {
 	e.mu.Lock()
-
-	// Sync compactor nextID with flusher to avoid segment ID conflicts
-	e.compactor.SetNextID(e.flusher.NextID())
 
 	l0Segments, _ := e.collectSegmentsByLevel(0)
 	if len(l0Segments) == 0 {
@@ -397,9 +360,6 @@ func (e *Engine) Compact(cols []ColumnMeta) error {
 	if err := e.compactor.CleanupSegments(allSegments); err != nil {
 		return fmt.Errorf("engine compact: cleanup: %w", err)
 	}
-
-	// 同步 flusher 的 nextID，避免后续 Flush 产生 segment ID 冲突
-	e.flusher.SetNextID(e.compactor.NextID())
 
 	return nil
 }

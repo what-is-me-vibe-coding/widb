@@ -228,9 +228,9 @@ func TestV14DeserializeSegmentCorruptedFooter(t *testing.T) {
 // --- flusher.go: writeSegment with invalid dir ---
 
 func TestV14WriteSegmentInvalidDir(t *testing.T) {
-	f := NewFlusher("/dev/null/invalid/path")
+	f := NewFlusher("/dev/null/invalid/path", newSegmentIDGen())
 	seg := buildTestSegment(t, []string{"a"}, []int64{1})
-	_, err := f.writeSegment(seg)
+	_, err := writeSegmentFile(f.dataDir, seg)
 	if err == nil {
 		t.Error("expected error for invalid data dir")
 	}
@@ -381,7 +381,7 @@ func TestV14EncodeColumnWithNulls(t *testing.T) {
 // --- flusher.go: buildEncodedColumn with various types ---
 
 func TestV14BuildEncodedColumnFloat64(t *testing.T) {
-	f := NewFlusher(t.TempDir())
+	f := NewFlusher(t.TempDir(), newSegmentIDGen())
 	rows := []KeyValue{
 		{Key: "a", Value: Row{Columns: map[string]common.Value{colVal: common.NewFloat64(1.5)}}},
 		{Key: "b", Value: Row{Columns: map[string]common.Value{colVal: common.NewFloat64(2.5)}}},
@@ -397,7 +397,7 @@ func TestV14BuildEncodedColumnFloat64(t *testing.T) {
 }
 
 func TestV14BuildEncodedColumnBool(t *testing.T) {
-	f := NewFlusher(t.TempDir())
+	f := NewFlusher(t.TempDir(), newSegmentIDGen())
 	rows := []KeyValue{
 		{Key: "a", Value: Row{Columns: map[string]common.Value{colVal: common.NewBool(true)}}},
 		{Key: "b", Value: Row{Columns: map[string]common.Value{colVal: common.NewBool(false)}}},
@@ -413,7 +413,7 @@ func TestV14BuildEncodedColumnBool(t *testing.T) {
 }
 
 func TestV14BuildEncodedColumnString(t *testing.T) {
-	f := NewFlusher(t.TempDir())
+	f := NewFlusher(t.TempDir(), newSegmentIDGen())
 	rows := []KeyValue{
 		{Key: "a", Value: Row{Columns: map[string]common.Value{colVal: common.NewString("hello")}}},
 		{Key: "b", Value: Row{Columns: map[string]common.Value{colVal: common.NewString("world")}}},
@@ -429,7 +429,7 @@ func TestV14BuildEncodedColumnString(t *testing.T) {
 }
 
 func TestV14BuildEncodedColumnWithNull(t *testing.T) {
-	f := NewFlusher(t.TempDir())
+	f := NewFlusher(t.TempDir(), newSegmentIDGen())
 	rows := []KeyValue{
 		{Key: "a", Value: Row{Columns: map[string]common.Value{colVal: common.NewInt64(1)}}},
 		{Key: "b", Value: Row{Columns: map[string]common.Value{}}}, // missing col -> null
@@ -445,7 +445,7 @@ func TestV14BuildEncodedColumnWithNull(t *testing.T) {
 
 func TestV14CompactDecodeError(t *testing.T) {
 	dir := t.TempDir()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	seg := buildTestSegment(t, []string{"a", "b"}, []int64{1, 2})
 	// Corrupt column data

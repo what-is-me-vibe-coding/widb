@@ -23,7 +23,7 @@ func TestCompactorCompactToLevel(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.CompactToLevel(segments, 0, cols)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestCompactorWithFloat64Column(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.Compact(segments, cols)
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestCompactorWithBoolColumn(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.Compact(segments, cols)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestCompactorWithStringColumn(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.Compact(segments, cols)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestCompactorWithTimestampColumn(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.Compact(segments, cols)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestCompactorWithMissingColumn(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	// Compact with a different column name - should result in null values
 	compactCols := []ColumnMeta{{ID: 0, Name: testColMissing, Type: common.TypeInt64}}
@@ -212,7 +212,7 @@ func TestCompactToLevelEmptySegments(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	_, err = compactor.CompactToLevel(nil, 0, nil)
 	if err == nil {
 		t.Error("expected error for empty segments in CompactToLevel")
@@ -245,7 +245,7 @@ func TestCompactToLevelMultipleSegments(t *testing.T) {
 		t.Fatalf("expected at least 2 segments, got %d", len(segments))
 	}
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.CompactToLevel(segments, 0, cols)
 	if err != nil {
 		t.Fatalf("CompactToLevel: %v", err)
@@ -290,7 +290,7 @@ func TestCompactToLevelWithDifferentColumnTypes(t *testing.T) {
 			}
 
 			segments := eng.Segments()
-			compactor := NewCompactor(dir)
+			compactor := NewCompactor(dir, newSegmentIDGen())
 			newSeg, err := compactor.CompactToLevel(segments, 0, cols)
 			if err != nil {
 				t.Fatalf("CompactToLevel %s: %v", tt.name, err)
@@ -318,7 +318,7 @@ func TestCompactToLevelWithMissingColumn(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	// 使用不同的列名进行压缩 - 应产生 null 值
 	compactCols := []ColumnMeta{{ID: 0, Name: testColMissing, Type: common.TypeInt64}}
@@ -351,7 +351,7 @@ func TestCompactToLevelMergedResultEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	_, err = compactor.CompactToLevel([]*Segment{seg}, 0, []ColumnMeta{{ID: 0, Name: col0Name, Type: common.TypeInt64}})
 	if err == nil {
 		t.Error("expected error for empty merged result")
@@ -366,7 +366,7 @@ func TestCompactorCleanupSegmentsNonExistentFile(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	seg := &Segment{ID: 999, FilePath: "/nonexistent/path/segment_999.widb"}
 	// 清理不存在的文件不应报错
 	if err := compactor.CleanupSegments([]*Segment{seg}); err != nil {
@@ -382,7 +382,7 @@ func TestCompactorCleanupSegmentsEmptyFilePath(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	seg := &Segment{ID: 1, FilePath: ""}
 	// 空文件路径不应报错
 	if err := compactor.CleanupSegments([]*Segment{seg}); err != nil {
@@ -397,7 +397,7 @@ func TestCompactMergedResultEmpty(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	// Create segments with RowCount=0 so merge produces 0 rows
 	segments := []*Segment{
@@ -515,7 +515,7 @@ func TestCleanupSegmentsEmptyFilePath(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	segments := []*Segment{
 		{ID: 1, RowCount: 5, FilePath: ""},
@@ -532,7 +532,7 @@ func TestCleanupSegmentsNonExistentFile(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	segments := []*Segment{
 		{ID: 1, RowCount: 5, FilePath: filepath.Join(dir, "nonexistent_segment.widb")},
@@ -651,7 +651,7 @@ func TestCompactToLevelError(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	_, err = compactor.CompactToLevel(nil, 0, nil)
 	if err == nil {

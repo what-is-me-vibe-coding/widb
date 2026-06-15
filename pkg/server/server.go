@@ -19,6 +19,8 @@ import (
 
 const msgPong = "pong"
 
+const defaultMaxMemTableSize = 64 * 1024 * 1024 // 64MB
+
 // Config 是服务器配置参数。
 type Config struct {
 	TCPAddr         string
@@ -82,7 +84,7 @@ func (sa *storageAdapter) SparseIndex() *index.SparseIndex {
 // NewServer 创建一个新的服务器实例，初始化所有组件。
 func NewServer(cfg Config, opts ...Option) (*Server, error) {
 	if cfg.MaxMemTableSize <= 0 {
-		cfg.MaxMemTableSize = 64 * 1024 * 1024
+		cfg.MaxMemTableSize = defaultMaxMemTableSize
 	}
 
 	eng, err := storage.NewEngine(storage.EngineConfig{

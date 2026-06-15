@@ -16,7 +16,7 @@ import (
 // TestBuildSegment列AppendNull失败 验证 buildSegment 在列 append null 失败时返回错误
 func TestBuildSegment列AppendNull失败(t *testing.T) {
 	dir := t.TempDir()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	rows := []memRow{
 		{Key: "a", Values: []common.Value{common.NewInt64(1)}},
@@ -41,7 +41,7 @@ func TestBuildSegment列AppendNull失败(t *testing.T) {
 // TestBuildSegment列AppendValue类型不匹配 验证 buildSegment 在列 append 值类型不匹配时返回错误
 func TestBuildSegment列AppendValue类型不匹配(t *testing.T) {
 	dir := t.TempDir()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	rows := []memRow{
 		{Key: "a", Values: []common.Value{common.NewString("wrong_type")}},
@@ -61,7 +61,7 @@ func TestBuildSegment列AppendValue类型不匹配(t *testing.T) {
 // TestBuildSegment编码列失败 验证 buildSegment 在列编码失败时返回错误
 func TestBuildSegment编码列失败(t *testing.T) {
 	dir := t.TempDir()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 
 	// 使用不支持的类型触发 encodeColumnVector 失败
 	rows := []memRow{
@@ -95,10 +95,10 @@ func TestWriteSegment创建目录失败(t *testing.T) {
 		t.Fatalf("WriteFile 失败: %v", err)
 	}
 
-	flusher := NewFlusher(filepath.Join(blockerPath, "subdir"))
+	flusher := NewFlusher(filepath.Join(blockerPath, "subdir"), newSegmentIDGen())
 
 	seg := &Segment{ID: 1, MinKey: "a", MaxKey: "z", RowCount: 1}
-	_, err := flusher.writeSegment(seg)
+	_, err := writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("期望 MkdirAll 失败时返回错误，得到 nil")
 	}
@@ -108,7 +108,7 @@ func TestWriteSegment创建目录失败(t *testing.T) {
 // 注意：当前 Serialize 实现总是返回 nil 错误，此测试验证正常序列化路径
 func TestWriteSegment序列化失败(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	// 创建一个有效的小 Segment
 	keys := []string{"a"}
@@ -134,7 +134,7 @@ func TestWriteSegment序列化失败(t *testing.T) {
 	}
 
 	// 正常写入应成功
-	fileName, err := flusher.writeSegment(seg)
+	fileName, err := writeSegmentFile(flusher.dataDir, seg)
 	if err != nil {
 		t.Fatalf("writeSegment 不应返回错误: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestWriteSegment写入文件失败(t *testing.T) {
 	}
 	defer func() { _ = os.Chmod(readOnlyDir, 0755) }()
 
-	flusher := NewFlusher(readOnlyDir)
+	flusher := NewFlusher(readOnlyDir, newSegmentIDGen())
 
 	// 创建一个有效的小 Segment
 	keys := []string{"a"}
@@ -170,7 +170,7 @@ func TestWriteSegment写入文件失败(t *testing.T) {
 		t.Fatalf("Build 失败: %v", err)
 	}
 
-	_, err = flusher.writeSegment(seg)
+	_, err = writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("期望 WriteFile 失败时返回错误，得到 nil")
 	}
@@ -289,7 +289,7 @@ func TestSchedulerTryCleanWALRecordError(t *testing.T) {
 // TestFlusherBuildEncodedColumnAppendNull 验证 buildEncodedColumn 在列缺失时 append null
 func TestFlusherBuildEncodedColumnAppendNull(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	rows := []KeyValue{
 		{Key: "a", Value: Row{Version: 1, Columns: map[string]common.Value{colVal: common.NewInt64(1)}}},
@@ -309,7 +309,7 @@ func TestFlusherBuildEncodedColumnAppendNull(t *testing.T) {
 // TestFlusherBuildEncodedColumn类型不匹配 验证 buildEncodedColumn 在值类型不匹配时返回错误
 func TestFlusherBuildEncodedColumn类型不匹配(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	rows := []KeyValue{
 		{Key: "a", Value: Row{Version: 1, Columns: map[string]common.Value{colVal: common.NewString("wrong")}}},
@@ -326,7 +326,7 @@ func TestFlusherBuildEncodedColumn类型不匹配(t *testing.T) {
 // TestFlusherBuildEncodedColumn编码失败 验证 buildEncodedColumn 在编码失败时返回错误
 func TestFlusherBuildEncodedColumn编码失败(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	rows := []KeyValue{
 		{Key: "a", Value: Row{Version: 1, Columns: map[string]common.Value{colVal: common.NewNull()}}},
@@ -347,7 +347,7 @@ func TestFlusherBuildEncodedColumn编码失败(t *testing.T) {
 // TestWriteSegment正常路径 验证 writeSegment 正常写入文件
 func TestWriteSegment正常路径(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	keys := []string{"a"}
 	builder := NewSegmentBuilder(1, "a", "a")
@@ -362,7 +362,7 @@ func TestWriteSegment正常路径(t *testing.T) {
 		t.Fatalf("Build 失败: %v", err)
 	}
 
-	fileName, err := flusher.writeSegment(seg)
+	fileName, err := writeSegmentFile(flusher.dataDir, seg)
 	if err != nil {
 		t.Fatalf("writeSegment 失败: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestSchedulerTryFlushRecordError(t *testing.T) {
 // TestFlusher完整流程 验证 Flusher 完整的 Flush 流程
 func TestFlusher完整流程(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("a", Row{Version: 1, Columns: map[string]common.Value{colVal: common.NewInt64(1)}})
@@ -447,7 +447,7 @@ func TestFlusher完整流程(t *testing.T) {
 // TestFlusher空MemTable 验证 Flusher 在空 memtable 时返回错误
 func TestFlusher空MemTable(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	mem := NewMemTable()
 	mem.Freeze()

@@ -456,10 +456,10 @@ func TestFlusherWriteSegmentMkdirError(t *testing.T) {
 	}
 	defer func() { _ = os.Chmod(readOnlyDir, 0755) }()
 
-	flusher := NewFlusher(filepath.Join(readOnlyDir, "nested", "data"))
+	flusher := NewFlusher(filepath.Join(readOnlyDir, "nested", "data"), newSegmentIDGen())
 	// 直接调用 writeSegment，触发 MkdirAll 错误
 	seg := &Segment{ID: 1}
-	_, err := flusher.writeSegment(seg)
+	_, err := writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("expected error when MkdirAll fails, got nil")
 	}

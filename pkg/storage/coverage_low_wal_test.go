@@ -137,8 +137,8 @@ func TestEngineReplayWithCorruptCheckpoint(t *testing.T) {
 	// Create engine and replay records
 	eng := &Engine{
 		activeMem:    NewMemTable(),
-		flusher:      NewFlusher(dir),
-		compactor:    NewCompactor(dir),
+		flusher:      NewFlusher(dir, newSegmentIDGen()),
+		compactor:    NewCompactor(dir, newSegmentIDGen()),
 		segmentMap:   make(map[uint64]*Segment),
 		nextVersion:  1,
 		primaryIndex: index.NewPrimaryIndex(),

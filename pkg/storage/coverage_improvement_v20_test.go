@@ -422,8 +422,8 @@ func TestCoverageV20_Engine_ReplayEmptyWAL(t *testing.T) {
 	dir := t.TempDir()
 	eng := &Engine{
 		activeMem:    NewMemTable(),
-		flusher:      NewFlusher(dir),
-		compactor:    NewCompactor(dir),
+		flusher:      NewFlusher(dir, newSegmentIDGen()),
+		compactor:    NewCompactor(dir, newSegmentIDGen()),
 		segmentMap:   make(map[uint64]*Segment),
 		nextVersion:  1,
 		primaryIndex: index.NewPrimaryIndex(),

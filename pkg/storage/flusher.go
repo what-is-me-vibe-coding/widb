@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
@@ -27,22 +26,12 @@ type ColumnMeta struct {
 type Flusher struct {
 	mu      sync.Mutex
 	dataDir string
-	nextID  atomic.Uint64 // 无锁读取 segment ID
-}
-
-// NextID 无锁读取下一个 segment ID，适合监控和统计场景。
-func (f *Flusher) NextID() uint64 {
-	return f.nextID.Load()
-}
-
-// SetNextID updates the flusher's nextID if the given id is larger.
-func (f *Flusher) SetNextID(id uint64) {
-	setNextIDAtomic(&f.nextID, id)
+	idGen   *segmentIDGen
 }
 
 // NewFlusher 创建一个 Flusher 实例。
-func NewFlusher(dataDir string) *Flusher {
-	return &Flusher{dataDir: dataDir}
+func NewFlusher(dataDir string, idGen *segmentIDGen) *Flusher {
+	return &Flusher{dataDir: dataDir, idGen: idGen}
 }
 
 // Flush 将 MemTable 转换为 Segment 文件，返回生成的 Segment。
@@ -55,13 +44,13 @@ func (f *Flusher) Flush(mem *MemTable, cols []ColumnMeta) (*Segment, error) {
 		return nil, fmt.Errorf("flusher: empty memtable")
 	}
 
-	f.nextID.Add(1)
-	seg, err := f.buildSegment(f.nextID.Load(), rows, cols)
+	segID := f.idGen.Next()
+	seg, err := f.buildSegment(segID, rows, cols)
 	if err != nil {
 		return nil, err
 	}
 
-	fileName, err := f.writeSegment(seg)
+	fileName, err := writeSegmentFile(f.dataDir, seg)
 	if err != nil {
 		return nil, err
 	}
@@ -94,41 +83,54 @@ func (f *Flusher) buildSegment(segID uint64, rows []KeyValue, cols []ColumnMeta)
 	return builder.Build()
 }
 
-func (f *Flusher) buildEncodedColumn(colMeta ColumnMeta, rows []KeyValue, rowCount uint32) (*EncodedColumn, error) {
+// valueProvider 是列值的提供函数，用于统一 Flusher 和 Compactor 的列编码逻辑。
+// 返回 (value, ok)，ok=false 表示该行该列缺失，应填充 NULL。
+type valueProvider func(rowIdx int) (common.Value, bool)
+
+// encodeColumnFromProvider 通过值提供函数构建并编码列数据。
+// 此函数被 Flusher 和 Compactor 共享，避免重复的列编码逻辑。
+func encodeColumnFromProvider(colMeta ColumnMeta, rowCount uint32, provider valueProvider) (*EncodedColumn, error) {
 	cv := NewColumnVector(colMeta.ID, colMeta.Type, rowCount)
-	for _, row := range rows {
-		val, ok := row.Value.Columns[colMeta.Name]
+	for i := 0; i < int(rowCount); i++ {
+		val, ok := provider(i)
 		if !ok {
 			if err := cv.Append(common.NewNull()); err != nil {
-				return nil, fmt.Errorf("flusher: column %s append null: %w", colMeta.Name, err)
+				return nil, fmt.Errorf("column %s append null: %w", colMeta.Name, err)
 			}
 			continue
 		}
 		if err := cv.Append(val); err != nil {
-			return nil, fmt.Errorf("flusher: column %s: %w", colMeta.Name, err)
+			return nil, fmt.Errorf("column %s: %w", colMeta.Name, err)
 		}
 	}
 
 	enc, err := encodeColumnVector(cv)
 	if err != nil {
-		return nil, fmt.Errorf("flusher: encode column %s: %w", colMeta.Name, err)
+		return nil, fmt.Errorf("encode column %s: %w", colMeta.Name, err)
 	}
 	return enc, nil
 }
 
-func (f *Flusher) writeSegment(seg *Segment) (string, error) {
-	if err := os.MkdirAll(f.dataDir, 0755); err != nil {
-		return "", fmt.Errorf("flusher: create data dir: %w", err)
-	}
+func (f *Flusher) buildEncodedColumn(colMeta ColumnMeta, rows []KeyValue, rowCount uint32) (*EncodedColumn, error) {
+	return encodeColumnFromProvider(colMeta, rowCount, func(rowIdx int) (common.Value, bool) {
+		val, ok := rows[rowIdx].Value.Columns[colMeta.Name]
+		return val, ok
+	})
+}
 
-	fileName := filepath.Join(f.dataDir, fmt.Sprintf("segment_%d.widb", seg.ID))
+// writeSegmentFile 将 Segment 序列化并写入磁盘文件。
+// 此函数被 Flusher 和 Compactor 共享，避免重复的文件写入逻辑。
+func writeSegmentFile(dataDir string, seg *Segment) (string, error) {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return "", fmt.Errorf("write segment: create data dir: %w", err)
+	}
+	fileName := filepath.Join(dataDir, fmt.Sprintf("segment_%d.widb", seg.ID))
 	data, err := seg.Serialize()
 	if err != nil {
-		return "", fmt.Errorf("flusher: serialize segment: %w", err)
+		return "", fmt.Errorf("write segment: serialize: %w", err)
 	}
-
 	if err := os.WriteFile(fileName, data, 0644); err != nil {
-		return "", fmt.Errorf("flusher: write segment file: %w", err)
+		return "", fmt.Errorf("write segment: write file: %w", err)
 	}
 	return fileName, nil
 }

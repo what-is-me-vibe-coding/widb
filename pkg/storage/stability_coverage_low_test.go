@@ -575,7 +575,7 @@ func TestLowCovWriteCheckpointError(t *testing.T) {
 func TestLowCovFlusherWriteSegmentMkdirError(t *testing.T) {
 	// 使用包含空字节的路径，使得 MkdirAll 失败
 	invalidDataDir := "/dev/null/impossible/path\x00bad"
-	f := NewFlusher(invalidDataDir)
+	f := NewFlusher(invalidDataDir, newSegmentIDGen())
 
 	// 构建一个简单的 Segment 用于测试 writeSegment
 	keys := []string{"a"}
@@ -592,7 +592,7 @@ func TestLowCovFlusherWriteSegmentMkdirError(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	_, err = f.writeSegment(seg)
+	_, err = writeSegmentFile(f.dataDir, seg)
 	if err == nil {
 		t.Error("expected error when writeSegment with invalid data dir, got nil")
 	}

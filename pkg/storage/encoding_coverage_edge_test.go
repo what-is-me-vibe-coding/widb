@@ -446,7 +446,7 @@ func TestDecodePlainUnsupportedDataType(t *testing.T) {
 
 // TestCompactEmptySegmentsList 测试合并空 segment 列表时的错误
 func TestCompactEmptySegmentsList(t *testing.T) {
-	c := NewCompactor(t.TempDir())
+	c := NewCompactor(t.TempDir(), newSegmentIDGen())
 	_, err := c.Compact(nil, nil)
 	if err == nil {
 		t.Fatal("expected error for empty segments, got nil")
@@ -455,7 +455,7 @@ func TestCompactEmptySegmentsList(t *testing.T) {
 
 // TestCompactBuildSegmentColAppendError 测试 compaction 中列追加失败
 func TestCompactBuildSegmentColAppendError(t *testing.T) {
-	c := NewCompactor(t.TempDir())
+	c := NewCompactor(t.TempDir(), newSegmentIDGen())
 	rows := []memRow{{Key: "a", Values: []common.Value{common.NewInt64(1)}}}
 	// 使用不匹配的列元数据触发 Append 类型错误
 	cols := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeString}}
@@ -469,7 +469,7 @@ func TestCompactBuildSegmentColAppendError(t *testing.T) {
 
 // TestCompactorReadSegmentRowsNoRows 测试读取空 Segment 的行
 func TestCompactorReadSegmentRowsNoRows(t *testing.T) {
-	c := NewCompactor(t.TempDir())
+	c := NewCompactor(t.TempDir(), newSegmentIDGen())
 	seg := &Segment{ID: 1, RowCount: 0, Columns: []EncodedColumn{}, Keys: []string{}}
 	rows, err := c.readSegmentRows(seg, nil)
 	if err != nil {
@@ -551,8 +551,7 @@ func TestCompactorCompactToLevelV2(t *testing.T) {
 		t.Fatal("expected at least 1 segment")
 	}
 
-	c := NewCompactor(dir)
-	c.SetNextID(eng.flusher.NextID())
+	c := NewCompactor(dir, eng.segIDGen)
 	seg, err := c.CompactToLevel(segments, 1, cols)
 	if err != nil {
 		t.Fatalf("CompactToLevel failed: %v", err)
@@ -564,7 +563,7 @@ func TestCompactorCompactToLevelV2(t *testing.T) {
 
 // TestCompactorCleanupMissingFile 测试清理不存在的文件时不报错
 func TestCompactorCleanupMissingFile(t *testing.T) {
-	c := NewCompactor(t.TempDir())
+	c := NewCompactor(t.TempDir(), newSegmentIDGen())
 	segments := []*Segment{{ID: 999, FilePath: "/nonexistent/path/segment_999.widb"}}
 	err := c.CleanupSegments(segments)
 	if err != nil {

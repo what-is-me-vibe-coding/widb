@@ -180,8 +180,8 @@ func TestReplayWALRecords混合类型(t *testing.T) {
 
 	eng := &Engine{
 		activeMem:    NewMemTable(),
-		flusher:      NewFlusher(dir),
-		compactor:    NewCompactor(dir),
+		flusher:      NewFlusher(dir, newSegmentIDGen()),
+		compactor:    NewCompactor(dir, newSegmentIDGen()),
 		segmentMap:   make(map[uint64]*Segment),
 		nextVersion:  1,
 		primaryIndex: index.NewPrimaryIndex(),
@@ -389,7 +389,7 @@ func TestWriteSegment磁盘空间不足模拟(t *testing.T) {
 	skipIfRoot(t)
 
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	// 创建一个有效 segment
 	keys := []string{"a"}
@@ -422,7 +422,7 @@ func TestWriteSegment磁盘空间不足模拟(t *testing.T) {
 		_ = syscall.Setrlimit(syscall.RLIMIT_FSIZE, &rLimit)
 	}()
 
-	_, err = flusher.writeSegment(seg)
+	_, err = writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("期望磁盘空间不足时返回错误，得到 nil")
 	}

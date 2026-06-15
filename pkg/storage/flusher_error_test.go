@@ -13,7 +13,8 @@ import (
 // 当列定义为 INT64 但行数据包含 STRING 值时，cv.Append 应返回类型不匹配错误
 func TestBuildEncodedColumnTypeMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	// 构造类型不匹配的行数据：列定义为 INT64，但值是 STRING
 	rows := []KeyValue{
@@ -34,7 +35,8 @@ func TestBuildEncodedColumnTypeMismatch(t *testing.T) {
 // 所以这里通过构造一个非 Null 但类型不匹配的值来覆盖非 null 路径的错误
 func TestBuildEncodedColumnNullAppendError(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	// 列定义是 STRING，但值是 INT64（非 null，类型不匹配）
 	rows := []KeyValue{
@@ -53,7 +55,8 @@ func TestBuildEncodedColumnNullAppendError(t *testing.T) {
 // TestBuildEncodedColumnFloatTypeMismatch 测试 buildEncodedColumn 在 Float64 列收到错误类型时的错误
 func TestBuildEncodedColumnFloatTypeMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	rows := []KeyValue{
 		{Key: "k1", Value: Row{Version: 1, Columns: map[string]common.Value{
@@ -81,10 +84,11 @@ func TestWriteSegmentMkdirAllError(t *testing.T) {
 	defer func() { _ = os.Remove(tmpPath) }()
 
 	// dataDir 指向文件路径的子目录，MkdirAll 会因为父路径是文件而失败
-	flusher := NewFlusher(tmpPath + "/subdir/data")
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpPath+"/subdir/data", idGen)
 
 	seg := &Segment{ID: 1}
-	_, err = flusher.writeSegment(seg)
+	_, err = writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("期望 MkdirAll 失败时返回错误，但得到了 nil")
 	}
@@ -94,7 +98,8 @@ func TestWriteSegmentMkdirAllError(t *testing.T) {
 // 通过在目标文件路径创建一个目录来触发 WriteFile 失败（不能对目录执行 WriteFile）
 func TestWriteSegmentWriteFileError(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	// 预先创建一个目录，路径与 writeSegment 将要写入的文件路径相同
 	// writeSegment 会写入 segment_{ID}.widb，所以创建同名目录
@@ -104,7 +109,7 @@ func TestWriteSegmentWriteFileError(t *testing.T) {
 	}
 
 	seg := &Segment{ID: 1}
-	_, err := flusher.writeSegment(seg)
+	_, err := writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("期望写入文件失败时返回错误，但得到了 nil")
 	}
@@ -121,8 +126,8 @@ func TestCompactorBuildSegmentMkdirAllError(t *testing.T) {
 	_ = tmpFile.Close()
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	compactor := NewCompactor(tmpPath + "/subdir/data")
-	compactor.nextID.Store(1)
+	compactor := NewCompactor(tmpPath+"/subdir/data", newSegmentIDGen())
+	compactor.idGen.InitIfLarger(1)
 
 	rows := []memRow{
 		{Key: "k1", Values: []common.Value{
@@ -141,8 +146,8 @@ func TestCompactorBuildSegmentMkdirAllError(t *testing.T) {
 // 通过在目标文件路径创建一个目录来触发 WriteFile 失败
 func TestCompactorBuildSegmentWriteFileError(t *testing.T) {
 	tmpDir := t.TempDir()
-	compactor := NewCompactor(tmpDir)
-	compactor.nextID.Store(1)
+	compactor := NewCompactor(tmpDir, newSegmentIDGen())
+	compactor.idGen.InitIfLarger(1)
 
 	// 预先创建一个目录，路径与 buildSegment 将要写入的文件路径相同
 	// buildSegment 会先执行 c.nextID++，所以 nextID 从 1 变为 2，文件名为 segment_2.widb
@@ -167,7 +172,7 @@ func TestCompactorBuildSegmentWriteFileError(t *testing.T) {
 // TestCompactorCompactEmptySegments 测试 Compact 在空 segments 时返回错误
 func TestCompactorCompactEmptySegments(t *testing.T) {
 	tmpDir := t.TempDir()
-	compactor := NewCompactor(tmpDir)
+	compactor := NewCompactor(tmpDir, newSegmentIDGen())
 
 	_, err := compactor.Compact(nil, nil)
 	if err == nil {
@@ -179,7 +184,7 @@ func TestCompactorCompactEmptySegments(t *testing.T) {
 // 通过传入一个包含损坏数据的 Segment 来触发解码失败
 func TestCompactorCompactMergeError(t *testing.T) {
 	tmpDir := t.TempDir()
-	compactor := NewCompactor(tmpDir)
+	compactor := NewCompactor(tmpDir, newSegmentIDGen())
 
 	// 构造一个包含损坏列数据的 Segment，readSegmentRows 会在解码时失败
 	segments := []*Segment{
@@ -222,7 +227,7 @@ func TestCompactorCleanupSegmentsRemoveError(t *testing.T) {
 		t.Fatalf("创建内部文件失败: %v", err)
 	}
 
-	compactor := NewCompactor(tmpDir)
+	compactor := NewCompactor(tmpDir, newSegmentIDGen())
 	segments := []*Segment{
 		{ID: 1, FilePath: dirPath},
 	}
@@ -236,8 +241,8 @@ func TestCompactorCleanupSegmentsRemoveError(t *testing.T) {
 // TestCompactorBuildSegmentTypeMismatch 测试 Compactor.buildSegment 在值类型不匹配时的错误
 func TestCompactorBuildSegmentTypeMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
-	compactor := NewCompactor(tmpDir)
-	compactor.nextID.Store(1)
+	compactor := NewCompactor(tmpDir, newSegmentIDGen())
+	compactor.idGen.InitIfLarger(1)
 
 	// 列定义是 INT64，但行数据中是 STRING
 	rows := []memRow{
@@ -256,8 +261,8 @@ func TestCompactorBuildSegmentTypeMismatch(t *testing.T) {
 // TestCompactorBuildSegmentNullTypeMismatch 测试 Compactor.buildSegment 在 null append 路径之后的类型不匹配错误
 func TestCompactorBuildSegmentNullTypeMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
-	compactor := NewCompactor(tmpDir)
-	compactor.nextID.Store(1)
+	compactor := NewCompactor(tmpDir, newSegmentIDGen())
+	compactor.idGen.InitIfLarger(1)
 
 	// 列定义是 STRING，但行数据中是 INT64（非 null，类型不匹配）
 	rows := []memRow{
@@ -276,7 +281,8 @@ func TestCompactorBuildSegmentNullTypeMismatch(t *testing.T) {
 // TestFlusherBuildEncodedColumnWithNulls 测试 buildEncodedColumn 对包含 null 值的列的处理
 func TestFlusherBuildEncodedColumnWithNulls(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	// 第一行有值，第二行缺失列（将产生 null），第三行有值
@@ -313,7 +319,8 @@ func TestFlusherBuildEncodedColumnWithNulls(t *testing.T) {
 // TestFlusherBuildEncodedColumnRLE 测试 buildEncodedColumn 对 RLE 编码列的处理
 func TestFlusherBuildEncodedColumnRLE(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	// 写入大量重复值以触发 RLE 编码
@@ -342,7 +349,8 @@ func TestFlusherBuildEncodedColumnRLE(t *testing.T) {
 // TestFlusherBuildEncodedColumnBoolWithNulls 测试 buildEncodedColumn 对 Bool 列含 null 的处理
 func TestFlusherBuildEncodedColumnBoolWithNulls(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -372,7 +380,8 @@ func TestFlusherBuildEncodedColumnBoolWithNulls(t *testing.T) {
 // 因此 computeColumnStat 不会统计 Dict 编码列的 NullCount。
 func TestFlusherBuildEncodedColumnStringWithNulls(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -410,7 +419,8 @@ func TestFlusherBuildEncodedColumnStringWithNulls(t *testing.T) {
 // TestFlusherBuildEncodedColumnFloatWithNulls 测试 buildEncodedColumn 对 Float64 列含 null 的处理
 func TestFlusherBuildEncodedColumnFloatWithNulls(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -438,7 +448,8 @@ func TestFlusherBuildEncodedColumnFloatWithNulls(t *testing.T) {
 // TestFlusherWriteSegmentSuccess 测试 writeSegment 成功写入
 func TestFlusherWriteSegmentSuccess(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	// 构造一个简单的 Segment
 	keys := []string{"a", "b"}
@@ -455,7 +466,7 @@ func TestFlusherWriteSegmentSuccess(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 
-	fileName, err := flusher.writeSegment(seg)
+	fileName, err := writeSegmentFile(flusher.dataDir, seg)
 	if err != nil {
 		t.Fatalf("writeSegment: %v", err)
 	}
@@ -471,7 +482,8 @@ func TestFlusherWriteSegmentSuccess(t *testing.T) {
 func TestFlusherWriteSegmentCreatesDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	nestedDir := tmpDir + "/nested/sub/dir"
-	flusher := NewFlusher(nestedDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(nestedDir, idGen)
 
 	keys := []string{"a"}
 	values := []int64{1}
@@ -487,7 +499,7 @@ func TestFlusherWriteSegmentCreatesDir(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 
-	fileName, err := flusher.writeSegment(seg)
+	fileName, err := writeSegmentFile(flusher.dataDir, seg)
 	if err != nil {
 		t.Fatalf("writeSegment: %v", err)
 	}

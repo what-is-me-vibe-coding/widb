@@ -98,7 +98,7 @@ func runCompactorCase(t *testing.T, dir string, numRows, numFlushes int, colType
 		t.Fatal("expected segments after flush")
 	}
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.Compact(segments, cols)
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func TestCompactorEmptySegments(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	_, err = compactor.Compact(nil, nil)
 	if err == nil {
 		t.Error("expected error for empty segments")
@@ -169,7 +169,7 @@ func TestCompactorCleanupSegments(t *testing.T) {
 		oldPaths[i] = seg.FilePath
 	}
 
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	if err := compactor.CleanupSegments(segments); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestCompactorWithNullValues(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.Compact(segments, cols)
 	if err != nil {
 		t.Fatalf("Compact with null values failed: %v", err)
@@ -310,7 +310,7 @@ func TestCompactorWithDifferentDataTypes(t *testing.T) {
 	}
 
 	segments := eng.Segments()
-	compactor := NewCompactor(dir)
+	compactor := NewCompactor(dir, newSegmentIDGen())
 	newSeg, err := compactor.Compact(segments, cols)
 	if err != nil {
 		t.Fatalf("Compact with different types failed: %v", err)

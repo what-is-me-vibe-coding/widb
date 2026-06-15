@@ -154,9 +154,9 @@ func TestWriteSegmentDirCreationFails(t *testing.T) {
 	_ = tmpFile.Close()
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	flusher := NewFlusher(tmpPath + "/subdir/segment")
+	flusher := NewFlusher(tmpPath+"/subdir/segment", newSegmentIDGen())
 	seg := &Segment{ID: 1}
-	_, err = flusher.writeSegment(seg)
+	_, err = writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Fatal("expected error when writeSegment cannot create directory")
 	}
@@ -164,7 +164,7 @@ func TestWriteSegmentDirCreationFails(t *testing.T) {
 
 func TestWriteSegmentWriteFileFails(t *testing.T) {
 	dir := t.TempDir()
-	flusher := NewFlusher(dir)
+	flusher := NewFlusher(dir, newSegmentIDGen())
 
 	seg := &Segment{
 		ID:       1,
@@ -179,7 +179,7 @@ func TestWriteSegmentWriteFileFails(t *testing.T) {
 		}},
 	}
 
-	fileName, err := flusher.writeSegment(seg)
+	fileName, err := writeSegmentFile(flusher.dataDir, seg)
 	if err != nil {
 		t.Fatalf("writeSegment to writable dir failed: %v", err)
 	}
@@ -195,8 +195,8 @@ func TestWriteSegmentWriteFileFails(t *testing.T) {
 	_ = tmpFile.Close()
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	blockedFlusher := NewFlusher(tmpPath + "/subdir")
-	_, err = blockedFlusher.writeSegment(seg)
+	blockedFlusher := NewFlusher(tmpPath+"/subdir", newSegmentIDGen())
+	_, err = writeSegmentFile(blockedFlusher.dataDir, seg)
 	if err == nil {
 		t.Fatal("expected error when writeSegment cannot create directory")
 	}

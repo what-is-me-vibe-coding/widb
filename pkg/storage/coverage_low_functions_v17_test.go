@@ -475,7 +475,7 @@ func TestFlusher_WriteSegment_MkdirError_V17(t *testing.T) {
 	}
 	_ = f.Close()
 
-	flusher := NewFlusher(filePath)
+	flusher := NewFlusher(filePath, newSegmentIDGen())
 
 	seg := &Segment{
 		ID:       1,
@@ -486,7 +486,7 @@ func TestFlusher_WriteSegment_MkdirError_V17(t *testing.T) {
 			{Encoding: EncodingPlain, Type: common.TypeInt64, RowCount: 1, Data: []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
 		},
 	}
-	_, err = flusher.writeSegment(seg)
+	_, err = writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("expected error for mkdir failure, got nil")
 	}

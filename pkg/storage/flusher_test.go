@@ -10,7 +10,8 @@ import (
 
 func TestFlusherFlush(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 
@@ -78,7 +79,8 @@ func TestFlusherFlush(t *testing.T) {
 
 func TestFlusherFlushWithNulls(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -115,7 +117,8 @@ func TestFlusherFlushWithNulls(t *testing.T) {
 
 func TestFlusherFlushFloat64(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -139,7 +142,8 @@ func TestFlusherFlushFloat64(t *testing.T) {
 
 func TestFlusherFlushBool(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -163,7 +167,8 @@ func TestFlusherFlushBool(t *testing.T) {
 
 func TestFlusherFlushTimestamp(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	now := time.Now()
 	mem := NewMemTable()
@@ -188,7 +193,8 @@ func TestFlusherFlushTimestamp(t *testing.T) {
 
 func TestFlusherFlushEmptyMemTable(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	cols := []ColumnMeta{
@@ -203,7 +209,8 @@ func TestFlusherFlushEmptyMemTable(t *testing.T) {
 
 func TestFlusherFlushMultiSegment(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	cols := []ColumnMeta{
 		{ID: 0, Name: colVal, Type: common.TypeInt64},
@@ -239,7 +246,8 @@ func TestFlusherFlushMultiSegment(t *testing.T) {
 
 func TestFlusherFlushMissingColumn(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -271,10 +279,11 @@ func TestFlusherWriteSegmentInvalidDir(t *testing.T) {
 	defer func() { _ = os.Remove(tmpPath) }()
 
 	// Use the file path as dataDir - MkdirAll will fail because it's a file
-	flusher := NewFlusher(tmpPath + "/subdir")
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpPath+"/subdir", idGen)
 
 	seg := &Segment{ID: 1}
-	_, err = flusher.writeSegment(seg)
+	_, err = writeSegmentFile(flusher.dataDir, seg)
 	if err == nil {
 		t.Error("expected error when writing segment to invalid directory")
 	}
@@ -282,7 +291,8 @@ func TestFlusherWriteSegmentInvalidDir(t *testing.T) {
 
 func TestFlusherBuildEncodedColumnString(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -310,7 +320,8 @@ func TestFlusherBuildEncodedColumnString(t *testing.T) {
 
 func TestFlusherBuildEncodedColumnBool(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -334,7 +345,8 @@ func TestFlusherBuildEncodedColumnBool(t *testing.T) {
 
 func TestFlusherBuildEncodedColumnFloat64(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	_, _, _ = mem.Put("k1", Row{Version: 1, Columns: map[string]common.Value{
@@ -358,7 +370,8 @@ func TestFlusherBuildEncodedColumnFloat64(t *testing.T) {
 
 func TestFlusherBuildEncodedColumnTimestamp(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	now := time.Now()
 	mem := NewMemTable()
@@ -409,7 +422,8 @@ func verifySegmentRoundTrip(t *testing.T, seg *Segment) {
 // TestFlusherFlushWithNullValues 测试 Flusher 处理包含 NULL 值的 MemTable
 func TestFlusherFlushWithNullValues(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	mem := NewMemTable()
 	// 第一行有完整值，第二行某些列为 NULL，第三行某些列为 NULL
@@ -450,7 +464,8 @@ func TestFlusherFlushWithNullValues(t *testing.T) {
 // TestFlusherFlushTimestampValues 测试 Flusher 处理包含 Timestamp 值的 MemTable
 func TestFlusherFlushTimestampValues(t *testing.T) {
 	tmpDir := t.TempDir()
-	flusher := NewFlusher(tmpDir)
+	idGen := newSegmentIDGen()
+	flusher := NewFlusher(tmpDir, idGen)
 
 	now := time.Now()
 	mem := NewMemTable()
