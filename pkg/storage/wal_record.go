@@ -333,3 +333,24 @@ func logRemove(path string) {
 		log.Printf("wal: remove file in error path: %v", err)
 	}
 }
+
+// writeAndSyncFile 将数据写入文件并调用 fsync 确保数据持久化到磁盘。
+// 使用 OpenFile + Write + Sync + Close 替代 os.WriteFile，
+// 避免崩溃时丢失已写入但未落盘的数据。
+func writeAndSyncFile(name string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	writeErr := func() error {
+		if _, err := f.Write(data); err != nil {
+			return err
+		}
+		return f.Sync()
+	}()
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
+}

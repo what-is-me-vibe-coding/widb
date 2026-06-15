@@ -275,7 +275,9 @@ func (c *Compactor) buildSegment(rows []memRow, cols []ColumnMeta) (*Segment, er
 		return nil, fmt.Errorf("compactor: create data dir: %w", err)
 	}
 
-	if err := os.WriteFile(fileName, data, 0644); err != nil {
+	// 使用 writeAndSyncFile 确保数据落盘后再返回，
+	// 避免崩溃时丢失 Compaction 产出的 Segment 数据。
+	if err := writeAndSyncFile(fileName, data, 0644); err != nil {
 		return nil, fmt.Errorf("compactor: write segment file: %w", err)
 	}
 
