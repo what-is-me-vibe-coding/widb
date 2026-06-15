@@ -11,7 +11,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const maxRequestBodySize = 10 << 20 // 10MB，限制 HTTP 请求体大小，防止 OOM
+const (
+	maxRequestBodySize = 10 << 20 // 10MB，限制 HTTP 请求体大小，防止 OOM
+	msgPostOnly        = "仅支持 POST 方法"
+	keyTimestamp       = "timestamp"
+)
 
 // registerHTTPHandlers 注册 HTTP REST 路由。
 func (s *Server) registerHTTPHandlers() *http.ServeMux {
@@ -37,7 +41,7 @@ func (s *Server) registerHTTPHandlers() *http.ServeMux {
 func (s *Server) httpQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, &Response{
-			Code: -1, Message: "仅支持 POST 方法",
+			Code: -1, Message: msgPostOnly,
 		})
 		return
 	}
@@ -68,7 +72,7 @@ func (s *Server) httpQuery(w http.ResponseWriter, r *http.Request) {
 func (s *Server) httpWrite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, &Response{
-			Code: -1, Message: "仅支持 POST 方法",
+			Code: -1, Message: msgPostOnly,
 		})
 		return
 	}
@@ -105,8 +109,8 @@ func (s *Server) httpHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	health := map[string]any{
-		"status":    "ok",
-		"timestamp": time.Now().Format(time.RFC3339Nano),
+		"status":     "ok",
+		keyTimestamp: time.Now().Format(time.RFC3339Nano),
 	}
 
 	// 附加调度器统计信息

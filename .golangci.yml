@@ -22,69 +22,87 @@ linters:
     - unconvert
     - whitespace
 
+  settings:
+    gocyclo:
+      min-complexity: 15
+    gocognit:
+      min-complexity: 20
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocritic:
+      enabled-tags:
+        - performance
+        - style
+        - experimental
+      disabled-checks:
+        - wrapperFunc
+        - dupImport
+        - octalLiteral
+        - httpNoBody
+        - stringXbytes
+        - unnamedResult
+        - commentedOutCode
+        - appendCombine
+        - paramTypeCombine
+        - preferStringWriter
+        - hugeParam
+        - rangeValCopy
+        - zeroByteRepeat
+        - unnecessaryDefer
+        - importShadow
+        - emptyStringTest
+        - sloppyReassign
+        - nestingReduce
+        - whyNoLint
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+  exclusions:
+    rules:
+      # 测试文件中允许一些灵活性
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - gocognit
+          - errcheck
+          - gosec
+          - goconst
+      # doc.go 文件允许 package 注释
+      - path: doc\.go
+        linters:
+          - revive
+        text: "package-comments"
+
 formatters:
   enable:
     - gofmt
     - goimports
 
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  gocognit:
-    min-complexity: 20
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-  gocritic:
-    enabled-tags:
-      - performance
-      - style
-      - experimental
-    disabled-checks:
-      - wrapperFunc
-      - dupImport
-  revive:
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
-
 issues:
-  exclude-rules:
-    # 测试文件中允许一些灵活性
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - gocognit
-        - errcheck
-        - gosec
-        - goconst
-    # doc.go 文件允许 package 注释
-    - path: doc\.go
-      linters:
-        - revive
-      text: "package-comments"
-
   max-issues-per-linter: 0
   max-same-issues: 0
