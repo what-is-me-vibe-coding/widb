@@ -84,11 +84,12 @@ func BenchmarkOptimizer(b *testing.B) {
 	parser := NewParser()
 	optimizer := NewOptimizer()
 
-	stmt, _ := parser.Parse("SELECT id, name FROM users WHERE score > 90.0")
-	plan, _ := analyzer.Analyze(stmt)
-
+	// 每次迭代创建新的 plan，因为 Optimizer 会原地修改 plan 节点，
+	// 复用同一 plan 会导致后续迭代测量的是已优化计划的开销。
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		stmt, _ := parser.Parse("SELECT id, name FROM users WHERE score > 90.0")
+		plan, _ := analyzer.Analyze(stmt)
 		_ = optimizer.Optimize(plan)
 	}
 	b.ReportAllocs()

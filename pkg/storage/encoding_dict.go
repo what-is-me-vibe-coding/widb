@@ -15,8 +15,16 @@ func encodeDict(typ common.DataType, data any, rowCount uint32, nulls *common.Bi
 	if !ok {
 		return nil, fmt.Errorf("dict encode: expected []string, got %T", data)
 	}
-	dictMap := make(map[string]uint32)
-	dict := make([]string, 0)
+
+	// 预分配 map 和 dict 切片，减少 rehash 和扩容开销。
+	// 字典编码适用于低基数列，256 是常见基数上限的合理估计；
+	// 若基数更高，map 会自动扩容，不影响正确性。
+	dictHint := int(rowCount)
+	if dictHint > 256 {
+		dictHint = 256
+	}
+	dictMap := make(map[string]uint32, dictHint)
+	dict := make([]string, 0, dictHint)
 	indices := make([]uint32, rowCount)
 	hasNulls := false
 	for i := uint32(0); i < rowCount; i++ {

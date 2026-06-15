@@ -389,7 +389,7 @@ func buildPrunedSchema(schema []ColumnDef, cols []string) []ColumnDef {
 }
 
 func collectColumnRefs(expr Expression) []string {
-	seen := make(map[string]bool)
+	seen := make(map[string]bool, 8) // 预分配常见列数，减少扩容
 	collectColumnRefsInto(expr, seen)
 	result := make([]string, 0, len(seen))
 	for k := range seen {

@@ -48,6 +48,7 @@ func NewBlockCache(capacity int64) *BlockCache {
 // get 从缓存中获取指定列的已解码数据。
 // 返回 (decodedColumn, true) 表示命中，(decodedColumn{}, false) 表示未命中。
 // 使用 RLock 读取缓存数据，减少读路径锁竞争；hits/misses 使用原子操作避免竞态。
+// 优化：仅在条目不在 LRU 前端时才升级为写锁更新顺序，减少高频命中场景的写锁竞争。
 func (c *BlockCache) get(key CacheKey) (decodedColumn, bool) {
 	if c == nil || c.capacity <= 0 {
 		return decodedColumn{}, false
@@ -55,22 +56,30 @@ func (c *BlockCache) get(key CacheKey) (decodedColumn, bool) {
 
 	// 快速路径：读锁查找（允许并发读）
 	c.mu.RLock()
-	if elem, ok := c.items[key]; ok {
-		data := elem.Value.(*cacheEntry).data
+	elem, ok := c.items[key]
+	if !ok {
 		c.mu.RUnlock()
-		atomic.AddInt64(&c.hits, 1)
-		// 慢路径：短暂写锁更新 LRU 顺序
-		c.mu.Lock()
-		// 双检：在 RUnlock 和 Lock 之间可能被淘汰
-		if elem, ok = c.items[key]; ok {
-			c.order.MoveToFront(elem)
-		}
-		c.mu.Unlock()
+		atomic.AddInt64(&c.misses, 1)
+		return decodedColumn{}, false
+	}
+	data := elem.Value.(*cacheEntry).data
+	// 若条目已在 LRU 前端，无需升级为写锁移动位置
+	isFront := c.order.Front() == elem
+	c.mu.RUnlock()
+	atomic.AddInt64(&c.hits, 1)
+
+	if isFront {
 		return data, true
 	}
-	c.mu.RUnlock()
-	atomic.AddInt64(&c.misses, 1)
-	return decodedColumn{}, false
+
+	// 慢路径：短暂写锁更新 LRU 顺序
+	c.mu.Lock()
+	// 双检：在 RUnlock 和 Lock 之间可能被淘汰
+	if elem, ok = c.items[key]; ok {
+		c.order.MoveToFront(elem)
+	}
+	c.mu.Unlock()
+	return data, true
 }
 
 // put 将已解码的列数据放入缓存。
@@ -278,7 +287,7 @@ func NewIndexCache(capacity int) *IndexCache {
 }
 
 // GetColumnStats 从缓存中获取指定 Segment 的列统计信息。
-// 使用 RLock 快速路径检查存在性，仅在命中时升级为写锁以更新 LRU 顺序。
+// 使用 RLock 快速路径检查存在性，仅在命中且不在 LRU 前端时升级为写锁以更新 LRU 顺序。
 func (c *IndexCache) GetColumnStats(segmentID uint64) ([]ColumnStat, bool) {
 	if c == nil || c.capacity <= 0 {
 		return nil, false
@@ -292,7 +301,12 @@ func (c *IndexCache) GetColumnStats(segmentID uint64) ([]ColumnStat, bool) {
 		return nil, false
 	}
 	stats := elem.Value.(*indexCacheEntry).stats
+	isFront := c.order.Front() == elem
 	c.mu.RUnlock()
+
+	if isFront {
+		return stats, true
+	}
 
 	// 慢路径：短暂写锁更新 LRU 顺序
 	c.mu.Lock()
