@@ -47,6 +47,8 @@ type Server struct {
 	httpListener net.Listener
 
 	connCount int64 // 当前活跃 TCP 连接数
+	conns     map[net.Conn]struct{}
+	connMu    sync.Mutex
 	wg        sync.WaitGroup
 	done      chan struct{}
 	stopOnce  sync.Once
@@ -104,6 +106,7 @@ func NewServer(cfg Config, opts ...Option) (*Server, error) {
 		optimizer: query.NewOptimizer(),
 		executor:  exec,
 		done:      make(chan struct{}),
+		conns:     make(map[net.Conn]struct{}),
 	}
 
 	for _, opt := range opts {
@@ -195,6 +198,7 @@ func (s *Server) Catalog() *catalog.Catalog {
 
 // Stop 优雅关闭服务器，等待所有活跃连接完成。
 // 多次调用是安全的，仅第一次调用会执行关闭逻辑。
+// 关闭监听器后，主动关闭所有已建立的 TCP 连接，避免空闲连接阻塞关闭流程。
 func (s *Server) Stop() error {
 	var stopErr error
 	s.stopOnce.Do(func() {
@@ -216,6 +220,9 @@ func (s *Server) Stop() error {
 			}
 		}
 
+		// 主动关闭所有已建立的 TCP 连接，使 handleTCPConn 中的阻塞读取立即返回
+		s.closeAllConns()
+
 		s.wg.Wait()
 
 		if s.storage != nil {
@@ -228,6 +235,35 @@ func (s *Server) Stop() error {
 		log.Println("服务器已关闭")
 	})
 	return stopErr
+}
+
+// trackConn 将连接加入跟踪集合，用于优雅关闭时主动断开。
+func (s *Server) trackConn(conn net.Conn) {
+	s.connMu.Lock()
+	s.conns[conn] = struct{}{}
+	s.connMu.Unlock()
+}
+
+// untrackConn 将连接从跟踪集合中移除。
+func (s *Server) untrackConn(conn net.Conn) {
+	s.connMu.Lock()
+	delete(s.conns, conn)
+	s.connMu.Unlock()
+}
+
+// closeAllConns 关闭所有已建立的 TCP 连接。
+func (s *Server) closeAllConns() {
+	s.connMu.Lock()
+	conns := make([]net.Conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.conns = make(map[net.Conn]struct{})
+	s.connMu.Unlock()
+
+	for _, c := range conns {
+		_ = c.Close()
+	}
 }
 
 // serveHTTP 启动 HTTP 服务。

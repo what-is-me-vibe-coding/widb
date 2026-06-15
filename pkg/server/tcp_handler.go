@@ -51,7 +51,10 @@ func (s *Server) acceptTCP() {
 func (s *Server) handleTCPConn(conn net.Conn) {
 	defer s.wg.Done()
 	defer atomic.AddInt64(&s.connCount, -1)
+	defer s.untrackConn(conn)
 	defer func() { _ = conn.Close() }() // 连接处理结束，关闭错误不影响主流程
+
+	s.trackConn(conn)
 
 	reader := bufio.NewReader(conn)
 

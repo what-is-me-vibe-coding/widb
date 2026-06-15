@@ -206,6 +206,8 @@ func (w *WAL) Close() error {
 }
 
 // Truncate 关闭当前 WAL 文件并创建新的空文件，用于清空已持久化的记录。
+// 采用"先建后删"策略：先创建临时新文件，再原子重命名替换旧文件，
+// 避免在创建新文件失败时丢失旧文件数据。
 func (w *WAL) Truncate() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -214,13 +216,44 @@ func (w *WAL) Truncate() error {
 		return fmt.Errorf("wal truncate sync: %w", err)
 	}
 
+	// 先创建临时新文件，确保新文件可用后再替换旧文件
+	tmpPath := w.path + ".tmp"
+	newF, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("wal truncate create temp: %w", err)
+	}
+
+	// 确保新文件的目录条目已持久化
+	if err := newF.Sync(); err != nil {
+		_ = newF.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("wal truncate sync temp: %w", err)
+	}
+
+	// 关闭新文件，准备重命名
+	if err := newF.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("wal truncate close temp: %w", err)
+	}
+
+	// 关闭旧文件
 	if err := w.file.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		w.recoverOpen()
 		return fmt.Errorf("wal truncate close: %w", err)
 	}
 
-	f, err := os.Create(w.path)
+	// 原子替换：临时文件 → 正式 WAL 路径
+	if err := os.Rename(tmpPath, w.path); err != nil {
+		w.recoverOpen()
+		return fmt.Errorf("wal truncate rename: %w", err)
+	}
+
+	// 重新打开新文件用于追加写入
+	f, err := os.OpenFile(w.path, os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("wal truncate create: %w", err)
+		w.recoverOpen()
+		return fmt.Errorf("wal truncate reopen: %w", err)
 	}
 
 	w.file = f
@@ -261,6 +294,7 @@ func (w *WAL) maybeRotate() error {
 
 	// 重命名旧文件为 .prev
 	if err := os.Rename(w.path, rotatedPath); err != nil {
+		logClose(newF)
 		logRemove(w.path + ".tmp")
 		w.recoverOpen()
 		return fmt.Errorf("wal rotate rename: %w", err)
