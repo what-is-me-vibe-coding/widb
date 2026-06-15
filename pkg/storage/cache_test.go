@@ -438,3 +438,78 @@ func TestBlockCacheConcurrentStats(t *testing.T) {
 			actualTotal, totalOps, stats.Hits, stats.Misses)
 	}
 }
+
+// TestBlockCacheConcurrentIsFrontOptimization 验证 isFront 快速路径在高频命中场景下的并发正确性。
+// 多个 goroutine 反复读取同一 key（条目始终在 LRU 前端），确保 isFront 优化不引入竞态。
+func TestBlockCacheConcurrentIsFrontOptimization(t *testing.T) {
+	cache := NewBlockCache(1 << 20) // 1MB
+
+	// 预填充单个条目，使其成为 LRU 前端
+	key := CacheKey{SegmentID: 1, ColumnIdx: 0}
+	cache.put(key, decodedColumn{data: []int64{1, 2, 3}, typ: common.TypeInt64})
+
+	const goroutines = 100
+	const iterations = 1000
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				got, ok := cache.get(key)
+				if !ok {
+					t.Error("expected cache hit")
+					return
+				}
+				ints, ok := got.data.([]int64)
+				if !ok || len(ints) != 3 || ints[0] != 1 {
+					t.Errorf("unexpected data: %v", got.data)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	stats := cache.Stats()
+	totalOps := int64(goroutines * iterations)
+	if stats.Hits != totalOps {
+		t.Fatalf("expected %d hits, got %d (misses=%d)", totalOps, stats.Hits, stats.Misses)
+	}
+}
+
+// TestIndexCacheConcurrentIsFrontOptimization 验证 IndexCache 的 isFront 快速路径并发正确性。
+func TestIndexCacheConcurrentIsFrontOptimization(t *testing.T) {
+	cache := NewIndexCache(10)
+
+	// 预填充单个条目
+	cache.PutColumnStats(1, []ColumnStat{{ColumnID: 0, NullCount: 5}})
+
+	const goroutines = 100
+	const iterations = 1000
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				stats, ok := cache.GetColumnStats(1)
+				if !ok {
+					t.Error("expected cache hit")
+					return
+				}
+				if len(stats) != 1 || stats[0].ColumnID != 0 {
+					t.Errorf("unexpected stats: %v", stats)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+}
