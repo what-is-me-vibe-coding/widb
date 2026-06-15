@@ -6,6 +6,35 @@ import (
 	"testing"
 )
 
+// mustAppendWrite 向 WAL 追加写入，失败时 t.Fatal。
+func mustAppendWrite(t *testing.T, w *WAL, data []byte) {
+	t.Helper()
+	if err := w.AppendWrite(data); err != nil {
+		t.Fatalf("AppendWrite 失败: %v", err)
+	}
+}
+
+// mustSync 同步 WAL，失败时 t.Fatal。
+func mustSync(t *testing.T, w *WAL) {
+	t.Helper()
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Sync 失败: %v", err)
+	}
+}
+
+// verifyPayloads 验证记录的 Payload 按序匹配 expected。
+func verifyPayloads(t *testing.T, records []RawRecord, expected []string) {
+	t.Helper()
+	if len(records) != len(expected) {
+		t.Fatalf("期望 %d 条记录，实际 %d 条", len(expected), len(records))
+	}
+	for i, exp := range expected {
+		if string(records[i].Payload) != exp {
+			t.Errorf("第 %d 条记录: %q, 期望 %q", i+1, string(records[i].Payload), exp)
+		}
+	}
+}
+
 // TestWALFunctionalAfterRotateRenameError 验证 WAL 在 maybeRotate 重命名失败后仍然可用。
 // 修复前：os.Rename(w.path, rotatedPath) 失败时，newF 文件句柄未关闭（泄漏），
 // 且 recoverOpen 后 WAL 可能无法正常使用。修复后通过 logClose(newF) 确保句柄关闭，
@@ -20,15 +49,9 @@ func TestWALFunctionalAfterRotateRenameError(t *testing.T) {
 	}
 
 	// 写入初始数据
-	if err := w.AppendWrite([]byte("initial_data_1")); err != nil {
-		t.Fatalf("AppendWrite 初始数据失败: %v", err)
-	}
-	if err := w.AppendWrite([]byte("initial_data_2")); err != nil {
-		t.Fatalf("AppendWrite 初始数据失败: %v", err)
-	}
-	if err := w.Sync(); err != nil {
-		t.Fatalf("Sync 失败: %v", err)
-	}
+	mustAppendWrite(t, w, []byte("initial_data_1"))
+	mustAppendWrite(t, w, []byte("initial_data_2"))
+	mustSync(t, w)
 
 	// 设置极小的 maxSize 使下次写入触发轮转
 	w.maxSize = 1
@@ -38,53 +61,34 @@ func TestWALFunctionalAfterRotateRenameError(t *testing.T) {
 	if err := os.MkdirAll(prevPath, 0755); err != nil {
 		t.Fatalf("创建 .prev 目录失败: %v", err)
 	}
-	dummyFile := filepath.Join(prevPath, "dummy")
-	if err := os.WriteFile(dummyFile, []byte("x"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(prevPath, "dummy"), []byte("x"), 0644); err != nil {
 		t.Fatalf("创建 dummy 文件失败: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(prevPath) }()
 
 	// 尝试写入触发轮转，应返回错误
-	err = w.AppendWrite([]byte("trigger_rotate"))
-	if err == nil {
+	if err := w.AppendWrite([]byte("trigger_rotate")); err == nil {
 		t.Error("期望 AppendWrite 返回轮转错误，但返回 nil")
 		_ = w.Close()
 		return
 	}
 
-	// 清理 .prev 目录，使后续操作不再受影响
+	// 清理障碍，关闭后重新打开验证原始数据
 	_ = os.RemoveAll(prevPath)
-	// 清理可能残留的 .tmp 文件
 	_ = os.Remove(walPath + ".tmp")
-
-	// 关闭 WAL
 	if err := w.Close(); err != nil {
 		t.Fatalf("Close 失败: %v", err)
 	}
 
-	// 重新打开 WAL，验证原始数据仍然完整
 	w2, records, err := OpenWAL(walPath)
 	if err != nil {
 		t.Fatalf("OpenWAL 失败: %v", err)
 	}
-
-	if len(records) != 2 {
-		t.Fatalf("期望 2 条记录，实际 %d 条", len(records))
-	}
-	if string(records[0].Payload) != "initial_data_1" {
-		t.Errorf("第 1 条记录: %q, 期望 %q", string(records[0].Payload), "initial_data_1")
-	}
-	if string(records[1].Payload) != "initial_data_2" {
-		t.Errorf("第 2 条记录: %q, 期望 %q", string(records[1].Payload), "initial_data_2")
-	}
+	verifyPayloads(t, records, []string{"initial_data_1", "initial_data_2"})
 
 	// 验证恢复后可以继续写入
-	if err := w2.AppendWrite([]byte("after_recovery")); err != nil {
-		t.Fatalf("恢复后 AppendWrite 失败: %v", err)
-	}
-	if err := w2.Sync(); err != nil {
-		t.Fatalf("Sync 失败: %v", err)
-	}
+	mustAppendWrite(t, w2, []byte("after_recovery"))
+	mustSync(t, w2)
 	_ = w2.Close()
 
 	// 再次打开验证所有数据
@@ -93,13 +97,7 @@ func TestWALFunctionalAfterRotateRenameError(t *testing.T) {
 		t.Fatalf("第二次 OpenWAL 失败: %v", err)
 	}
 	defer func() { _ = w3.Close() }()
-
-	if len(records2) != 3 {
-		t.Fatalf("期望 3 条记录，实际 %d 条", len(records2))
-	}
-	if string(records2[2].Payload) != "after_recovery" {
-		t.Errorf("第 3 条记录: %q, 期望 %q", string(records2[2].Payload), "after_recovery")
-	}
+	verifyPayloads(t, records2, []string{"initial_data_1", "initial_data_2", "after_recovery"})
 }
 
 // TestWALFunctionalAfterRotateCloseOldError 验证 WAL 在 maybeRotate 关闭旧文件失败后仍然可用。
