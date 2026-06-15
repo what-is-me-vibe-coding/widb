@@ -38,15 +38,24 @@ func fillRowVals(rowVals map[string]common.Value, chunk *storage.Chunk, schema [
 }
 
 // filterChunk 对单个 Chunk 执行向量化过滤。
+// 优化：对简单的 column op literal 比较条件使用快速路径，
+// 直接遍历列向量避免 per-row map 构建开销。
 func filterChunk(input *storage.Chunk, cond Expression, schema []ColumnDef, colIdxMap map[string]int) (*storage.Chunk, error) {
 	rowCount := input.RowCount()
 	if rowCount == 0 {
 		return storage.NewChunk(defaultChunkSize), nil
 	}
 
-	rowVals := make(map[string]common.Value, len(schema))
-	cols := input.Columns()
+	// 尝试快速路径：简单的 column op literal 比较
+	if sel, ok := tryFastFilter(input, cond, schema, rowCount); ok {
+		if len(sel) == 0 {
+			return storage.NewChunk(defaultChunkSize), nil
+		}
+		return buildFilteredOutput(input, sel), nil
+	}
 
+	// 慢速路径：逐行 map 求值
+	rowVals := make(map[string]common.Value, len(schema))
 	selection := make([]uint32, 0, rowCount)
 	for row := uint32(0); row < rowCount; row++ {
 		fillRowVals(rowVals, input, schema, row)
@@ -63,21 +72,108 @@ func filterChunk(input *storage.Chunk, cond Expression, schema []ColumnDef, colI
 		return storage.NewChunk(defaultChunkSize), nil
 	}
 
-	output := storage.NewChunk(defaultChunkSize)
-	for _, col := range cols {
-		newCol := storage.NewColumnVector(col.ColumnID, col.Typ, uint32(len(selection)))
-		for _, rowIdx := range selection {
-			v := col.GetValue(rowIdx)
-			if err := newCol.Append(v); err != nil {
-				return nil, fmt.Errorf("executor filter: %w", err)
-			}
-		}
-		if err := output.AddColumn(newCol); err != nil {
-			return nil, fmt.Errorf("executor filter: %w", err)
-		}
+	return buildFilteredOutput(input, selection), nil
+}
+
+// tryFastFilter 尝试对简单的 column op literal 比较使用向量化快速路径。
+// 返回 (selection, true) 表示成功，(nil, false) 表示需要回退到慢速路径。
+func tryFastFilter(input *storage.Chunk, cond Expression, schema []ColumnDef, rowCount uint32) ([]uint32, bool) {
+	bin, ok := cond.(*BinaryExpr)
+	if !ok {
+		return nil, false
 	}
 
-	return output, nil
+	// 仅支持比较运算符
+	switch bin.Op {
+	case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
+	default:
+		return nil, false
+	}
+
+	// 识别 column op literal 模式
+	colIdx, _ := resolveColumnIndex(bin.Left, schema)
+	if colIdx < 0 {
+		return nil, false
+	}
+	lit, ok := bin.Right.(*LiteralExpr)
+	if !ok || !lit.Value.Valid {
+		return nil, false
+	}
+
+	cols := input.Columns()
+	if colIdx >= len(cols) {
+		return nil, false
+	}
+	col := cols[colIdx]
+
+	selection := make([]uint32, 0, rowCount)
+	for row := uint32(0); row < rowCount; row++ {
+		v := col.GetValue(row)
+		if !v.Valid {
+			continue
+		}
+		if evalCompareOp(bin.Op, v, lit.Value) {
+			selection = append(selection, row)
+		}
+	}
+	return selection, true
+}
+
+// resolveColumnIndex 从表达式中解析列索引，返回 (-1, "") 表示无法解析。
+func resolveColumnIndex(expr Expression, schema []ColumnDef) (int, string) {
+	switch e := expr.(type) {
+	case *ResolvedColumnExpr:
+		if e.Idx >= 0 && e.Idx < len(schema) {
+			return e.Idx, e.Name
+		}
+	case *ColumnExpr:
+		for i, col := range schema {
+			if col.Name == e.Name {
+				return i, e.Name
+			}
+		}
+	}
+	return -1, ""
+}
+
+// evalCompareOp 对两个有效值执行比较运算。
+func evalCompareOp(op BinaryOp, left, right common.Value) bool {
+	switch op {
+	case OpEq:
+		return left.Equal(right)
+	case OpNe:
+		return !left.Equal(right)
+	case OpLt:
+		return left.Less(right)
+	case OpGt:
+		return right.Less(left)
+	case OpLe:
+		return !right.Less(left)
+	case OpGe:
+		return !left.Less(right)
+	}
+	return false
+}
+
+// buildFilteredOutput 根据 selection 向量构建过滤后的 Chunk 输出。
+// 使用 SetValue 替代 Append 跳过 ensureCapacity 检查，提升吞吐。
+func buildFilteredOutput(input *storage.Chunk, selection []uint32) *storage.Chunk {
+	selLen := uint32(len(selection))
+	output := storage.NewChunk(selLen)
+	for _, col := range input.Columns() {
+		newCol := storage.NewColumnVector(col.ColumnID, col.Typ, selLen)
+		for dstIdx, srcIdx := range selection {
+			v := col.GetValue(srcIdx)
+			if v.Valid {
+				_ = newCol.SetValue(uint32(dstIdx), v)
+			} else {
+				newCol.SetNull(uint32(dstIdx))
+			}
+		}
+		newCol.SetLen(selLen)
+		_ = output.AddColumn(newCol)
+	}
+	return output
 }
 
 // executeProject 执行 ProjectNode，对输入数据进行投影。
