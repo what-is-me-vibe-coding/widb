@@ -305,7 +305,7 @@ func TestCLIRunInteractiveEOF(t *testing.T) {
 	}
 }
 
-// --- formatResponse 测试 ---
+// --- FormatResponse 测试 ---
 
 func TestFormatResponse(t *testing.T) {
 	tests := []struct {
@@ -321,8 +321,8 @@ func TestFormatResponse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := formatResponse(tt.resp); got != tt.want {
-				t.Errorf("formatResponse() = %q, want %q", got, tt.want)
+			if got := server.FormatResponse(tt.resp); got != tt.want {
+				t.Errorf("FormatResponse() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -330,14 +330,14 @@ func TestFormatResponse(t *testing.T) {
 
 func TestFormatResponseWithDataRows(t *testing.T) {
 	resp := &server.Response{Code: 0, Data: []interface{}{map[string]interface{}{"col_0": int64(1)}}, Rows: 1}
-	if got := formatResponse(resp); !strings.Contains(got, "1 行") {
+	if got := server.FormatResponse(resp); !strings.Contains(got, "1 行") {
 		t.Errorf("应包含行数: %q", got)
 	}
 }
 
 func TestFormatResponseMapData(t *testing.T) {
 	resp := &server.Response{Code: 0, Data: map[string]interface{}{"key": "value"}, Rows: 0}
-	if got := formatResponse(resp); !strings.Contains(got, "key") {
+	if got := server.FormatResponse(resp); !strings.Contains(got, "key") {
 		t.Errorf("应包含 key: %q", got)
 	}
 }
@@ -349,7 +349,7 @@ func TestFormatResponseJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(b, &decoded); err != nil {
 		t.Fatalf("反序列化失败: %v", err)
 	}
-	if got := formatResponse(&decoded); len(got) == 0 {
+	if got := server.FormatResponse(&decoded); len(got) == 0 {
 		t.Error("返回空字符串")
 	}
 }

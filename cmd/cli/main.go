@@ -109,7 +109,7 @@ func (c *cli) executeTCP(sql string) (string, error) {
 		return "", fmt.Errorf("解析响应失败: %w", err)
 	}
 
-	return formatResponse(&resp), nil
+	return server.FormatResponse(&resp), nil
 }
 
 // executeHTTP 通过 HTTP REST API 执行查询。
@@ -139,7 +139,7 @@ func (c *cli) executeHTTP(sql string) (string, error) {
 		return "", fmt.Errorf("解析响应失败: %w", err)
 	}
 
-	return formatResponse(&resp), nil
+	return server.FormatResponse(&resp), nil
 }
 
 // pingTCP 通过 TCP 发送心跳检测。
@@ -252,32 +252,6 @@ func (c *cli) handleCommand(writer io.Writer, cmd string) error {
 		_, _ = fmt.Fprintf(writer, "未知命令: %s，输入 \\h 查看帮助\n", cmd)
 	}
 	return nil
-}
-
-// formatResponse 格式化服务器响应为可读字符串。
-func formatResponse(resp *server.Response) string {
-	if resp.Code != 0 {
-		return fmt.Sprintf("错误: %s", resp.Message)
-	}
-
-	if resp.Data != nil {
-		data, _ := json.MarshalIndent(resp.Data, "", "  ")
-		s := string(data)
-		if resp.Rows > 0 {
-			return fmt.Sprintf("%d 行:\n%s", resp.Rows, s)
-		}
-		return s
-	}
-
-	if resp.Rows > 0 {
-		return fmt.Sprintf("成功，影响 %d 行", resp.Rows)
-	}
-
-	if resp.Message != "" {
-		return resp.Message
-	}
-
-	return "成功"
 }
 
 // runCLI 是主逻辑，提取出来便于测试。
