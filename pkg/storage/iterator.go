@@ -15,43 +15,60 @@ type ScanEntry struct {
 }
 
 // ScanIterator is the interface for iterating over scan results in key order.
+// 延迟物化优化：Key() 方法仅返回当前行的 key，不触发列数据物化；
+// Entry() 方法返回完整的行数据（含列值 map），会触发物化。
+// 调用方在仅需 key 时应优先使用 Key()，避免不必要的 map 分配。
 type ScanIterator interface {
 	Next() bool
+	Key() string
 	Entry() ScanEntry
 	Err() error
 	Close()
 }
 
 // memTableIterator iterates over a MemTable's rows within a key range.
+// 直接引用 mem.Scan() 返回的切片，避免双重拷贝。
 type memTableIterator struct {
-	entries []ScanEntry
-	pos     int
-	err     error
+	pairs []struct {
+		Key   string
+		Value Row
+	}
+	pos int
+	err error
 }
 
 // newMemTableIterator creates an iterator over a MemTable for the given range.
-// 直接使用 ScanRange 返回 ScanEntry 切片，避免中间结构体转换的双重拷贝。
+// 直接引用 mem.Scan() 返回的切片，消除 ScanEntry 中间转换的拷贝开销。
 func newMemTableIterator(mem *MemTable, start, end string) *memTableIterator {
-	entries := mem.ScanRange(start, end)
-	return &memTableIterator{entries: entries, pos: -1}
+	return &memTableIterator{pairs: mem.Scan(start, end), pos: -1}
 }
 
 func (it *memTableIterator) Next() bool {
 	it.pos++
-	return it.pos < len(it.entries)
+	return it.pos < len(it.pairs)
+}
+
+func (it *memTableIterator) Key() string {
+	if it.pos < 0 || it.pos >= len(it.pairs) {
+		return ""
+	}
+	return it.pairs[it.pos].Key
 }
 
 func (it *memTableIterator) Entry() ScanEntry {
-	if it.pos < 0 || it.pos >= len(it.entries) {
+	if it.pos < 0 || it.pos >= len(it.pairs) {
 		return ScanEntry{}
 	}
-	return ScanEntry{Key: it.entries[it.pos].Key, Value: it.entries[it.pos].Value}
+	p := &it.pairs[it.pos]
+	return ScanEntry{Key: p.Key, Value: p.Value}
 }
 
 func (it *memTableIterator) Err() error { return it.err }
 func (it *memTableIterator) Close()     { it.pos = -1 }
 
 // segmentIterator iterates over a Segment's rows within a key range.
+// 延迟物化优化：Next() 仅记录行索引和 key，不构建 map[string]Value，
+// Entry() 时按需构建行数据。同时复用 map 缓冲区，避免每行重新分配。
 // Column decoding is deferred until the first row is accessed, avoiding
 // unnecessary work for segments that are skipped by index pruning.
 // Thread safety: ensureDecoded uses sync.Once for idempotent lazy init;
@@ -63,7 +80,7 @@ type segmentIterator struct {
 	start       string
 	end         string
 	rowIdx      int
-	current     ScanEntry
+	currentKey  string
 	err         error
 	started     bool
 	finished    bool
@@ -153,30 +170,44 @@ func (it *segmentIterator) Next() bool {
 			return false
 		}
 
-		values := make(map[string]common.Value, len(it.colMeta))
-		for colIdx, col := range it.colMeta {
-			val := it.seg.getColumnValueFromDecoded(it.decodedCols, uint32(colIdx), uint32(it.rowIdx))
-			values[col.Name] = val
-		}
-
-		it.current = ScanEntry{
-			Key:   key,
-			Value: Row{Version: it.seg.ID, Columns: values},
-		}
+		// 延迟物化：仅记录 key 和行索引，不构建 map
+		it.currentKey = key
 		it.started = true
 		return true
 	}
+}
+
+// buildRowMap 从解码后的列数据构建当前行的列值映射。
+// 每次调用创建新 map，确保返回值可安全持有跨行引用。
+func (it *segmentIterator) buildRowMap() map[string]common.Value {
+	values := make(map[string]common.Value, len(it.colMeta))
+	for colIdx, col := range it.colMeta {
+		val := it.seg.getColumnValueFromDecoded(it.decodedCols, uint32(colIdx), uint32(it.rowIdx))
+		values[col.Name] = val
+	}
+	return values
 }
 
 func (it *segmentIterator) Entry() ScanEntry {
 	if !it.started {
 		return ScanEntry{}
 	}
-	return ScanEntry{Key: it.current.Key, Value: it.current.Value}
+	// 延迟物化：仅在 Entry() 被调用时构建行数据
+	// 注意：返回的 map 是 rowBuf 的引用，调用方不应持有跨行引用
+	rowMap := it.buildRowMap()
+	return ScanEntry{Key: it.currentKey, Value: Row{Version: it.seg.ID, Columns: rowMap}}
 }
 
 func (it *segmentIterator) Err() error { return it.err }
 func (it *segmentIterator) Close()     { it.finished = true }
+
+// Key 返回当前行的主键，不触发列数据物化。
+func (it *segmentIterator) Key() string {
+	if !it.started {
+		return ""
+	}
+	return it.currentKey
+}
 
 // mergeHeapEntry wraps an iterator for use in the merge heap.
 type mergeHeapEntry struct {
@@ -236,10 +267,9 @@ func NewMergeIterator(iters ...ScanIterator) *MergeIterator {
 
 	for i, it := range iters {
 		if it.Next() {
-			entry := it.Entry()
 			mi.heap = append(mi.heap, &mergeHeapEntry{
 				it:    it,
-				key:   entry.Key,
+				key:   it.Key(),
 				index: i,
 			})
 		}
@@ -315,7 +345,7 @@ func (mi *MergeIterator) advanceHeapTop() {
 	it := top.it
 
 	if it.Next() {
-		top.key = it.Entry().Key
+		top.key = it.Key()
 		heap.Fix(&mi.heap, 0)
 	} else {
 		heap.Pop(&mi.heap)
@@ -356,6 +386,13 @@ func newSliceIterator(entries []ScanEntry) *sliceIterator {
 func (it *sliceIterator) Next() bool {
 	it.pos++
 	return it.pos < len(it.entries)
+}
+
+func (it *sliceIterator) Key() string {
+	if it.pos < 0 || it.pos >= len(it.entries) {
+		return ""
+	}
+	return it.entries[it.pos].Key
 }
 
 func (it *sliceIterator) Entry() ScanEntry {
