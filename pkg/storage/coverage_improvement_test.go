@@ -16,6 +16,7 @@ type errorIterator struct {
 }
 
 func (it *errorIterator) Next() bool       { return false }
+func (it *errorIterator) Key() string      { return "" }
 func (it *errorIterator) Entry() ScanEntry { return ScanEntry{} }
 func (it *errorIterator) Err() error       { return it.err }
 func (it *errorIterator) Close()           {}

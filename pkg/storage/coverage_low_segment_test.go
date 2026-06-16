@@ -109,6 +109,7 @@ func (it *errorOnInitIterator) Next() bool {
 }
 
 func (it *errorOnInitIterator) Entry() ScanEntry { return it.entry }
+func (it *errorOnInitIterator) Key() string      { return it.entry.Key }
 func (it *errorOnInitIterator) Err() error {
 	if it.callCount > 1 {
 		return it.err

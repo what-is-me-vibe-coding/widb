@@ -91,6 +91,7 @@ type errIterV7 struct {
 }
 
 func (it *errIterV7) Next() bool       { return false }
+func (it *errIterV7) Key() string      { return "" }
 func (it *errIterV7) Entry() ScanEntry { return ScanEntry{} }
 func (it *errIterV7) Err() error       { return it.err }
 func (it *errIterV7) Close()           {}
