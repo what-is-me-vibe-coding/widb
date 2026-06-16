@@ -26,6 +26,25 @@ type ScanIterator interface {
 	Close()
 }
 
+// sizedIterator 是可选接口，由能廉价提供精确结果行数的迭代器实现。
+// 用于扫描结果切片的精准预分配：MemTable 迭代器在构造时已物化范围内全部数据，
+// 可给出精确计数；Segment 迭代器不实现此接口（精确计数需扫描，得不偿失）。
+type sizedIterator interface {
+	Count() int
+}
+
+// sumIterCounts 汇总实现了 sizedIterator 的迭代器的精确行数。
+// 未实现该接口的迭代器（如 Segment 迭代器）贡献 0，由调用方回退到估算值补充。
+func sumIterCounts(iters []ScanIterator) int {
+	total := 0
+	for _, it := range iters {
+		if si, ok := it.(sizedIterator); ok {
+			total += si.Count()
+		}
+	}
+	return total
+}
+
 // memTableIterator iterates over a MemTable's rows within a key range.
 // 直接引用 mem.Scan() 返回的切片，避免双重拷贝。
 type memTableIterator struct {
@@ -65,6 +84,11 @@ func (it *memTableIterator) Entry() ScanEntry {
 
 func (it *memTableIterator) Err() error { return it.err }
 func (it *memTableIterator) Close()     { it.pos = -1 }
+
+// Count 返回该迭代器待遍历的精确行数。
+// memTableIterator 在构造时已通过 mem.Scan 物化了范围内全部键值对，
+// 因此可提供精确计数，用于扫描结果切片的精准预分配，避免严重高估。
+func (it *memTableIterator) Count() int { return len(it.pairs) }
 
 // segmentIterator iterates over a Segment's rows within a key range.
 // 延迟物化优化：Next() 仅记录行索引和 key，不构建 map[string]Value，
@@ -445,7 +469,13 @@ func (e *Engine) scanRangeUnlocked(start, end string) ([]ScanEntry, error) {
 		return nil, nil
 	}
 
-	estimatedSize := e.estimateScanSize(start, end)
+	// 优先使用 MemTable 迭代器的精确行数预分配（选择性范围扫描收益最大：
+	// 旧实现用全量 Len 估算，100 行命中会按 10000 行预分配，浪费 ~400KB）。
+	// 无 MemTable 数据时回退到估算值（含 Segment 行数，已封顶防溢出）。
+	estimatedSize := sumIterCounts(iters)
+	if estimatedSize == 0 {
+		estimatedSize = capScanPrealloc(e.estimateScanSize(start, end))
+	}
 
 	mi := NewMergeIterator(iters...)
 	defer mi.Close()

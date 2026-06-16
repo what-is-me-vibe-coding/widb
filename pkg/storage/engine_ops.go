@@ -285,7 +285,11 @@ func (e *Engine) scanRangeWithPruningUnlocked(start, end string, predicates []Co
 		return nil
 	}
 
-	estimatedSize := e.estimateScanSize(start, end)
+	// 优先使用 MemTable 迭代器的精确行数预分配，无 MemTable 数据时回退到估算值。
+	estimatedSize := sumIterCounts(iters)
+	if estimatedSize == 0 {
+		estimatedSize = capScanPrealloc(e.estimateScanSize(start, end))
+	}
 
 	mi := NewMergeIterator(iters...)
 	defer mi.Close()
@@ -349,6 +353,14 @@ func (e *Engine) canSkipSegment(segID uint64, predicates []ColumnPredicate, colN
 	return false
 }
 
+// maxScanResultPrealloc 限制扫描结果切片的预分配上限。
+// estimateScanSize 对 MemTable 使用全量行数估算（无法廉价获知范围内精确行数），
+// 选择性范围扫描（如点查附近小区间）实际命中行数远小于估算值，
+// 不加限制会导致 4MB~40MB 级别的无效预分配与 GC 压力。
+// 16384 条（约 512KB）足以覆盖中小型扫描避免扩容，
+// 大型全表扫描则按 2 倍增长摊销，额外拷贝开销可忽略。
+const maxScanResultPrealloc = 1 << 14 // 16384
+
 // estimateScanSize 估算扫描结果大小，用于预分配结果切片。
 func (e *Engine) estimateScanSize(start, end string) int {
 	estimatedSize := e.activeMem.Len()
@@ -364,6 +376,16 @@ func (e *Engine) estimateScanSize(start, end string) int {
 		estimatedSize = 1 << 20
 	}
 	return estimatedSize
+}
+
+// capScanPrealloc 返回用于结果切片预分配的容量，上限为 maxScanResultPrealloc。
+// 估算值用于预分配以减少 append 扩容，但对选择性扫描会严重高估，
+// 因此封顶以平衡“减少扩容”与“避免无效内存占用”。
+func capScanPrealloc(estimated int) int {
+	if estimated > maxScanResultPrealloc {
+		return maxScanResultPrealloc
+	}
+	return estimated
 }
 
 // Scan 扫描指定键范围内的所有行，直接返回 ScanEntry 切片，避免额外结构体复制。
