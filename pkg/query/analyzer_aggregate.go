@@ -57,6 +57,16 @@ func (a *Analyzer) buildAggregateNode(sel *SelectStatement, table *catalog.Table
 		a.collectAggregates(col.Expr, &aggregates)
 	}
 
+	// 解析聚合参数表达式，确保类型信息正确（解析器产出的 ColumnExpr 无类型信息）
+	for i := range aggregates {
+		if aggregates[i].Arg == nil {
+			continue
+		}
+		if resolved, err := a.resolveExpr(aggregates[i].Arg, table); err == nil {
+			aggregates[i].Arg = resolved
+		}
+	}
+
 	schema := make([]ColumnDef, 0, len(groupBy)+len(aggregates))
 	for _, gb := range groupBy {
 		schema = append(schema, ColumnDef{
@@ -121,4 +131,29 @@ func parseAggFunc(name string) AggregateFunc {
 	default:
 		return AggUnknown
 	}
+}
+
+// remapAggregateRefs 将投影表达式中的聚合函数调用替换为对 AggregateNode 输出列的引用。
+// AggregateNode 已经完成聚合计算，ProjectNode 不应重复求值聚合函数。
+// 匹配键为聚合表达式的小写字符串形式，兼容解析器的小写函数名与 AggregateFunc 的大写名。
+func remapAggregateRefs(exprs []Expression, agg *AggregateNode) []Expression {
+	aggMap := make(map[string]AggregateExpr, len(agg.Aggregates))
+	for _, aggExpr := range agg.Aggregates {
+		aggMap[strings.ToLower(aggExpr.String())] = aggExpr
+	}
+
+	result := make([]Expression, len(exprs))
+	for i, expr := range exprs {
+		if fe, ok := expr.(*FuncExpr); ok && isAggregateFunc(fe.Name) {
+			if aggExpr, found := aggMap[strings.ToLower(fe.String())]; found {
+				result[i] = &ResolvedColumnExpr{
+					Name: aggExpr.String(),
+					typ:  inferAggReturnType(aggExpr),
+				}
+				continue
+			}
+		}
+		result[i] = expr
+	}
+	return result
 }

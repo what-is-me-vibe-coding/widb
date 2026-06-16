@@ -238,6 +238,9 @@ func inferAggReturnType(agg AggregateExpr) common.DataType {
 	if col, ok := agg.Arg.(*ColumnExpr); ok {
 		return col.typ
 	}
+	if rce, ok := agg.Arg.(*ResolvedColumnExpr); ok {
+		return rce.typ
+	}
 	return common.TypeNull
 }
 

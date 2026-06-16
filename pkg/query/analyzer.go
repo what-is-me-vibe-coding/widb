@@ -97,8 +97,10 @@ func (a *Analyzer) buildSelectPipeline(sel *SelectStatement, table *catalog.Tabl
 		}
 	}
 
+	var aggNode *AggregateNode
 	if len(sel.GroupBy) > 0 || a.hasAggregateFuncs(sel.Columns) {
-		aggNode, err := a.buildAggregateNode(sel, table, current)
+		var err error
+		aggNode, err = a.buildAggregateNode(sel, table, current)
 		if err != nil {
 			return nil, err
 		}
@@ -108,6 +110,12 @@ func (a *Analyzer) buildSelectPipeline(sel *SelectStatement, table *catalog.Tabl
 	projectExprs, projectAliases, projectSchema, err := a.buildProjectOutput(sel.Columns, resolvedCols, table)
 	if err != nil {
 		return nil, err
+	}
+
+	// 当存在 AggregateNode 时，将投影中的聚合函数表达式替换为对聚合输出列的引用，
+	// 避免 ProjectNode 重复求值聚合函数。
+	if aggNode != nil {
+		projectExprs = remapAggregateRefs(projectExprs, aggNode)
 	}
 
 	if a.needsProjection(sel, table) {
@@ -257,6 +265,13 @@ func (a *Analyzer) collectRequiredColumns(sel *SelectStatement, table *catalog.T
 	a.collectExprColumns(sel.Where, colSet)
 
 	for _, col := range sel.Columns {
+		// SELECT * 需要所有列，确保带 WHERE 的全表查询能返回完整行
+		if _, ok := col.Expr.(*StarExpr); ok {
+			for _, tc := range table.Columns {
+				colSet[tc.Name] = true
+			}
+			continue
+		}
 		a.collectExprColumns(col.Expr, colSet)
 	}
 
