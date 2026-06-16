@@ -98,12 +98,12 @@
 | `github.com/xwb1989/sqlparser` | Query | SQL 解析 | 步骤 17 |
 | `github.com/cespare/xxhash/v2` | Common | 高性能哈希 | 步骤 3 |
 | `go.yaml.in/yaml/v2` | Config | YAML 配置解析（计划 2，复用 prometheus 间接依赖，模板注释走 embed） | 计划 2 |
+| `github.com/jedib0t/go-pretty/v6` | cli | 表格渲染（Unicode box-drawing，复刻 ClickHouse PrettyCompact） | 计划 3 |
 
 ### 7.2 计划引入依赖（见 [roadmap.md](.agent_plan/roadmap.md)）
 
 | 库 | 模块 | 用途 | 许可证 | 关联计划 |
 |---|------|------|--------|----------|
-| `github.com/jedib0t/go-pretty/v6` | cli | 表格渲染（Unicode box-drawing，复刻 ClickHouse PrettyCompact） | MIT | 计划 3 |
 | `github.com/fatih/color` | cli | 终端颜色（表头/错误/NULL 高亮，`NO_COLOR` 兼容） | MIT | 计划 3 |
 | `github.com/peterh/liner` | cli | REPL 行编辑/历史/Ctrl-R/Tab 补全 | X11 | 计划 3 |
 | `github.com/schollz/progressbar/v3` | cli | 查询进度反馈（行数/耗时） | MIT | 计划 3 |

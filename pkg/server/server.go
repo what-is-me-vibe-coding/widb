@@ -329,7 +329,7 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 	totalRows := countRows(chunks)
 
 	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
-	return &Response{Code: 0, Data: data, Rows: totalRows}, nil
+	return &Response{Code: 0, Data: data, Rows: totalRows, Columns: colNames}, nil
 }
 
 // handleWrite 批量写入数据。
