@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+
+	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 )
 
 // 协议常量定义。
@@ -126,4 +128,8 @@ type Response struct {
 	Data    any      `json:"data,omitempty"`
 	Rows    int      `json:"rows,omitempty"`
 	Columns []string `json:"columns,omitempty"`
+	// ColumnTypes 携带查询结果集每列的 DataType，供进程内调用方（如 pgwire
+	// 适配器）获取准确的列类型，以生成正确的 PG RowDescription。
+	// 不参与 JSON 序列化，避免变更 TCP/HTTP 线协议。
+	ColumnTypes []common.DataType `json:"-"`
 }

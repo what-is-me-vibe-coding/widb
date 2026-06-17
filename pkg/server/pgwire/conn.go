@@ -218,7 +218,12 @@ func (h *connHandler) handleQuery(sql string) {
 // 使用 result.CommandTag 作为命令标签，避免对 INSERT/UPDATE...RETURNING 等带结果集
 // 的写操作错误地返回 "SELECT N" 标签（修复 review #1）。
 func (h *connHandler) sendQueryResult(result *SQLResult) {
-	types := inferColumnTypes(result.Columns, result.Rows)
+	// 优先使用 Schema 列类型生成准确的 RowDescription（修复 DATE/TIMESTAMP/INT
+	// 被错误推断为 TEXT 的问题）；Schema 类型缺失时回退到按行值推断。
+	types := columnTypesFromSchema(result.Columns, result.ColumnTypes)
+	if types == nil {
+		types = inferColumnTypes(result.Columns, result.Rows)
+	}
 	if err := h.send(buildRowDescription(result.Columns, types)); err != nil {
 		log.Printf("pgwire: send row description: %v", err)
 		return

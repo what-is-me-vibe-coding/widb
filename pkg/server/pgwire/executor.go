@@ -10,6 +10,9 @@ type SQLExecutor interface {
 type SQLResult struct {
 	// Columns 是结果集的列名列表（仅 SELECT 查询有值）。
 	Columns []string
+	// ColumnTypes 是结果集每列的 widb DataType，用于生成准确的 PG RowDescription。
+	// 为 nil 时回退到按行值推断类型。
+	ColumnTypes []int
 	// Rows 是结果集的行数据，每行为列名到值的映射。
 	Rows []map[string]any
 	// RowsAffected 是受影响的行数（INSERT 返回插入行数）。
