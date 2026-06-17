@@ -10,6 +10,8 @@ server:
   tcp_addr: "0.0.0.0:9000"
   # HTTP REST API 监听地址（/query、/write、/health、/metrics）
   http_addr: "0.0.0.0:8080"
+  # PostgreSQL wire 协议监听地址（JDBC/psql 接入，留空则不启用）
+  pg_addr: "0.0.0.0:5432"
 
 # 存储引擎配置
 storage:

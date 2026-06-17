@@ -43,6 +43,7 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 type ServerConfig struct {
 	TCPAddr  string `yaml:"tcp_addr"`
 	HTTPAddr string `yaml:"http_addr"`
+	PGAddr   string `yaml:"pg_addr"`
 }
 
 // StorageConfig 是存储引擎相关的配置。
@@ -73,6 +74,7 @@ func Default() Config {
 		Server: ServerConfig{
 			TCPAddr:  "0.0.0.0:9000",
 			HTTPAddr: "0.0.0.0:8080",
+			PGAddr:   "0.0.0.0:5432",
 		},
 		Storage: StorageConfig{
 			DataDir:         "./data",

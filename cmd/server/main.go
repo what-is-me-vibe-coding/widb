@@ -51,6 +51,7 @@ type cliFlags struct {
 	genConfigPath     *string
 	tcpAddr           *string
 	httpAddr          *string
+	pgAddr            *string
 	dataDir           *string
 	maxMemTableSize   *int64
 	enableScheduler   *bool
@@ -69,6 +70,7 @@ func newCLIFlags() *cliFlags {
 		genConfigPath:     fs.String("gen-config", "", "生成带注释的默认配置模板到指定路径后退出"),
 		tcpAddr:           fs.String("tcp", "", "TCP 监听地址（覆盖配置文件）"),
 		httpAddr:          fs.String("http", "", "HTTP 监听地址（覆盖配置文件）"),
+		pgAddr:            fs.String("pg", "", "PostgreSQL wire 协议监听地址（覆盖配置文件，留空禁用）"),
 		dataDir:           fs.String("data", "", "数据目录（覆盖配置文件）"),
 		maxMemTableSize:   fs.Int64("max-memtable", 0, "MemTable 最大字节数（覆盖配置文件）"),
 		enableScheduler:   fs.Bool("scheduler", false, "启用后台调度器（覆盖配置文件）"),
@@ -100,6 +102,9 @@ func (c *cliFlags) applyOverrides(cfg *config.Config) {
 	if set["http"] {
 		cfg.Server.HTTPAddr = *c.httpAddr
 	}
+	if set["pg"] {
+		cfg.Server.PGAddr = *c.pgAddr
+	}
 	if set["data"] {
 		cfg.Storage.DataDir = *c.dataDir
 	}
@@ -128,6 +133,7 @@ func toServerConfig(cfg config.Config) server.Config {
 	return server.Config{
 		TCPAddr:         cfg.Server.TCPAddr,
 		HTTPAddr:        cfg.Server.HTTPAddr,
+		PGAddr:          cfg.Server.PGAddr,
 		DataDir:         cfg.Storage.DataDir,
 		MaxMemTableSize: cfg.Storage.MaxMemTableSize,
 		EnableScheduler: cfg.Scheduler.Enabled,

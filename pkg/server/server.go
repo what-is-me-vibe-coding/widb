@@ -12,9 +12,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/query"
+	"github.com/what-is-me-vibe-coding/test-db/pkg/server/pgwire"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
 
@@ -26,6 +26,7 @@ const defaultMaxMemTableSize = 64 * 1024 * 1024 // 64MB
 type Config struct {
 	TCPAddr         string
 	HTTPAddr        string
+	PGAddr          string // PostgreSQL wire 协议监听地址，空表示不启用
 	DataDir         string
 	MaxMemTableSize int64
 	MaxConnections  int                     // 最大并发 TCP 连接数，0 表示不限制
@@ -48,6 +49,7 @@ type Server struct {
 	tcpListener  net.Listener
 	httpServer   *http.Server
 	httpListener net.Listener
+	pgServer     *pgwire.Server
 
 	connCount int64 // 当前活跃 TCP 连接数
 	conns     map[net.Conn]struct{}
@@ -188,6 +190,17 @@ func (s *Server) Start() error {
 
 	log.Printf("HTTP 监听 %s", s.cfg.HTTPAddr)
 
+	// 启动 PostgreSQL wire 协议服务（若配置了地址）
+	if s.cfg.PGAddr != "" {
+		adapter := &pgwireAdapter{server: s}
+		s.pgServer = pgwire.NewServer(s.cfg.PGAddr, adapter)
+		if err := s.pgServer.Start(); err != nil {
+			// PG 监听失败不阻断启动，仅记录日志
+			log.Printf("server: start pgwire: %v", err)
+			s.pgServer = nil
+		}
+	}
+
 	// 启动后台调度器
 	if s.cfg.EnableScheduler {
 		s.storage.StartScheduler(s.cfg.SchedulerConfig)
@@ -209,6 +222,14 @@ func (s *Server) TCPAddr() string {
 func (s *Server) HTTPAddr() string {
 	if s.httpListener != nil {
 		return s.httpListener.Addr().String()
+	}
+	return ""
+}
+
+// PGAddr 返回 PostgreSQL wire 协议监听地址，未启动时返回空字符串。
+func (s *Server) PGAddr() string {
+	if s.pgServer != nil {
+		return s.pgServer.Addr()
 	}
 	return ""
 }
@@ -257,6 +278,9 @@ func (s *Server) closeListeners() {
 		if err := s.httpServer.Close(); err != nil {
 			log.Printf("server: close http server: %v", err)
 		}
+	}
+	if s.pgServer != nil {
+		s.pgServer.Stop()
 	}
 }
 
@@ -385,62 +409,6 @@ func (s *Server) handleCreateTable(ct *query.CreateTableStatement) (*Response, e
 	return &Response{Code: 0, Message: "成功"}, nil
 }
 
-// handleInsert 执行 INSERT 语句，将行数据写入存储引擎。
-func (s *Server) handleInsert(ins *query.InsertStatement) (*Response, error) {
-	tbl, err := s.catalog.GetTable(ins.Table)
-	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
-	}
-
-	// 确定列顺序：显式指定列时使用之，否则使用表定义的全部列
-	colNames := ins.Columns
-	if len(colNames) == 0 {
-		colNames = make([]string, len(tbl.Columns))
-		for i, c := range tbl.Columns {
-			colNames[i] = c.Name
-		}
-	}
-
-	colTypes := tbl.ColTypeMap()
-	writeRows := make([]storage.WriteRow, 0, len(ins.Rows))
-	for rowIdx, rowExprs := range ins.Rows {
-		if len(rowExprs) != len(colNames) {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("第 %d 行: 值数量 %d 与列数量 %d 不匹配", rowIdx+1, len(rowExprs), len(colNames))}, nil
-		}
-
-		values := make(map[string]common.Value, len(colNames))
-		for i, expr := range rowExprs {
-			val, convErr := exprToValue(expr)
-			if convErr != nil {
-				s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-				return &Response{Code: -1, Message: fmt.Sprintf("第 %d 行第 %d 列: %v", rowIdx+1, i+1, convErr)}, nil
-			}
-			// 按表定义的类型做必要转换
-			if typ, ok := colTypes[colNames[i]]; ok && val.Valid && val.Typ != typ {
-				val = coerceValueByType(val, typ)
-			}
-			values[colNames[i]] = val
-		}
-
-		key, keyErr := buildPrimaryKeyFromValues(tbl, values)
-		if keyErr != nil {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("第 %d 行: %v", rowIdx+1, keyErr)}, nil
-		}
-		writeRows = append(writeRows, storage.WriteRow{Key: key, Values: values})
-	}
-
-	if err := s.storage.WriteBatch(writeRows); err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
-	}
-
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
-	return &Response{Code: 0, Rows: len(writeRows)}, nil
-}
-
 // buildColumnMetaFromCatalog 从 catalog 的第一张表构建存储引擎列元数据。
 // 当前存储引擎为单表模型，取任意一张表即可。
 func buildColumnMetaFromCatalog(cat *catalog.Catalog) []storage.ColumnMeta {
@@ -462,133 +430,4 @@ func buildColumnMeta(cols []catalog.ColumnDef) []storage.ColumnMeta {
 		}
 	}
 	return result
-}
-
-// exprToValue 从 INSERT VALUES 中的字面量表达式提取 common.Value。
-func exprToValue(expr query.Expression) (common.Value, error) {
-	switch e := expr.(type) {
-	case *query.LiteralExpr:
-		return e.Value, nil
-	default:
-		return common.NewNull(), fmt.Errorf("INSERT 仅支持字面量值，不支持 %T", expr)
-	}
-}
-
-// coerceValueByType 按目标类型做简单转换，转换失败返回原值。
-func coerceValueByType(val common.Value, target common.DataType) common.Value {
-	if !val.Valid || val.Typ == target {
-		return val
-	}
-	switch target {
-	case common.TypeInt64:
-		switch val.Typ {
-		case common.TypeFloat64:
-			return common.NewInt64(int64(val.Float64))
-		case common.TypeBool:
-			return common.NewInt64(val.Int64)
-		}
-	case common.TypeFloat64:
-		switch val.Typ {
-		case common.TypeInt64:
-			return common.NewFloat64(float64(val.Int64))
-		case common.TypeBool:
-			return common.NewFloat64(float64(val.Int64))
-		}
-	case common.TypeBool:
-		return common.NewBool(val.Int64 != 0)
-	}
-	return val
-}
-
-// buildPrimaryKeyFromValues 从列值 map 中提取主键并拼接为存储 key。
-// 使用 \x00 作为分隔符，与 HTTP 写入路径保持一致。
-func buildPrimaryKeyFromValues(tbl *catalog.Table, values map[string]common.Value) (string, error) {
-	var builder strings.Builder
-	for i, pk := range tbl.PrimaryKey {
-		val, ok := values[pk]
-		if !ok || !val.Valid {
-			return "", fmt.Errorf("主键列 %s 缺失", pk)
-		}
-		if i > 0 {
-			builder.WriteByte(0)
-		}
-		builder.WriteString(val.String())
-	}
-	return builder.String(), nil
-}
-
-// handleWrite 批量写入数据。
-func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
-	start := time.Now()
-
-	tbl, err := s.catalog.GetTable(req.Table)
-	if err != nil {
-		s.metrics.WritesTotal.WithLabelValues("table_not_found").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
-	}
-
-	writeRows := make([]storage.WriteRow, 0, len(req.Rows))
-	for _, row := range req.Rows {
-		key, values, convErr := s.convertWriteRow(tbl, row)
-		if convErr != nil {
-			s.metrics.WritesTotal.WithLabelValues("convert_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("行数据转换错误: %v", convErr)}, nil
-		}
-		writeRows = append(writeRows, storage.WriteRow{Key: key, Values: values})
-	}
-
-	if err := s.storage.WriteBatch(writeRows); err != nil {
-		s.metrics.WritesTotal.WithLabelValues("write_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
-	}
-
-	s.metrics.WritesTotal.WithLabelValues("success").Add(float64(len(writeRows)))
-	s.metrics.WriteDuration.WithLabelValues("success").Observe(time.Since(start).Seconds())
-	return &Response{Code: 0, Rows: len(writeRows)}, nil
-}
-
-// convertWriteRow 将 JSON 行数据转换为存储引擎需要的格式。
-func (s *Server) convertWriteRow(
-	tbl *catalog.Table, row map[string]any,
-) (string, map[string]common.Value, error) {
-	values := make(map[string]common.Value, len(row))
-	colTypes := tbl.ColTypeMap()
-
-	for colName, rawVal := range row {
-		colType, ok := colTypes[colName]
-		if !ok {
-			continue
-		}
-		val, err := interfaceToValue(rawVal, colType)
-		if err != nil {
-			return "", nil, fmt.Errorf("列 %s: %w", colName, err)
-		}
-		values[colName] = val
-	}
-
-	key, err := s.buildPrimaryKey(tbl, row)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return key, values, nil
-}
-
-// buildPrimaryKey 从行数据中提取主键值，拼接为存储 key。
-// 使用 \x00 作为分隔符，避免主键值包含分隔符时产生碰撞。
-func (s *Server) buildPrimaryKey(
-	tbl *catalog.Table, row map[string]any,
-) (string, error) {
-	var builder strings.Builder
-	for i, pk := range tbl.PrimaryKey {
-		rawVal, ok := row[pk]
-		if !ok {
-			return "", fmt.Errorf("主键列 %s 缺失", pk)
-		}
-		if i > 0 {
-			builder.WriteByte(0)
-		}
-		fmt.Fprintf(&builder, "%v", rawVal)
-	}
-	return builder.String(), nil
 }
