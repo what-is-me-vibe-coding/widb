@@ -136,6 +136,93 @@ func (s *InsertStatement) String() string {
 	return b.String()
 }
 
+// UpdateAssignment 表示 UPDATE 语句中的一个 SET 赋值（列名 = 表达式）。
+type UpdateAssignment struct {
+	Column string
+	Value  Expression
+}
+
+func (a UpdateAssignment) String() string {
+	return fmt.Sprintf("%s = %s", a.Column, a.Value.String())
+}
+
+// UpdateStatement 表示 UPDATE 语句。
+type UpdateStatement struct {
+	Table       string
+	Assignments []UpdateAssignment
+	Where       Expression
+}
+
+func (s *UpdateStatement) statementNode() {}
+func (s *UpdateStatement) String() string {
+	var b strings.Builder
+	b.WriteString("UPDATE ")
+	b.WriteString(s.Table)
+	b.WriteString(" SET ")
+	for i, a := range s.Assignments {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(a.String())
+	}
+	if s.Where != nil {
+		b.WriteString(" WHERE ")
+		b.WriteString(s.Where.String())
+	}
+	return b.String()
+}
+
+// DeleteStatement 表示 DELETE 语句。
+type DeleteStatement struct {
+	Table string
+	Where Expression
+}
+
+func (s *DeleteStatement) statementNode() {}
+func (s *DeleteStatement) String() string {
+	var b strings.Builder
+	b.WriteString("DELETE FROM ")
+	b.WriteString(s.Table)
+	if s.Where != nil {
+		b.WriteString(" WHERE ")
+		b.WriteString(s.Where.String())
+	}
+	return b.String()
+}
+
+// DropTableStatement 表示 DROP TABLE 语句。
+type DropTableStatement struct {
+	Table    string
+	IfExists bool
+}
+
+func (s *DropTableStatement) statementNode() {}
+func (s *DropTableStatement) String() string {
+	var b strings.Builder
+	b.WriteString("DROP TABLE ")
+	if s.IfExists {
+		b.WriteString("IF EXISTS ")
+	}
+	b.WriteString(s.Table)
+	return b.String()
+}
+
+// ShowTablesStatement 表示 SHOW TABLES 语句，列出当前数据库中的所有表。
+type ShowTablesStatement struct{}
+
+func (s *ShowTablesStatement) statementNode() {}
+func (s *ShowTablesStatement) String() string { return "SHOW TABLES" }
+
+// DescribeStatement 表示 DESCRIBE/DESC 语句，查看表结构。
+type DescribeStatement struct {
+	Table string
+}
+
+func (s *DescribeStatement) statementNode() {}
+func (s *DescribeStatement) String() string {
+	return fmt.Sprintf("DESCRIBE %s", s.Table)
+}
+
 // CreateTableStatement 表示 CREATE TABLE 语句。
 type CreateTableStatement struct {
 	Table       string

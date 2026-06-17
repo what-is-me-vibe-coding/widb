@@ -17,6 +17,7 @@ import (
 type TableEngine interface {
 	Write(key string, values map[string]common.Value) error
 	WriteBatch(rows []storage.WriteRow) error
+	Delete(key string) error
 	ScanRange(start, end string) []storage.ScanEntry
 	ScanRangeWithPruning(start, end string, preds []storage.ColumnPredicate) []storage.ScanEntry
 	ColumnMeta() []storage.ColumnMeta

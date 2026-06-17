@@ -359,9 +359,16 @@ func v14CheckColumnType(t *testing.T, parser *Parser, sql, colName string, wantT
 }
 
 func TestV14ParserDropTable(t *testing.T) {
-	_, err := NewParser().Parse("DROP TABLE t")
-	if err == nil {
-		t.Error("expected error for unsupported DDL action DROP")
+	stmt, err := NewParser().Parse("DROP TABLE t")
+	if err != nil {
+		t.Fatalf("Parse DROP TABLE failed: %v", err)
+	}
+	dt, ok := stmt.(*DropTableStatement)
+	if !ok {
+		t.Fatalf("expected *DropTableStatement, got %T", stmt)
+	}
+	if dt.Table != "t" {
+		t.Errorf("Table = %q, want %q", dt.Table, "t")
 	}
 }
 

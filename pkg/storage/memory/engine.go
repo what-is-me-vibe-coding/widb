@@ -109,6 +109,27 @@ func (e *Engine) WriteBatch(rows []storage.WriteRow) error {
 	return nil
 }
 
+// Delete 删除指定 key 的行。若 key 不存在则静默返回 nil（幂等）。
+// 使用二分查找定位，复杂度 O(log n + n)（n 为删除后的切片移动）。
+func (e *Engine) Delete(key string) error {
+	if key == "" {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return errEngineClosed
+	}
+	idx := sort.Search(len(e.rows), func(i int) bool {
+		return e.rows[i].key >= key
+	})
+	if idx >= len(e.rows) || e.rows[idx].key != key {
+		return nil // key 不存在，幂等返回
+	}
+	e.rows = append(e.rows[:idx], e.rows[idx+1:]...)
+	return nil
+}
+
 // sortAndDedupLocked 将 e.rows 按 key 升序排序并对同 key 的条目去重（保留最后一个）。
 // 调用者必须持有 e.mu。使用稳定排序保证同 key 时后追加的条目（版本号更大）胜出，
 // 从而与逐行 upsert 的 last-wins 语义保持一致。

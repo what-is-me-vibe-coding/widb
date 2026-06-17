@@ -269,3 +269,23 @@ func isTruthyValue(v common.Value) bool {
 	}
 	return true
 }
+
+// EvalRowPredicate 在给定行数据上求值 WHERE 谓词表达式，返回是否匹配。
+// 供 server 层的 UPDATE/DELETE 处理器直接使用，无需经过完整的 analyzer 管线。
+// expr 为 nil 时返回 true（无 WHERE 子句，匹配所有行）。
+func EvalRowPredicate(expr Expression, row map[string]common.Value) bool {
+	if expr == nil {
+		return true
+	}
+	val, err := evalExpr(expr, row, nil)
+	if err != nil {
+		return false
+	}
+	return isTruthyValue(val)
+}
+
+// EvalExprOnRow 在给定行数据上求值表达式，返回求值结果。
+// 供 server 层的 UPDATE SET 赋值使用，支持字面量与列引用。
+func EvalExprOnRow(expr Expression, row map[string]common.Value) (common.Value, error) {
+	return evalExpr(expr, row, nil)
+}

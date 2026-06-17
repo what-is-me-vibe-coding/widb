@@ -380,3 +380,45 @@ func TestEngineStartScheduler(_ *testing.T) {
 
 	e.StartScheduler(storage.SchedulerConfig{})
 }
+
+// TestEngineDelete 验证 Delete 删除指定 key，且对不存在的 key 幂等返回 nil。
+func TestEngineDelete(t *testing.T) {
+	e := New()
+	defer func() { _ = e.Close() }()
+
+	_ = e.Write("a", map[string]common.Value{"v": intVal(1)})
+	_ = e.Write("b", map[string]common.Value{"v": intVal(2)})
+
+	// 删除存在的 key
+	if err := e.Delete("a"); err != nil {
+		t.Fatalf("Delete(a) 失败: %v", err)
+	}
+	if _, ok := e.Get("a"); ok {
+		t.Error("Delete 后 Get(a) 应返回 false")
+	}
+	// 其余 key 不受影响
+	if _, ok := e.Get("b"); !ok {
+		t.Error("Get(b) 应仍存在")
+	}
+
+	// 删除不存在的 key 应幂等返回 nil
+	if err := e.Delete("nonexistent"); err != nil {
+		t.Errorf("Delete 不存在的 key 应返回 nil, got %v", err)
+	}
+
+	// 空key 应直接返回 nil
+	if err := e.Delete(""); err != nil {
+		t.Errorf("Delete(\"\") 应返回 nil, got %v", err)
+	}
+}
+
+// TestEngineDeleteClosed 验证关闭后 Delete 返回错误。
+func TestEngineDeleteClosed(t *testing.T) {
+	e := New()
+	_ = e.Write("a", map[string]common.Value{"v": intVal(1)})
+	_ = e.Close()
+
+	if err := e.Delete("a"); err == nil {
+		t.Error("关闭后 Delete 应返回错误")
+	}
+}

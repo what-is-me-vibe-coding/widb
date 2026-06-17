@@ -482,7 +482,11 @@ func (e *Engine) scanRangeUnlocked(start, end string) ([]ScanEntry, error) {
 
 	results := make([]ScanEntry, 0, estimatedSize)
 	for mi.Next() {
-		results = append(results, mi.Entry())
+		entry := mi.Entry()
+		if isTombstone(entry.Value) {
+			continue // 跳过墓碑（已删除的行）
+		}
+		results = append(results, entry)
 	}
 
 	if err := mi.Err(); err != nil {

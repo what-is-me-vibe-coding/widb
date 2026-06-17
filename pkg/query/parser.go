@@ -36,8 +36,13 @@ func NewParser() *Parser {
 }
 
 // Parse 将 SQL 字符串解析为 Statement。
-// 支持 SELECT、INSERT、CREATE TABLE 三种语句。
+// 支持 SELECT、INSERT、CREATE TABLE、UPDATE、DELETE、DROP TABLE、
+// SHOW TABLES、DESCRIBE 语句。
 func (p *Parser) Parse(sql string) (Statement, error) {
+	// SHOW TABLES / DESCRIBE 不被 sqlparser 支持，在此预先拦截。
+	if stmt, ok := tryParseMetaCommand(sql); ok {
+		return stmt, nil
+	}
 	normalized := p.preprocessSQL(sql)
 	stmt, err := sqlparser.ParseStrictDDL(normalized)
 	if err != nil {
@@ -63,6 +68,10 @@ func (p *Parser) convert(stmt sqlparser.Statement, originalSQL string) (Statemen
 		return p.convertSelect(s)
 	case *sqlparser.Insert:
 		return p.convertInsert(s)
+	case *sqlparser.Update:
+		return p.convertUpdate(s)
+	case *sqlparser.Delete:
+		return p.convertDelete(s)
 	case *sqlparser.DDL:
 		return p.convertDDL(s, originalSQL)
 	default:
@@ -139,8 +148,11 @@ func (p *Parser) convertInsert(ins *sqlparser.Insert) (*InsertStatement, error) 
 	}, nil
 }
 
-// convertDDL 转换 DDL 语句（仅支持 CREATE TABLE）。
-func (p *Parser) convertDDL(ddl *sqlparser.DDL, originalSQL string) (*CreateTableStatement, error) {
+// convertDDL 转换 DDL 语句（CREATE TABLE / DROP TABLE）。
+func (p *Parser) convertDDL(ddl *sqlparser.DDL, originalSQL string) (Statement, error) {
+	if ddl.Action == sqlparser.DropStr {
+		return p.convertDropTable(ddl, originalSQL)
+	}
 	if ddl.Action != sqlparser.CreateStr {
 		return nil, fmt.Errorf("query parse: unsupported DDL action %q", ddl.Action)
 	}
@@ -180,6 +192,40 @@ func extractEngine(originalSQL string) string {
 		return ""
 	}
 	return strings.ToLower(m[1])
+}
+
+// convertDropTable 转换 DROP TABLE 语句。
+// 注意：sqlparser 在 DROP 语句中将表名放在 ddl.Table（而非 ddl.NewName，
+// 后者仅用于 CREATE 语句）。
+func (p *Parser) convertDropTable(ddl *sqlparser.DDL, originalSQL string) (*DropTableStatement, error) {
+	tableName := sqlparser.String(ddl.Table)
+	ifExists := strings.Contains(strings.ToLower(originalSQL), "if exists")
+	return &DropTableStatement{Table: tableName, IfExists: ifExists}, nil
+}
+
+// metaCommandRe 匹配 SHOW TABLES / DESCRIBE table / DESC table 语句。
+// sqlparser 不支持这些 MySQL 元命令，因此在 Parse 入口预先拦截。
+var metaCommandRe = regexp.MustCompile(`(?i)^\s*(SHOW\s+TABLES|DESCRIBE|DESC)\b(.*)$`)
+
+// tryParseMetaCommand 尝试解析 SHOW TABLES / DESCRIBE / DESC 语句。
+// 返回 (stmt, true) 表示匹配成功；返回 (nil, false) 表示非元命令，交由 sqlparser 处理。
+func tryParseMetaCommand(sql string) (Statement, bool) {
+	m := metaCommandRe.FindStringSubmatch(sql)
+	if m == nil {
+		return nil, false
+	}
+	keyword := strings.ToUpper(strings.TrimSpace(m[1]))
+	rest := strings.TrimSpace(m[2])
+	if strings.HasPrefix(keyword, "SHOW") {
+		return &ShowTablesStatement{}, true
+	}
+	// DESCRIBE / DESC <table>
+	table := strings.TrimRight(rest, ";")
+	table = strings.TrimSpace(strings.Trim(table, "`"))
+	if table == "" {
+		return nil, false // 语法不完整，交由 sqlparser 报错
+	}
+	return &DescribeStatement{Table: table}, true
 }
 
 // convertSelectExprs 转换 SELECT 列表。

@@ -24,13 +24,24 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 		return &Response{Code: -1, Message: fmt.Sprintf("SQL 解析错误: %v", err)}, nil
 	}
 
-	// DDL/DML 语句（CREATE TABLE / INSERT）由服务层直接执行，
+	// DDL/DML 语句（CREATE TABLE / INSERT / UPDATE / DELETE / DROP TABLE /
+	// SHOW TABLES / DESCRIBE）由服务层直接执行，
 	// 不走 analyzer/executor 路径（它们仅处理 SELECT 这类只读查询）。
 	switch st := stmt.(type) {
 	case *query.CreateTableStatement:
 		return s.handleCreateTable(st)
 	case *query.InsertStatement:
 		return s.handleInsert(st)
+	case *query.UpdateStatement:
+		return s.handleUpdate(st)
+	case *query.DeleteStatement:
+		return s.handleDelete(st)
+	case *query.DropTableStatement:
+		return s.handleDropTable(st)
+	case *query.ShowTablesStatement:
+		return s.handleShowTables()
+	case *query.DescribeStatement:
+		return s.handleDescribe(st)
 	}
 
 	plan, err := s.analyzer.Analyze(stmt)
@@ -82,43 +93,59 @@ func (s *Server) handleInsert(ins *query.InsertStatement) (*Response, error) {
 		}
 	}
 
+	eng := s.adapter.engineForTable(ins.Table)
 	colTypes := tbl.ColTypeMap()
 	writeRows := make([]storage.WriteRow, 0, len(ins.Rows))
 	for rowIdx, rowExprs := range ins.Rows {
-		if len(rowExprs) != len(colNames) {
+		wr, rErr := s.buildInsertWriteRow(tbl, colNames, colTypes, rowExprs, rowIdx, eng)
+		if rErr != nil {
 			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("第 %d 行: 值数量 %d 与列数量 %d 不匹配", rowIdx+1, len(rowExprs), len(colNames))}, nil
+			return &Response{Code: -1, Message: rErr.Error()}, nil
 		}
-
-		values := make(map[string]common.Value, len(colNames))
-		for i, expr := range rowExprs {
-			val, convErr := exprToValue(expr)
-			if convErr != nil {
-				s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-				return &Response{Code: -1, Message: fmt.Sprintf("第 %d 行第 %d 列: %v", rowIdx+1, i+1, convErr)}, nil
-			}
-			// 按表定义的类型做必要转换
-			if typ, ok := colTypes[colNames[i]]; ok && val.Valid && val.Typ != typ {
-				val = coerceValueByType(val, typ)
-			}
-			values[colNames[i]] = val
-		}
-
-		key, keyErr := buildPrimaryKeyFromValues(tbl, values)
-		if keyErr != nil {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("第 %d 行: %v", rowIdx+1, keyErr)}, nil
-		}
-		writeRows = append(writeRows, storage.WriteRow{Key: key, Values: values})
+		writeRows = append(writeRows, wr)
 	}
 
-	if err := s.adapter.engineForTable(ins.Table).WriteBatch(writeRows); err != nil {
+	if err := eng.WriteBatch(writeRows); err != nil {
 		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
 		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
 	}
 
 	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
 	return &Response{Code: 0, Rows: len(writeRows)}, nil
+}
+
+// buildInsertWriteRow 构造单行 INSERT 的 WriteRow，包含列值转换、主键生成与冲突检查。
+// 返回错误时附带面向用户的中文错误信息（含行号）。
+func (s *Server) buildInsertWriteRow(
+	tbl *catalog.Table, colNames []string, colTypes map[string]common.DataType,
+	rowExprs []query.Expression, rowIdx int, eng TableEngine,
+) (storage.WriteRow, error) {
+	if len(rowExprs) != len(colNames) {
+		return storage.WriteRow{}, fmt.Errorf("第 %d 行: 值数量 %d 与列数量 %d 不匹配", rowIdx+1, len(rowExprs), len(colNames))
+	}
+
+	values := make(map[string]common.Value, len(colNames))
+	for i, expr := range rowExprs {
+		val, convErr := exprToValue(expr)
+		if convErr != nil {
+			return storage.WriteRow{}, fmt.Errorf("第 %d 行第 %d 列: %v", rowIdx+1, i+1, convErr)
+		}
+		// 按表定义的类型做必要转换
+		if typ, ok := colTypes[colNames[i]]; ok && val.Valid && val.Typ != typ {
+			val = coerceValueByType(val, typ)
+		}
+		values[colNames[i]] = val
+	}
+
+	key, keyErr := buildPrimaryKeyFromValues(tbl, values)
+	if keyErr != nil {
+		return storage.WriteRow{}, fmt.Errorf("第 %d 行: %v", rowIdx+1, keyErr)
+	}
+	// 主键冲突检查：若 key 已存在则拒绝插入
+	if conflictErr := checkInsertPKConflict(eng, key); conflictErr != nil {
+		return storage.WriteRow{}, fmt.Errorf("第 %d 行: %v", rowIdx+1, conflictErr)
+	}
+	return storage.WriteRow{Key: key, Values: values}, nil
 }
 
 // buildColumnMetaFromCatalog 从 catalog 的第一张表构建存储引擎列元数据。

@@ -349,11 +349,27 @@ func TestParseCreateTableIfNotExists(t *testing.T) {
 	}
 }
 
-func TestParseUnsupportedStatement(t *testing.T) {
+func TestParseUpdateStatement(t *testing.T) {
 	p := NewParser()
-	_, err := p.Parse("UPDATE t SET a = 1")
-	if err == nil {
-		t.Error("expected error for unsupported statement")
+	stmt, err := p.Parse("UPDATE t SET a = 1, b = 2 WHERE id = 10")
+	if err != nil {
+		t.Fatalf("Parse UPDATE: %v", err)
+	}
+	upd, ok := stmt.(*UpdateStatement)
+	if !ok {
+		t.Fatalf("expected *UpdateStatement, got %T", stmt)
+	}
+	if upd.Table != "t" {
+		t.Errorf("Table = %q, want %q", upd.Table, "t")
+	}
+	if len(upd.Assignments) != 2 {
+		t.Fatalf("Assignments len = %d, want 2", len(upd.Assignments))
+	}
+	if upd.Assignments[0].Column != "a" {
+		t.Errorf("Assignments[0].Column = %q, want %q", upd.Assignments[0].Column, "a")
+	}
+	if upd.Where == nil {
+		t.Error("expected WHERE clause")
 	}
 }
 
@@ -365,11 +381,21 @@ func TestParseInvalidSQL(t *testing.T) {
 	}
 }
 
-func TestParseUnsupportedDDL(t *testing.T) {
+func TestParseDropTable(t *testing.T) {
 	p := NewParser()
-	_, err := p.Parse("DROP TABLE t")
-	if err == nil {
-		t.Error("expected error for DROP TABLE")
+	stmt, err := p.Parse("DROP TABLE t")
+	if err != nil {
+		t.Fatalf("Parse DROP TABLE: %v", err)
+	}
+	dt, ok := stmt.(*DropTableStatement)
+	if !ok {
+		t.Fatalf("expected *DropTableStatement, got %T", stmt)
+	}
+	if dt.Table != "t" {
+		t.Errorf("Table = %q, want %q", dt.Table, "t")
+	}
+	if dt.IfExists {
+		t.Error("IfExists = true, want false")
 	}
 }
 

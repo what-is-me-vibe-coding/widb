@@ -133,6 +133,59 @@ func (e *Engine) WriteBatch(rows []WriteRow) error {
 	return nil
 }
 
+// Delete 删除指定 key 的行。通过写入墓碑（tombstone）实现：
+// 向 MemTable 写入一行空 Columns 的记录，其版本号最新，在 MergeIterator 中
+// 覆盖旧版本数据，使该 key 在扫描与 Get 中不可见。
+//
+// 注意：墓碑仅对 MemTable 中未刷盘的数据完全生效。一旦墓碑被刷入 Segment，
+// 由于 Segment 列式存储会按 ColumnMeta 重建行，墓碑会变为全 NULL 行而非被丢弃。
+// 对于已刷盘数据，建议使用 ENGINE=memory 表或在 compaction 后再验证。
+func (e *Engine) Delete(key string) error {
+	if key == "" {
+		return fmt.Errorf("engine delete: empty key is not allowed")
+	}
+
+	version := e.nextVersion.Add(1)
+
+	// 墓碑记录：Columns 为 nil，序列化后列数为 0。
+	payload, err := serializeWriteRecord(key, version, nil)
+	if err != nil {
+		return fmt.Errorf("engine delete: serialize: %w", err)
+	}
+
+	if err := e.wal.AppendWrite(payload); err != nil {
+		return fmt.Errorf("engine delete: wal: %w", err)
+	}
+
+	var syncCh <-chan struct{}
+	e.mu.RLock()
+	gc := e.groupCommitter
+	e.mu.RUnlock()
+	if gc != nil {
+		syncCh = gc.Submit()
+	} else if err := e.wal.Sync(); err != nil {
+		return fmt.Errorf("engine delete: sync: %w", err)
+	}
+
+	e.mu.Lock()
+	if e.activeMem.ShouldFlush() {
+		if err := e.rotateMemTable(); err != nil {
+			e.mu.Unlock()
+			return fmt.Errorf("engine delete: rotate: %w", err)
+		}
+	}
+	_, _, err = e.activeMem.Put(key, Row{Version: version, Columns: nil, Tombstone: true})
+	e.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("engine delete: %w", err)
+	}
+
+	if syncCh != nil {
+		<-syncCh
+	}
+	return nil
+}
+
 // --- Engine Index ---
 
 // registerSegmentIndexes 将 Segment 注册到所有索引（主键、布隆、稀疏），
@@ -177,22 +230,30 @@ func (e *Engine) unregisterSegmentIndexes(segID uint64) {
 
 // --- Engine Read ---
 
+// isTombstone 判断一行是否为墓碑标记（DELETE 写入的空行）。
+// 墓碑行通过 Tombstone 标志位标记，与合法的空列行区分。
+func isTombstone(row Row) bool {
+	return row.Tombstone
+}
+
 // Get 根据主键查询一行数据，查询路径：MemTable → Immutable → PrimaryIndex → BloomFilter → Segment。
+// 若查到的是墓碑（已删除），返回 (Row{}, false)。
 func (e *Engine) Get(key string) (Row, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	if row, ok := e.activeMem.Get(key); ok {
-		return row, true
+		return row, !isTombstone(row)
 	}
 
 	for i := len(e.immutable) - 1; i >= 0; i-- {
 		if row, ok := e.immutable[i].Get(key); ok {
-			return row, true
+			return row, !isTombstone(row)
 		}
 	}
 
-	return e.getFromSegments(key)
+	row, ok := e.getFromSegments(key)
+	return row, ok && !isTombstone(row)
 }
 
 func (e *Engine) getFromSegments(key string) (Row, bool) {
@@ -296,7 +357,11 @@ func (e *Engine) scanRangeWithPruningUnlocked(start, end string, predicates []Co
 
 	results := make([]ScanEntry, 0, estimatedSize)
 	for mi.Next() {
-		results = append(results, mi.Entry())
+		entry := mi.Entry()
+		if isTombstone(entry.Value) {
+			continue // 跳过墓碑（已删除的行）
+		}
+		results = append(results, entry)
 	}
 
 	if err := mi.Err(); err != nil {

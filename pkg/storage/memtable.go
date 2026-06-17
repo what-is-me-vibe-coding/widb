@@ -27,9 +27,11 @@ var skipNodePool = sync.Pool{
 }
 
 // Row 表示 MemTable 中的一行数据，包含版本号与列值映射。
+// Tombstone 为 true 时表示该行是 DELETE 写入的墓碑标记，在读取时应被跳过。
 type Row struct {
-	Version uint64
-	Columns map[string]common.Value
+	Version   uint64
+	Columns   map[string]common.Value
+	Tombstone bool
 }
 
 // skipNode 是跳表节点。

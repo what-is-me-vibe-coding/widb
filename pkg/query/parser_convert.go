@@ -293,3 +293,55 @@ func (p *Parser) convertValues(values sqlparser.Values) ([][]Expression, error) 
 	}
 	return rows, nil
 }
+
+// convertUpdate 转换 UPDATE 语句。
+// 语法：UPDATE table SET col1 = expr1, col2 = expr2 ... [WHERE condition]
+func (p *Parser) convertUpdate(upd *sqlparser.Update) (*UpdateStatement, error) {
+	from, err := p.convertTableExprs(upd.TableExprs)
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]UpdateAssignment, 0, len(upd.Exprs))
+	for _, expr := range upd.Exprs {
+		colName := expr.Name.Name.String()
+		val, convErr := p.convertExpr(expr.Expr)
+		if convErr != nil {
+			return nil, convErr
+		}
+		assignments = append(assignments, UpdateAssignment{Column: colName, Value: val})
+	}
+
+	var where Expression
+	if upd.Where != nil {
+		where, err = p.convertExpr(upd.Where.Expr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &UpdateStatement{
+		Table:       from.Name,
+		Assignments: assignments,
+		Where:       where,
+	}, nil
+}
+
+// convertDelete 转换 DELETE 语句。
+// 语法：DELETE FROM table [WHERE condition]
+func (p *Parser) convertDelete(del *sqlparser.Delete) (*DeleteStatement, error) {
+	from, err := p.convertTableExprs(del.TableExprs)
+	if err != nil {
+		return nil, err
+	}
+
+	var where Expression
+	if del.Where != nil {
+		where, err = p.convertExpr(del.Where.Expr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &DeleteStatement{Table: from.Name, Where: where}, nil
+}
