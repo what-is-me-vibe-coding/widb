@@ -10,7 +10,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/query"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
@@ -41,6 +40,7 @@ type Server struct {
 	executor  *query.Executor
 	metrics   *Metrics
 	registry  prometheus.Registerer
+	adapter   *routingAdapter // 表路由适配器，按表名选择 LSM 或内存引擎
 
 	tcpListener  net.Listener
 	httpServer   *http.Server
@@ -52,36 +52,6 @@ type Server struct {
 	wg        sync.WaitGroup
 	done      chan struct{}
 	stopOnce  sync.Once
-}
-
-// storageAdapter 适配 storage.Engine 以实现 query.StorageProvider 接口。
-type storageAdapter struct {
-	engine *storage.Engine
-}
-
-// ScanRange 实现 StorageProvider 接口。
-func (sa *storageAdapter) ScanRange(start, end string) []storage.ScanEntry {
-	return sa.engine.ScanRange(start, end)
-}
-
-// ScanRangeWithPruning 实现 StorageProvider 接口，利用列谓词进行段裁剪。
-func (sa *storageAdapter) ScanRangeWithPruning(start, end string, predicates []storage.ColumnPredicate) []storage.ScanEntry {
-	return sa.engine.ScanRangeWithPruning(start, end, predicates)
-}
-
-// ColumnMeta 实现 StorageProvider 接口。
-func (sa *storageAdapter) ColumnMeta() []storage.ColumnMeta {
-	return sa.engine.ColumnMeta()
-}
-
-// PrimaryIndex 实现 StorageProvider 接口。
-func (sa *storageAdapter) PrimaryIndex() *index.PrimaryIndex {
-	return sa.engine.PrimaryIndex()
-}
-
-// SparseIndex 实现 StorageProvider 接口。
-func (sa *storageAdapter) SparseIndex() *index.SparseIndex {
-	return sa.engine.SparseIndex()
 }
 
 // NewServer 创建一个新的服务器实例，初始化所有组件。
@@ -113,8 +83,8 @@ func NewServer(cfg Config, opts ...Option) (*Server, error) {
 		eng.SetColumnMeta(cols)
 	}
 
-	sp := &storageAdapter{engine: eng}
-	exec := query.NewExecutor(sp)
+	adapter := newRoutingAdapter(eng)
+	exec := query.NewExecutor(adapter)
 
 	s := &Server{
 		cfg:       cfg,
@@ -124,6 +94,7 @@ func NewServer(cfg Config, opts ...Option) (*Server, error) {
 		analyzer:  query.NewAnalyzer(cat),
 		optimizer: query.NewOptimizer(),
 		executor:  exec,
+		adapter:   adapter,
 		done:      make(chan struct{}),
 		conns:     make(map[net.Conn]struct{}),
 	}
@@ -225,6 +196,11 @@ func (s *Server) Stop() error {
 		s.closeListeners()
 		s.closeAllConns()
 		s.wg.Wait()
+
+		// 先关闭所有内存引擎表，再关闭默认 LSM 引擎。
+		if s.adapter != nil {
+			s.adapter.closeAll()
+		}
 
 		if s.storage != nil {
 			if err := s.storage.Close(); err != nil {

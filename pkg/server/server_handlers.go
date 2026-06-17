@@ -62,35 +62,6 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 	return &Response{Code: 0, Data: data, Rows: totalRows, Columns: colNames}, nil
 }
 
-// handleCreateTable 执行 CREATE TABLE 语句，在 catalog 中注册表定义，
-// 并将列元数据同步到存储引擎，使后台调度器自动刷盘能正确编码列。
-func (s *Server) handleCreateTable(ct *query.CreateTableStatement) (*Response, error) {
-	cols := make([]catalog.ColumnDef, len(ct.Columns))
-	for i, c := range ct.Columns {
-		cols[i] = catalog.ColumnDef{
-			Name:     c.Name,
-			Type:     c.Type,
-			Nullable: c.Nullable,
-		}
-	}
-
-	if err := s.catalog.CreateTable(ct.Table, cols, ct.PrimaryKey, catalog.TableOptions{}); err != nil {
-		// IF NOT EXISTS 时表已存在视为成功
-		if ct.IfNotExists && strings.Contains(err.Error(), "already exists") {
-			s.metrics.QueriesTotal.WithLabelValues("success").Inc()
-			return &Response{Code: 0, Message: "成功"}, nil
-		}
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("建表错误: %v", err)}, nil
-	}
-
-	// 同步列元数据到存储引擎（单表模型：以最新创建的表为准）
-	s.storage.SetColumnMeta(buildColumnMeta(cols))
-
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
-	return &Response{Code: 0, Message: "成功"}, nil
-}
-
 // handleInsert 执行 INSERT 语句，将行数据写入存储引擎。
 func (s *Server) handleInsert(ins *query.InsertStatement) (*Response, error) {
 	tbl, err := s.catalog.GetTable(ins.Table)
@@ -138,7 +109,7 @@ func (s *Server) handleInsert(ins *query.InsertStatement) (*Response, error) {
 		writeRows = append(writeRows, storage.WriteRow{Key: key, Values: values})
 	}
 
-	if err := s.storage.WriteBatch(writeRows); err != nil {
+	if err := s.adapter.engineForTable(ins.Table).WriteBatch(writeRows); err != nil {
 		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
 		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
 	}
@@ -155,19 +126,6 @@ func buildColumnMetaFromCatalog(cat *catalog.Catalog) []storage.ColumnMeta {
 		return buildColumnMeta(tbl.Columns)
 	}
 	return nil
-}
-
-// buildColumnMeta 将 catalog 列定义转换为存储引擎列元数据。
-func buildColumnMeta(cols []catalog.ColumnDef) []storage.ColumnMeta {
-	result := make([]storage.ColumnMeta, len(cols))
-	for i, c := range cols {
-		result[i] = storage.ColumnMeta{
-			ID:   uint32(i),
-			Name: c.Name,
-			Type: c.Type,
-		}
-	}
-	return result
 }
 
 // exprToValue 从 INSERT VALUES 中的字面量表达式提取 common.Value。
@@ -243,7 +201,7 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 		writeRows = append(writeRows, storage.WriteRow{Key: key, Values: values})
 	}
 
-	if err := s.storage.WriteBatch(writeRows); err != nil {
+	if err := s.adapter.engineForTable(req.Table).WriteBatch(writeRows); err != nil {
 		s.metrics.WritesTotal.WithLabelValues("write_error").Inc()
 		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
 	}
@@ -251,6 +209,75 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 	s.metrics.WritesTotal.WithLabelValues("success").Add(float64(len(writeRows)))
 	s.metrics.WriteDuration.WithLabelValues("success").Observe(time.Since(start).Seconds())
 	return &Response{Code: 0, Rows: len(writeRows)}, nil
+}
+
+// handleCreateTable 处理 CREATE TABLE 语句：在 catalog 中注册表，
+// 并根据 ENGINE 选项创建对应的存储引擎（memory 或默认 LSM）。
+// 若表已存在且未指定 IF NOT EXISTS，返回错误响应。
+func (s *Server) handleCreateTable(ct *query.CreateTableStatement) (*Response, error) {
+	cols := make([]catalog.ColumnDef, len(ct.Columns))
+	for i, c := range ct.Columns {
+		cols[i] = catalog.ColumnDef{
+			Name:     c.Name,
+			Type:     c.Type,
+			Nullable: c.Nullable,
+		}
+	}
+	opts := catalog.TableOptions{Engine: ct.Engine}
+
+	if catalog.NormalizeEngine(ct.Engine) == catalog.EngineMemory {
+		return s.createMemoryTable(ct, cols, opts)
+	}
+
+	// LSM 表：在 catalog 建表，并同步列元数据到存储引擎，使后台调度器自动刷盘能正确编码列。
+	if err := s.catalog.CreateTable(ct.Table, cols, ct.PrimaryKey, opts); err != nil {
+		return s.createTableErrorResponse(ct, err), nil
+	}
+	s.storage.SetColumnMeta(buildColumnMeta(cols))
+	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	return &Response{Code: 0, Rows: 0}, nil
+}
+
+// createMemoryTable 创建内存引擎表。先注册内存引擎再在 catalog 建表，确保当表在
+// catalog 中对外可见时内存引擎已注册，避免并发查询回退到默认 LSM 引擎导致数据写入
+// 错误的引擎（修复 registerMemoryEngine 与 catalog.CreateTable 之间的竞态）。
+// 若 catalog 建表失败则回滚（注销内存引擎）。
+func (s *Server) createMemoryTable(ct *query.CreateTableStatement, cols []catalog.ColumnDef, opts catalog.TableOptions) (*Response, error) {
+	// 表已存在时直接返回，避免对已存在的表（如 LSM 表）误注册内存引擎造成短暂错误路由。
+	if _, err := s.catalog.GetTable(ct.Table); err == nil {
+		return s.tableAlreadyExistsResponse(ct), nil
+	}
+	eng := createMemoryEngine(cols)
+	if err := s.adapter.registerMemoryEngine(ct.Table, eng); err != nil {
+		// 该表已注册过内存引擎（如并发建表），视为已存在。
+		return s.tableAlreadyExistsResponse(ct), nil
+	}
+	if err := s.catalog.CreateTable(ct.Table, cols, ct.PrimaryKey, opts); err != nil {
+		_ = s.adapter.unregisterMemoryEngine(ct.Table) // 建表失败，回滚内存引擎注册
+		return s.createTableErrorResponse(ct, err), nil
+	}
+	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	return &Response{Code: 0, Rows: 0}, nil
+}
+
+// createTableErrorResponse 根据建表错误与 IF NOT EXISTS 语义构造响应。
+func (s *Server) createTableErrorResponse(ct *query.CreateTableStatement, err error) *Response {
+	if ct.IfNotExists && strings.Contains(err.Error(), "already exists") {
+		s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+		return &Response{Code: 0, Rows: 0}
+	}
+	s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
+	return &Response{Code: -1, Message: fmt.Sprintf("创建表错误: %v", err)}
+}
+
+// tableAlreadyExistsResponse 根据 IF NOT EXISTS 语义返回“表已存在”的响应。
+func (s *Server) tableAlreadyExistsResponse(ct *query.CreateTableStatement) *Response {
+	if ct.IfNotExists {
+		s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+		return &Response{Code: 0, Rows: 0}
+	}
+	s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
+	return &Response{Code: -1, Message: fmt.Sprintf("创建表错误: table %q already exists", ct.Table)}
 }
 
 // convertWriteRow 将 JSON 行数据转换为存储引擎需要的格式。

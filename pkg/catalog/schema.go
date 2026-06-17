@@ -16,8 +16,9 @@ type ColumnDef struct {
 
 // TableOptions 存储表的配置选项。
 type TableOptions struct {
-	MaxSegmentSize  int64 // 单个 Segment 的最大字节数
-	MaxMemTableSize int64 // MemTable 刷盘阈值
+	MaxSegmentSize  int64  // 单个 Segment 的最大字节数
+	MaxMemTableSize int64  // MemTable 刷盘阈值
+	Engine          string // 存储引擎类型："lsm"（默认）或 "memory"
 }
 
 // SegmentRef 引用一个已持久化的 Segment。
@@ -39,6 +40,7 @@ type Table struct {
 	Options     TableOptions
 	Version     uint64 // 表结构版本号
 	CreatedAt   time.Time
+	Engine      string // 存储引擎类型："lsm"（默认）或 "memory"，由 TableOptions 传播
 
 	// colTypeMap 是列名到数据类型的缓存映射，延迟初始化。
 	// 避免每次写入请求都重建 map，减少热点路径上的内存分配。

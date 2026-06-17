@@ -142,6 +142,7 @@ type CreateTableStatement struct {
 	Columns     []ColumnDef
 	PrimaryKey  []string
 	IfNotExists bool
+	Engine      string // 存储引擎类型："lsm"（默认/空）或 "memory"
 }
 
 func (s *CreateTableStatement) statementNode() {}
@@ -170,6 +171,10 @@ func (s *CreateTableStatement) String() string {
 		b.WriteString(")")
 	}
 	b.WriteString(")")
+	if s.Engine != "" {
+		b.WriteString(" ENGINE=")
+		b.WriteString(s.Engine)
+	}
 	return b.String()
 }
 

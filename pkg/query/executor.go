@@ -20,6 +20,15 @@ type StorageProvider interface {
 	SparseIndex() *index.SparseIndex
 }
 
+// TableStorageProvider 扩展 StorageProvider，支持按表名路由到不同的存储引擎。
+// 当 Executor 持有的 StorageProvider 实现此接口时，ScanNode 会根据其 Table 字段
+// 选择对应表的引擎进行扫描；否则回退到统一的 StorageProvider（保持向后兼容）。
+// 这使得 LSM 引擎表与内存引擎表可在同一 Server 中共存。
+type TableStorageProvider interface {
+	StorageProvider
+	ForTable(table string) StorageProvider
+}
+
 // Executor 执行查询计划，返回结果 Chunk 流。
 type Executor struct {
 	storage StorageProvider
@@ -81,10 +90,18 @@ func (e *Executor) executeScan(scan *ScanNode) (*execResult, error) {
 // scanWithPredicate 根据谓词从存储引擎获取数据。
 // 优化：从谓词中提取列级条件，利用稀疏索引进行段裁剪，
 // 跳过不可能包含匹配数据的段，减少 I/O 和解码开销。
+//
+// 表路由：若 Executor 持有的 StorageProvider 实现了 TableStorageProvider，
+// 则按 scan.Table 选择对应表的引擎，使 LSM 表与内存表可共存。
 func (e *Executor) scanWithPredicate(scan *ScanNode) []storage.ScanEntry {
+	sp := e.storage
+	if tsp, ok := e.storage.(TableStorageProvider); ok && scan.Table != "" {
+		sp = tsp.ForTable(scan.Table)
+	}
+
 	pred := scan.Predicate
 	if pred == nil {
-		return e.storage.ScanRange("", "\xff\xff\xff\xff")
+		return sp.ScanRange("", "\xff\xff\xff\xff")
 	}
 
 	keyRange := e.extractKeyRange(pred)
@@ -92,11 +109,11 @@ func (e *Executor) scanWithPredicate(scan *ScanNode) []storage.ScanEntry {
 	// 从谓词中提取列级条件用于段裁剪
 	columnPreds := e.extractColumnPredicates(pred)
 	if len(columnPreds) > 0 {
-		entries := e.storage.ScanRangeWithPruning(keyRange.start, keyRange.end, columnPreds)
+		entries := sp.ScanRangeWithPruning(keyRange.start, keyRange.end, columnPreds)
 		return e.filterEntriesByPredicate(entries, pred, scan.Columns)
 	}
 
-	entries := e.storage.ScanRange(keyRange.start, keyRange.end)
+	entries := sp.ScanRange(keyRange.start, keyRange.end)
 	return e.filterEntriesByPredicate(entries, pred, scan.Columns)
 }
 

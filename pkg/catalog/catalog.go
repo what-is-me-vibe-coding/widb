@@ -73,6 +73,7 @@ func (c *Catalog) CreateTable(name string, columns []ColumnDef, primaryKey []str
 		Options:     opts,
 		Version:     1,
 		CreatedAt:   time.Now(),
+		Engine:      NormalizeEngine(opts.Engine),
 	}
 	c.db.Tables[name] = tbl
 	c.db.Version++
@@ -233,4 +234,22 @@ func (c *Catalog) persist() error {
 		return nil
 	}
 	return saveToFile(c.path, c.db)
+}
+
+// EngineLSM 与 EngineMemory 是支持的存储引擎类型常量。
+const (
+	EngineLSM    = "lsm"
+	EngineMemory = "memory"
+)
+
+// NormalizeEngine 规范化引擎类型名称，空值或未知值回退为默认的 LSM 引擎。
+// 这样可保证旧版本未设置 Engine 的表与未识别的引擎名都按 LSM 处理，
+// 避免因配置笔误导致表无法访问。
+func NormalizeEngine(engine string) string {
+	switch engine {
+	case EngineMemory:
+		return EngineMemory
+	default:
+		return EngineLSM
+	}
 }

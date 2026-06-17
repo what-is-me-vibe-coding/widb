@@ -199,9 +199,9 @@ func TestBuildPrimaryKeySeparatorNoCollision(t *testing.T) {
 	}
 }
 
-// --- StorageAdapter 测试 ---
+// --- RoutingAdapter 测试 ---
 
-func TestStorageAdapter(t *testing.T) {
+func TestRoutingAdapter(t *testing.T) {
 	dir, err := os.MkdirTemp("", "testdb-adapter-*")
 	if err != nil {
 		t.Fatalf("创建临时目录失败: %v", err)
@@ -216,16 +216,23 @@ func TestStorageAdapter(t *testing.T) {
 	}
 	defer func() { _ = eng.Close() }()
 
-	sa := &storageAdapter{engine: eng}
-	_ = sa.ScanRange("", "\xff\xff\xff\xff")
-	_ = sa.ColumnMeta()
+	ra := newRoutingAdapter(eng)
+	_ = ra.ScanRange("", "\xff\xff\xff\xff")
+	_ = ra.ColumnMeta()
 
-	if sa.PrimaryIndex() == nil {
+	if ra.PrimaryIndex() == nil {
 		t.Error("PrimaryIndex 不应为 nil")
 	}
-	if sa.SparseIndex() == nil {
+	if ra.SparseIndex() == nil {
 		t.Error("SparseIndex 不应为 nil")
 	}
+
+	// ForTable 对未注册内存引擎的表应返回委托给默认引擎的适配器
+	sp := ra.ForTable("unknown_table")
+	if sp == nil {
+		t.Fatal("ForTable 不应返回 nil")
+	}
+	_ = sp.ScanRange("", "\xff\xff\xff\xff")
 }
 
 // --- 默认配置测试 ---

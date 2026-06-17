@@ -23,6 +23,10 @@ var customTypeReplacements = []struct {
 	{regexp.MustCompile(`(?i)\bBOOLEAN\b`), mysqlTinyint},
 }
 
+// engineOptionRe 从 CREATE TABLE 语句中提取 ENGINE=<name> 选项。
+// 大小写不敏感，允许等号两侧有空白。捕获组 1 为引擎名。
+var engineOptionRe = regexp.MustCompile(`(?i)\bENGINE\s*=\s*([A-Za-z_][A-Za-z0-9_]*)`)
+
 // Parser 将 SQL 语句解析为项目内部的 AST（Statement）。
 type Parser struct{}
 
@@ -164,7 +168,18 @@ func (p *Parser) convertDDL(ddl *sqlparser.DDL, originalSQL string) (*CreateTabl
 		Columns:     colDefs,
 		PrimaryKey:  primaryKeys,
 		IfNotExists: ifNotExists,
+		Engine:      extractEngine(originalSQL),
 	}, nil
+}
+
+// extractEngine 从原始 SQL 中提取 ENGINE=<name> 选项，返回小写的引擎名。
+// 未指定 ENGINE 时返回空字符串，由 catalog 层规范化为默认的 LSM 引擎。
+func extractEngine(originalSQL string) string {
+	m := engineOptionRe.FindStringSubmatch(originalSQL)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.ToLower(m[1])
 }
 
 // convertSelectExprs 转换 SELECT 列表。
