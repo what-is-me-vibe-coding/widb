@@ -227,23 +227,50 @@ func (p *Parser) convertTableSpec(spec *sqlparser.TableSpec) ([]ColumnDef, []str
 }
 
 // convertColumnType 将 sqlparser 的列类型转换为 common.DataType。
+// 支持整数族无符号变体（BIGINT UNSIGNED→UINT64、TINYINT UNSIGNED→INT8）。
 func (p *Parser) convertColumnType(ct *sqlparser.ColumnType) (common.DataType, error) {
 	typ := strings.ToUpper(ct.Type)
-
+	if dt, ok := intLikeColumnType(typ, bool(ct.Unsigned)); ok {
+		return dt, nil
+	}
 	switch typ {
-	case "BIGINT", "INT":
-		return common.TypeInt64, nil
 	case "DOUBLE", "FLOAT":
 		return common.TypeFloat64, nil
 	case "TEXT", "VARCHAR", "CHAR":
 		return common.TypeString, nil
-	case "BOOLEAN", "TINYINT":
+	case "BOOLEAN":
 		return common.TypeBool, nil
 	case "TIMESTAMP", "DATETIME":
 		return common.TypeTimestamp, nil
+	case "DATE":
+		return common.TypeDate, nil
 	default:
 		return common.TypeNull, fmt.Errorf("query parse: unsupported column type %q", ct.Type)
 	}
+}
+
+// intLikeColumnType 映射整数类 SQL 类型（含 BOOL 与无符号变体）。
+// 返回 (类型, 是否匹配)。TINYINT 无符号映射为 INT8，否则为 BOOL（MySQL 约定）。
+func intLikeColumnType(typ string, unsigned bool) (common.DataType, bool) {
+	switch typ {
+	case "BIGINT":
+		if unsigned {
+			return common.TypeUint64, true
+		}
+		return common.TypeInt64, true
+	case "INT":
+		return common.TypeInt64, true
+	case "TINYINT":
+		if unsigned {
+			return common.TypeInt8, true
+		}
+		return common.TypeBool, true
+	case "SMALLINT":
+		return common.TypeInt16, true
+	case "MEDIUMINT":
+		return common.TypeInt32, true
+	}
+	return common.TypeNull, false
 }
 
 const colKeyPrimary = 1

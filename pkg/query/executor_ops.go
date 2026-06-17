@@ -243,6 +243,7 @@ func projectChunk(input *storage.Chunk, exprs []Expression, inputSchema, outputS
 }
 
 // coerceValue 将值强制转换为指定类型。
+// 整数族目标类型接受整数族/浮点/布尔源值，统一存入 Int64 字段。
 func coerceValue(val common.Value, target common.DataType) common.Value {
 	if !val.Valid {
 		return common.NewNull()
@@ -250,19 +251,19 @@ func coerceValue(val common.Value, target common.DataType) common.Value {
 	if val.Typ == target {
 		return val
 	}
-	switch target {
-	case common.TypeInt64:
-		switch val.Typ {
-		case common.TypeFloat64:
-			return common.NewInt64(int64(val.Float64))
-		case common.TypeBool:
-			return common.NewInt64(val.Int64)
+	if target.IsIntFamily() {
+		if val.Typ.IsIntFamily() || val.Typ == common.TypeBool {
+			return common.NewIntFamilyValue(target, val.Int64)
 		}
+		if val.Typ == common.TypeFloat64 {
+			return common.NewIntFamilyValue(target, int64(val.Float64))
+		}
+		// 不支持的转换（如 STRING -> INT）返回原值，保持与历史行为一致。
+		return val
+	}
+	switch target {
 	case common.TypeFloat64:
-		switch val.Typ {
-		case common.TypeInt64:
-			return common.NewFloat64(float64(val.Int64))
-		case common.TypeBool:
+		if val.Typ.IsIntFamily() || val.Typ == common.TypeBool {
 			return common.NewFloat64(float64(val.Int64))
 		}
 	case common.TypeBool:

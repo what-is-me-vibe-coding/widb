@@ -203,10 +203,10 @@ func (si *SparseIndex) Clear() {
 
 func bytesToValue(b []byte, dataType common.DataType) common.Value {
 	switch dataType {
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16, common.TypeInt32, common.TypeUint64, common.TypeDate:
 		if len(b) >= 8 {
 			v := int64(binary.LittleEndian.Uint64(b))
-			return common.NewInt64(v)
+			return common.NewIntFamilyValue(dataType, v)
 		}
 	case common.TypeFloat64:
 		if len(b) >= 8 {

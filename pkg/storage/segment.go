@@ -151,7 +151,8 @@ func computeMinMax(enc *EncodedColumn, nulls *common.Bitmap, stat *ColumnStat) {
 
 func computePlainMinMax(enc *EncodedColumn, nulls *common.Bitmap, stat *ColumnStat) {
 	switch enc.Type {
-	case common.TypeInt64, common.TypeTimestamp:
+	case common.TypeInt64, common.TypeTimestamp, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
 		computeIntStats(enc.Data, enc.RowCount, nulls, stat)
 	case common.TypeFloat64:
 		computeFloatStats(enc.Data, enc.RowCount, nulls, stat)

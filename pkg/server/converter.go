@@ -21,8 +21,14 @@ func interfaceToValue(raw any, typ common.DataType) (common.Value, error) {
 			return common.NewNull(), fmt.Errorf("%w: expected bool, got %T", common.ErrTypeMismatch, raw)
 		}
 		return common.NewBool(v), nil
-	case common.TypeInt64:
-		return toInt64Value(raw)
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16, common.TypeInt32, common.TypeUint64:
+		iv, err := toInt64Value(raw)
+		if err != nil {
+			return iv, err
+		}
+		return common.NewIntFamilyValue(typ, iv.Int64), nil
+	case common.TypeDate:
+		return toDateValue(raw)
 	case common.TypeFloat64:
 		return toFloat64Value(raw)
 	case common.TypeString:
@@ -80,6 +86,28 @@ func toTimestampValue(raw any) (common.Value, error) {
 	return common.NewTimestamp(t), nil
 }
 
+// toDateValue 将 any 转换为 DATE Value。
+// 接受 "YYYY-MM-DD" 格式字符串或 int64（自 1970-01-01 起的天数）。
+func toDateValue(raw any) (common.Value, error) {
+	switch v := raw.(type) {
+	case string:
+		t, err := time.Parse(common.DateFormat(), v)
+		if err != nil {
+			return common.NewNull(), fmt.Errorf("解析日期: %w", err)
+		}
+		return common.NewDateFromTime(t), nil
+	case float64:
+		return common.NewDate(int64(v)), nil
+	case int64:
+		return common.NewDate(v), nil
+	case int:
+		return common.NewDate(int64(v)), nil
+	default:
+		return common.NewNull(), fmt.Errorf("%w: expected date string or int64, got %T",
+			common.ErrTypeMismatch, raw)
+	}
+}
+
 // chunksToRows 将 Chunk 切片转换为可 JSON 序列化的行数据。
 // colNames 为每列的名称，按列索引顺序排列。若 colNames 为空则回退到 col_N 格式。
 // 预分配 result 切片容量，避免追加时的反复扩容。
@@ -133,8 +161,10 @@ func valueToInterface(v common.Value) any {
 	switch v.Typ {
 	case common.TypeBool:
 		return v.Int64 != 0
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16, common.TypeInt32, common.TypeUint64:
 		return v.Int64
+	case common.TypeDate:
+		return v.String()
 	case common.TypeFloat64:
 		return v.Float64
 	case common.TypeString:

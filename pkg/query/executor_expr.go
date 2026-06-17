@@ -152,10 +152,10 @@ func evalUnaryExpr(e *UnaryExpr, row map[string]common.Value, colIdxMap map[stri
 		if !val.Valid {
 			return common.NewNull(), nil
 		}
-		switch val.Typ {
-		case common.TypeInt64:
-			return common.NewInt64(-val.Int64), nil
-		case common.TypeFloat64:
+		if val.Typ.IsIntFamily() {
+			return common.NewIntFamilyValue(val.Typ, -val.Int64), nil
+		}
+		if val.Typ == common.TypeFloat64 {
 			return common.NewFloat64(-val.Float64), nil
 		}
 	}
@@ -253,10 +253,10 @@ func mulOverflows(li, ri int64) bool {
 }
 
 func toFloat64(v common.Value) float64 {
-	switch v.Typ {
-	case common.TypeFloat64:
+	if v.Typ == common.TypeFloat64 {
 		return v.Float64
-	case common.TypeInt64:
+	}
+	if v.Typ.IsIntFamily() {
 		return float64(v.Int64)
 	}
 	return 0
@@ -270,7 +270,8 @@ func isTruthyValue(v common.Value) bool {
 	switch v.Typ {
 	case common.TypeBool:
 		return v.Int64 != 0
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
 		return v.Int64 != 0
 	case common.TypeFloat64:
 		return v.Float64 != 0
