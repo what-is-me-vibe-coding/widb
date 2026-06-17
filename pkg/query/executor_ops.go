@@ -112,7 +112,7 @@ func tryFastFilter(input *storage.Chunk, cond Expression, schema []ColumnDef, ro
 		if !v.Valid {
 			continue
 		}
-		if evalCompareOp(bin.Op, v, lit.Value) {
+		if compareValues(bin.Op, v, lit.Value) {
 			selection = append(selection, row)
 		}
 	}
@@ -134,25 +134,6 @@ func resolveColumnIndex(expr Expression, schema []ColumnDef) (int, string) {
 		}
 	}
 	return -1, ""
-}
-
-// evalCompareOp 对两个有效值执行比较运算。
-func evalCompareOp(op BinaryOp, left, right common.Value) bool {
-	switch op {
-	case OpEq:
-		return left.Equal(right)
-	case OpNe:
-		return !left.Equal(right)
-	case OpLt:
-		return left.Less(right)
-	case OpGt:
-		return right.Less(left)
-	case OpLe:
-		return !right.Less(left)
-	case OpGe:
-		return !left.Less(right)
-	}
-	return false
 }
 
 // buildFilteredOutput 根据 selection 向量构建过滤后的 Chunk 输出。

@@ -236,19 +236,8 @@ func (r *ConstantFoldingRule) foldBinaryExpr(e *BinaryExpr) Expression {
 }
 
 func (r *ConstantFoldingRule) foldComparisonOps(leftLit, rightLit *LiteralExpr, op BinaryOp) Expression {
-	switch op {
-	case OpEq:
-		return &LiteralExpr{Value: common.NewBool(leftLit.Value.Equal(rightLit.Value))}
-	case OpNe:
-		return &LiteralExpr{Value: common.NewBool(!leftLit.Value.Equal(rightLit.Value))}
-	case OpLt:
-		return &LiteralExpr{Value: common.NewBool(leftLit.Value.Less(rightLit.Value))}
-	case OpGt:
-		return &LiteralExpr{Value: common.NewBool(rightLit.Value.Less(leftLit.Value))}
-	case OpLe:
-		return &LiteralExpr{Value: common.NewBool(!rightLit.Value.Less(leftLit.Value))}
-	case OpGe:
-		return &LiteralExpr{Value: common.NewBool(!leftLit.Value.Less(rightLit.Value))}
+	if isComparisonOp(op) {
+		return &LiteralExpr{Value: common.NewBool(compareValues(op, leftLit.Value, rightLit.Value))}
 	}
 	return nil
 }

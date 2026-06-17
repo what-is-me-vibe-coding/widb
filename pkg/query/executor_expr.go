@@ -108,19 +108,8 @@ func evalLogicalOp(e *BinaryExpr, left common.Value, row map[string]common.Value
 }
 
 func evalComparisonOp(op BinaryOp, left, right common.Value) (common.Value, bool) {
-	switch op {
-	case OpEq:
-		return common.NewBool(left.Equal(right)), true
-	case OpNe:
-		return common.NewBool(!left.Equal(right)), true
-	case OpLt:
-		return common.NewBool(left.Less(right)), true
-	case OpGt:
-		return common.NewBool(right.Less(left)), true
-	case OpLe:
-		return common.NewBool(!right.Less(left)), true
-	case OpGe:
-		return common.NewBool(!left.Less(right)), true
+	if isComparisonOp(op) {
+		return common.NewBool(compareValues(op, left, right)), true
 	}
 	return common.NewNull(), false
 }

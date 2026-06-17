@@ -227,43 +227,19 @@ func (e *Executor) binaryExprToColumnPredicate(bin *BinaryExpr) (storage.ColumnP
 
 // queryOpToIndexOp 将查询层的 BinaryOp 映射为索引层的 PredicateOp。
 func queryOpToIndexOp(op BinaryOp) (index.PredicateOp, bool) {
-	switch op {
-	case OpEq:
-		return index.OpEqual, true
-	case OpNe:
-		return index.OpNotEqual, true
-	case OpLt:
-		return index.OpLess, true
-	case OpLe:
-		return index.OpLessEqual, true
-	case OpGt:
-		return index.OpGreater, true
-	case OpGe:
-		return index.OpGreaterEqual, true
-	default:
-		return 0, false
-	}
+	p, ok := opToIndexOp[op]
+	return p, ok
 }
 
 // queryOpToIndexOpFlip 将翻转后的运算符映射为索引层的 PredicateOp。
 // 例如 "literal < column" 等价于 "column > literal"。
 func queryOpToIndexOpFlip(op BinaryOp) (index.PredicateOp, bool) {
-	switch op {
-	case OpLt:
-		return index.OpGreater, true
-	case OpLe:
-		return index.OpGreaterEqual, true
-	case OpGt:
-		return index.OpLess, true
-	case OpGe:
-		return index.OpLessEqual, true
-	case OpEq:
-		return index.OpEqual, true
-	case OpNe:
-		return index.OpNotEqual, true
-	default:
+	flipped, ok := flipComparisonOp(op)
+	if !ok {
 		return 0, false
 	}
+	p, ok := opToIndexOp[flipped]
+	return p, ok
 }
 
 // filterEntriesByPredicate 使用谓词过滤扫描结果。
