@@ -15,22 +15,16 @@ func TestSQLCreateInsertSelect(t *testing.T) {
 	resp, err := srv.handleQuery(&QueryRequest{
 		SQL: "CREATE TABLE sensor (id INT64, name STRING, temperature FLOAT64, active BOOL, PRIMARY KEY (id))",
 	})
-	if err != nil {
-		t.Fatalf("CREATE TABLE 失败: %v", err)
-	}
-	if resp.Code != 0 {
-		t.Fatalf("CREATE TABLE 失败: %s", resp.Message)
+	if err != nil || resp.Code != 0 {
+		t.Fatalf("CREATE TABLE 失败: err=%v resp=%+v", err, resp)
 	}
 
 	// 2. INSERT
 	resp, err = srv.handleQuery(&QueryRequest{
 		SQL: "INSERT INTO sensor (id, name, temperature, active) VALUES (1, 'sensor-1', 23.5, true)",
 	})
-	if err != nil {
-		t.Fatalf("INSERT 失败: %v", err)
-	}
-	if resp.Code != 0 {
-		t.Fatalf("INSERT 失败: %s", resp.Message)
+	if err != nil || resp.Code != 0 {
+		t.Fatalf("INSERT 失败: err=%v resp=%+v", err, resp)
 	}
 	if resp.Rows != 1 {
 		t.Errorf("INSERT 影响行数 = %d, 期望 1", resp.Rows)
@@ -40,11 +34,8 @@ func TestSQLCreateInsertSelect(t *testing.T) {
 	resp, err = srv.handleQuery(&QueryRequest{
 		SQL: "SELECT id, name, temperature FROM sensor WHERE id = 1",
 	})
-	if err != nil {
-		t.Fatalf("SELECT 失败: %v", err)
-	}
-	if resp.Code != 0 {
-		t.Fatalf("SELECT 失败: %s", resp.Message)
+	if err != nil || resp.Code != 0 {
+		t.Fatalf("SELECT 失败: err=%v resp=%+v", err, resp)
 	}
 	if resp.Rows != 1 {
 		t.Fatalf("SELECT 行数 = %d, 期望 1", resp.Rows)
@@ -52,13 +43,15 @@ func TestSQLCreateInsertSelect(t *testing.T) {
 
 	// 验证返回数据
 	data, ok := resp.Data.([]map[string]any)
-	if !ok {
-		t.Fatalf("SELECT 返回数据类型错误: %T", resp.Data)
+	if !ok || len(data) != 1 {
+		t.Fatalf("SELECT 返回数据异常: type=%T len=%d", resp.Data, len(data))
 	}
-	if len(data) != 1 {
-		t.Fatalf("SELECT 返回 %d 行, 期望 1", len(data))
-	}
-	row := data[0]
+	validateSensorRow(t, data[0])
+}
+
+// validateSensorRow 验证 sensor 表查询返回的单行数据。
+func validateSensorRow(t *testing.T, row map[string]any) {
+	t.Helper()
 	if v, ok := row["id"].(int64); !ok || v != 1 {
 		t.Errorf("id: 期望 int64(1), got %T(%v)", row["id"], row["id"])
 	}
