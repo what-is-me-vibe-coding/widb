@@ -156,7 +156,8 @@ func encodeColumnVector(cv *ColumnVector) (*EncodedColumn, error) {
 
 	var data any
 	switch cv.Typ {
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
 		data = cv.Int64Data()
 	case common.TypeFloat64:
 		data = cv.Float64Data()

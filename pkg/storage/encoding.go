@@ -96,7 +96,7 @@ func selectEncoding(typ common.DataType, data any, rowCount uint32) EncodingType
 	if typ == common.TypeString {
 		return EncodingDict
 	}
-	if typ == common.TypeInt64 {
+	if typ.IsIntFamily() {
 		if isRLEInt64(data, rowCount) {
 			return EncodingRLE
 		}
@@ -124,8 +124,9 @@ func encodePlain(typ common.DataType, data any, rowCount uint32, nulls *common.B
 	}
 
 	switch typ {
-	case common.TypeInt64:
-		return encodePlainInt64(data, rowCount, nulls)
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
+		return encodePlainInt64(typ, data, rowCount, nulls)
 	case common.TypeFloat64:
 		return encodePlainFloat64(data, rowCount, nulls)
 	case common.TypeTimestamp:
@@ -141,14 +142,14 @@ func encodePlain(typ common.DataType, data any, rowCount uint32, nulls *common.B
 	}
 }
 
-// encodePlainInt64 将 int64 列编码为 Plain 格式
-func encodePlainInt64(data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
+// encodePlainInt64 将整数族列编码为 Plain 格式，保留原始类型标签。
+func encodePlainInt64(typ common.DataType, data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
 	ints, ok := data.([]int64)
 	if !ok {
 		return nil, fmt.Errorf("plain encode: expected []int64, got %T", data)
 	}
 	buf := encodeUint64Batch(ints, rowCount)
-	return newPlainEncodedColumn(common.TypeInt64, rowCount, buf, nulls), nil
+	return newPlainEncodedColumn(typ, rowCount, buf, nulls), nil
 }
 
 // encodePlainFloat64 将 float64 列编码为 Plain 格式
@@ -269,8 +270,8 @@ func encodePlainStrings(strs []string, rowCount uint32, nulls *common.Bitmap) (*
 }
 
 func encodeRLE(typ common.DataType, data any, rowCount uint32, nulls *common.Bitmap) (*EncodedColumn, error) {
-	if typ != common.TypeInt64 {
-		return nil, fmt.Errorf("rle encode: only int64 type supported, got %v", typ)
+	if !typ.IsIntFamily() {
+		return nil, fmt.Errorf("rle encode: only int family supported, got %v", typ)
 	}
 
 	ints, ok := data.([]int64)
@@ -343,7 +344,8 @@ func decodePlain(enc *EncodedColumn) (any, *common.Bitmap, error) {
 	}
 
 	switch enc.Type {
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
 		return decodePlainInt64(enc.Data), nulls, nil
 	case common.TypeFloat64:
 		return decodePlainFloat64(enc.Data), nulls, nil

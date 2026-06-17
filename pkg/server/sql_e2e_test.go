@@ -50,15 +50,20 @@ func TestSQLCreateInsertSelect(t *testing.T) {
 		t.Fatalf("SELECT 行数 = %d, 期望 1", resp.Rows)
 	}
 
-	// 验证返回数据
-	data, ok := resp.Data.([]map[string]any)
+	assertSensorRow(t, resp.Data)
+}
+
+// assertSensorRow 验证 SELECT 返回的单行 sensor 数据。
+func assertSensorRow(t *testing.T, data any) {
+	t.Helper()
+	rows, ok := data.([]map[string]any)
 	if !ok {
-		t.Fatalf("SELECT 返回数据类型错误: %T", resp.Data)
+		t.Fatalf("SELECT 返回数据类型错误: %T", data)
 	}
-	if len(data) != 1 {
-		t.Fatalf("SELECT 返回 %d 行, 期望 1", len(data))
+	if len(rows) != 1 {
+		t.Fatalf("SELECT 返回 %d 行, 期望 1", len(rows))
 	}
-	row := data[0]
+	row := rows[0]
 	if v, ok := row["id"].(int64); !ok || v != 1 {
 		t.Errorf("id: 期望 int64(1), got %T(%v)", row["id"], row["id"])
 	}

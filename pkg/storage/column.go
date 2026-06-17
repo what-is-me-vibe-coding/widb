@@ -41,12 +41,14 @@ func NewColumnVector(colID uint32, typ common.DataType, capacity uint32) *Column
 }
 
 // allocateData 根据数据类型分配对应的存储数组。
+// 整数族类型（INT8/16/32/64/UINT64/DATE）统一复用 int64s 数组。
 func (cv *ColumnVector) allocateData() {
 	switch cv.Typ {
 	case common.TypeBool:
 		words := (cv.capacity + 63) / 64
 		cv.bools = make([]uint64, words)
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
 		cv.int64s = make([]int64, cv.capacity)
 	case common.TypeFloat64:
 		cv.float64s = make([]float64, cv.capacity)
@@ -87,7 +89,8 @@ func (cv *ColumnVector) grow() {
 		newBools := make([]uint64, words)
 		copy(newBools, cv.bools)
 		cv.bools = newBools
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
 		newInt64s := make([]int64, newCap)
 		copy(newInt64s, cv.int64s)
 		cv.int64s = newInt64s
@@ -175,8 +178,9 @@ func (cv *ColumnVector) GetValue(rowIdx uint32) common.Value {
 	switch cv.Typ {
 	case common.TypeBool:
 		return common.NewBool(cv.GetBool(rowIdx))
-	case common.TypeInt64:
-		return common.NewInt64(cv.int64s[rowIdx])
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
+		return common.NewIntFamilyValue(cv.Typ, cv.int64s[rowIdx])
 	case common.TypeFloat64:
 		return common.NewFloat64(cv.float64s[rowIdx])
 	case common.TypeString:
@@ -196,9 +200,14 @@ func (cv *ColumnVector) GetBool(rowIdx uint32) bool {
 }
 
 // SetValue 按 common.Value 类型设置指定行的值。
+// 整数族类型支持跨类型赋值（如 INT8 列接受 INT64 字面量），统一存入 Int64 字段。
 func (cv *ColumnVector) SetValue(rowIdx uint32, v common.Value) error {
 	if v.IsNull() {
 		cv.SetNull(rowIdx)
+		return nil
+	}
+	if cv.Typ.IsIntFamily() && v.Typ.IsIntFamily() {
+		cv.SetInt64(rowIdx, v.Int64)
 		return nil
 	}
 	if v.Typ != cv.Typ {
@@ -259,7 +268,8 @@ func (cv *ColumnVector) Slice(startRow, endRow uint32) (*ColumnVector, error) {
 	result.len = rowCount
 
 	switch cv.Typ {
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
 		copy(result.int64s, cv.int64s[startRow:endRow])
 	case common.TypeFloat64:
 		copy(result.float64s, cv.float64s[startRow:endRow])

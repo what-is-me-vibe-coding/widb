@@ -110,11 +110,14 @@ func deserializeBatchWriteRecord(data []byte) ([]batchWriteRow, error) {
 }
 
 // valueBinarySize 返回 Value 的二进制编码大小（不含列名）。
+// 整数族（含 DATE）统一 8 字节。
 func valueBinarySize(v common.Value) int {
 	switch v.Typ {
 	case common.TypeBool:
 		return 1
-	case common.TypeInt64, common.TypeFloat64, common.TypeTimestamp:
+	case common.TypeInt64, common.TypeFloat64, common.TypeTimestamp,
+		common.TypeInt8, common.TypeInt16, common.TypeInt32,
+		common.TypeUint64, common.TypeDate:
 		return 8
 	case common.TypeString:
 		return 2 + len(v.Str)
@@ -145,7 +148,8 @@ func appendValueBinary(buf, b []byte, colName string, v common.Value) []byte {
 		} else {
 			buf = append(buf, 0)
 		}
-	case common.TypeInt64:
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
 		binary.LittleEndian.PutUint64(b, uint64(v.Int64))
 		buf = append(buf, b[:8]...)
 	case common.TypeFloat64:
@@ -208,12 +212,12 @@ var fixedSizeTypes = map[common.DataType]fixedSizeTypeDesc{
 			return val
 		},
 	},
-	common.TypeInt64: {
-		size: 8,
-		read: func(data []byte) common.Value {
-			return common.Value{Typ: common.TypeInt64, Int64: int64(binary.LittleEndian.Uint64(data[:8]))}
-		},
-	},
+	common.TypeInt64:  intFamilyReader(common.TypeInt64),
+	common.TypeInt8:   intFamilyReader(common.TypeInt8),
+	common.TypeInt16:  intFamilyReader(common.TypeInt16),
+	common.TypeInt32:  intFamilyReader(common.TypeInt32),
+	common.TypeUint64: intFamilyReader(common.TypeUint64),
+	common.TypeDate:   intFamilyReader(common.TypeDate),
 	common.TypeFloat64: {
 		size: 8,
 		read: func(data []byte) common.Value {
@@ -226,6 +230,16 @@ var fixedSizeTypes = map[common.DataType]fixedSizeTypeDesc{
 			return common.Value{Typ: common.TypeTimestamp, Time: time.Unix(0, int64(binary.LittleEndian.Uint64(data[:8])))}
 		},
 	},
+}
+
+// intFamilyReader 构造整数族类型的读取描述符，统一按 8 字节小端 int64 读取。
+func intFamilyReader(typ common.DataType) fixedSizeTypeDesc {
+	return fixedSizeTypeDesc{
+		size: 8,
+		read: func(data []byte) common.Value {
+			return common.NewIntFamilyValue(typ, int64(binary.LittleEndian.Uint64(data[:8])))
+		},
+	}
 }
 
 // readTypedValue 根据类型从 data 读取值，返回值、读取字节数和错误。

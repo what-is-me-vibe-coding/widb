@@ -34,13 +34,17 @@ jobs:
         run: mkdir -p ${{ runner.temp }}/gotest
 
       - name: Run tests with race detector
-        run: go test -race -p=1 ./...
+        run: |
+          ulimit -f unlimited
+          go test -race -p=1 ./...
         env:
           TMPDIR: ${{ runner.temp }}/gotest
           GOCACHE: ${{ runner.temp }}/go-build-cache
 
       - name: Run tests with coverage
-        run: go test -race -coverprofile=coverage.out -p=1 ./...
+        run: |
+          ulimit -f unlimited
+          go test -race -coverprofile=coverage.out -p=1 ./...
         env:
           TMPDIR: ${{ runner.temp }}/gotest
           GOCACHE: ${{ runner.temp }}/go-build-cache

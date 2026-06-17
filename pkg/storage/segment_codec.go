@@ -54,8 +54,9 @@ func extractValue(dc decodedColumn, row uint32) common.Value {
 	}
 
 	switch dc.typ {
-	case common.TypeInt64:
-		return extractInt64Value(dc.data, row)
+	case common.TypeInt64, common.TypeInt8, common.TypeInt16,
+		common.TypeInt32, common.TypeUint64, common.TypeDate:
+		return extractIntFamilyValue(dc.typ, dc.data, row)
 	case common.TypeFloat64:
 		return extractFloat64Value(dc.data, row)
 	case common.TypeBool:
@@ -67,6 +68,14 @@ func extractValue(dc decodedColumn, row uint32) common.Value {
 	default:
 		return common.NewNull()
 	}
+}
+
+// extractIntFamilyValue 从已解码的 int64 数组中提取指定行，并按列类型构造 Value。
+func extractIntFamilyValue(typ common.DataType, data any, row uint32) common.Value {
+	if ints, ok := data.([]int64); ok && row < uint32(len(ints)) {
+		return common.NewIntFamilyValue(typ, ints[row])
+	}
+	return common.NewNull()
 }
 
 func extractInt64Value(data any, row uint32) common.Value {
