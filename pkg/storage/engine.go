@@ -462,6 +462,15 @@ func (e *Engine) ColumnMeta() []ColumnMeta {
 	return result
 }
 
+// SetColumnMeta 设置列元数据，用于在 CREATE TABLE 时告知引擎列定义，
+// 使后台调度器的自动刷盘能正确编码列数据。
+func (e *Engine) SetColumnMeta(cols []ColumnMeta) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.columnMeta = make([]ColumnMeta, len(cols))
+	copy(e.columnMeta, cols)
+}
+
 // SchedulerStats 返回后台调度器的运行统计信息。
 // 如果调度器未启动，ok 为 false。
 func (e *Engine) SchedulerStats() (stats SchedulerStats, ok bool) {

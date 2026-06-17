@@ -5,13 +5,11 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strings"
+	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
-	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/query"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
@@ -70,7 +68,21 @@ func NewServer(cfg Config, opts ...Option) (*Server, error) {
 		return nil, fmt.Errorf("server: create storage engine: %w", err)
 	}
 
-	cat := catalog.NewCatalog("")
+	// 从数据目录加载 catalog，使表定义在重启后可恢复
+	catalogPath := filepath.Join(cfg.DataDir, "catalog.json")
+	cat, err := catalog.LoadCatalog(catalogPath)
+	if err != nil {
+		if closeErr := eng.Close(); closeErr != nil {
+			log.Printf("server: close engine after catalog load failure: %v", closeErr)
+		}
+		return nil, fmt.Errorf("server: load catalog: %w", err)
+	}
+
+	// 恢复引擎列元数据，使后台调度器自动刷盘能正确编码列
+	if cols := buildColumnMetaFromCatalog(cat); len(cols) > 0 {
+		eng.SetColumnMeta(cols)
+	}
+
 	adapter := newRoutingAdapter(eng)
 	exec := query.NewExecutor(adapter)
 
@@ -264,165 +276,4 @@ func (s *Server) serveHTTP() {
 			}
 		}
 	}
-}
-
-// handleQuery 执行 SQL 查询。
-func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
-	start := time.Now()
-	defer func() {
-		s.metrics.QueryDuration.WithLabelValues("sql").Observe(time.Since(start).Seconds())
-	}()
-
-	stmt, err := s.parser.Parse(req.SQL)
-	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("parse_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("SQL 解析错误: %v", err)}, nil
-	}
-
-	// 拦截 CREATE TABLE：在分析器之前实际创建 catalog 表与对应引擎，
-	// 避免 analyzer 将其降级为空 ScanNode 而不产生副作用。
-	if ct, ok := stmt.(*query.CreateTableStatement); ok {
-		return s.handleCreateTable(ct)
-	}
-
-	plan, err := s.analyzer.Analyze(stmt)
-	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("analyze_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("SQL 分析错误: %v", err)}, nil
-	}
-
-	optimized := s.optimizer.Optimize(plan)
-
-	chunks, err := s.executor.Execute(optimized)
-	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("SQL 执行错误: %v", err)}, nil
-	}
-
-	// 从查询计划的 Schema 中提取列名，用于 JSON 响应的 key
-	var colNames []string
-	if schema := optimized.Schema(); len(schema) > 0 {
-		colNames = make([]string, len(schema))
-		for i, col := range schema {
-			colNames[i] = col.Name
-		}
-	}
-	data := chunksToRows(chunks, colNames)
-	totalRows := countRows(chunks)
-
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
-	return &Response{Code: 0, Data: data, Rows: totalRows, Columns: colNames}, nil
-}
-
-// handleWrite 批量写入数据。
-func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
-	start := time.Now()
-
-	tbl, err := s.catalog.GetTable(req.Table)
-	if err != nil {
-		s.metrics.WritesTotal.WithLabelValues("table_not_found").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
-	}
-
-	writeRows := make([]storage.WriteRow, 0, len(req.Rows))
-	for _, row := range req.Rows {
-		key, values, convErr := s.convertWriteRow(tbl, row)
-		if convErr != nil {
-			s.metrics.WritesTotal.WithLabelValues("convert_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("行数据转换错误: %v", convErr)}, nil
-		}
-		writeRows = append(writeRows, storage.WriteRow{Key: key, Values: values})
-	}
-
-	if err := s.adapter.engineForTable(req.Table).WriteBatch(writeRows); err != nil {
-		s.metrics.WritesTotal.WithLabelValues("write_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
-	}
-
-	s.metrics.WritesTotal.WithLabelValues("success").Add(float64(len(writeRows)))
-	s.metrics.WriteDuration.WithLabelValues("success").Observe(time.Since(start).Seconds())
-	return &Response{Code: 0, Rows: len(writeRows)}, nil
-}
-
-// handleCreateTable 处理 CREATE TABLE 语句：在 catalog 中注册表，
-// 并根据 ENGINE 选项创建对应的存储引擎（memory 或默认 LSM）。
-// 若表已存在且未指定 IF NOT EXISTS，返回错误响应。
-func (s *Server) handleCreateTable(ct *query.CreateTableStatement) (*Response, error) {
-	cols := make([]catalog.ColumnDef, len(ct.Columns))
-	for i, c := range ct.Columns {
-		cols[i] = catalog.ColumnDef{
-			Name:     c.Name,
-			Type:     c.Type,
-			Nullable: c.Nullable,
-		}
-	}
-
-	opts := catalog.TableOptions{Engine: ct.Engine}
-	if err := s.catalog.CreateTable(ct.Table, cols, ct.PrimaryKey, opts); err != nil {
-		// IF NOT EXISTS 时表已存在视为成功
-		if ct.IfNotExists && strings.Contains(err.Error(), "already exists") {
-			s.metrics.QueriesTotal.WithLabelValues("success").Inc()
-			return &Response{Code: 0, Rows: 0}, nil
-		}
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("创建表错误: %v", err)}, nil
-	}
-
-	// 为 memory 引擎表创建并注册专属内存引擎；LSM 表复用默认引擎，无需额外操作。
-	if catalog.NormalizeEngine(ct.Engine) == catalog.EngineMemory {
-		eng := createMemoryEngine(cols)
-		if err := s.adapter.registerMemoryEngine(ct.Table, eng); err != nil {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("注册内存引擎错误: %v", err)}, nil
-		}
-	}
-
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
-	return &Response{Code: 0, Rows: 0}, nil
-}
-
-// convertWriteRow 将 JSON 行数据转换为存储引擎需要的格式。
-func (s *Server) convertWriteRow(
-	tbl *catalog.Table, row map[string]any,
-) (string, map[string]common.Value, error) {
-	values := make(map[string]common.Value, len(row))
-	colTypes := tbl.ColTypeMap()
-
-	for colName, rawVal := range row {
-		colType, ok := colTypes[colName]
-		if !ok {
-			continue
-		}
-		val, err := interfaceToValue(rawVal, colType)
-		if err != nil {
-			return "", nil, fmt.Errorf("列 %s: %w", colName, err)
-		}
-		values[colName] = val
-	}
-
-	key, err := s.buildPrimaryKey(tbl, row)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return key, values, nil
-}
-
-// buildPrimaryKey 从行数据中提取主键值，拼接为存储 key。
-// 使用 \x00 作为分隔符，避免主键值包含分隔符时产生碰撞。
-func (s *Server) buildPrimaryKey(
-	tbl *catalog.Table, row map[string]any,
-) (string, error) {
-	var builder strings.Builder
-	for i, pk := range tbl.PrimaryKey {
-		rawVal, ok := row[pk]
-		if !ok {
-			return "", fmt.Errorf("主键列 %s 缺失", pk)
-		}
-		if i > 0 {
-			builder.WriteByte(0)
-		}
-		fmt.Fprintf(&builder, "%v", rawVal)
-	}
-	return builder.String(), nil
 }

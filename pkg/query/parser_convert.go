@@ -19,6 +19,8 @@ func (p *Parser) convertExpr(expr sqlparser.Expr) (Expression, error) {
 	switch e := expr.(type) {
 	case *sqlparser.ColName:
 		return &ColumnExpr{Name: sqlparser.String(e)}, nil
+	case sqlparser.BoolVal:
+		return &LiteralExpr{Value: common.NewBool(bool(e))}, nil
 	case *sqlparser.SQLVal:
 		return p.convertSQLVal(e)
 	case *sqlparser.NullVal:
