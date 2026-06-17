@@ -106,6 +106,15 @@ func tryFastFilter(input *storage.Chunk, cond Expression, schema []ColumnDef, ro
 	}
 	col := cols[colIdx]
 
+	// 类型特化快速路径：直接访问列的强类型底层数组，跳过逐行 GetValue
+	// 的 NULL 检查+类型分发+Value 构造，以及 compareValues 的方法分发。
+	// 仅在列与字面量类型同构（int-family/int-family、FLOAT64/FLOAT64、
+	// STRING/STRING）时命中，语义与通用路径完全一致。
+	if sel, matched := fastFilterTyped(col, bin.Op, lit.Value, rowCount); matched {
+		return sel, true
+	}
+
+	// 通用回退：逐行 GetValue + compareValues（覆盖 BOOL/TIMESTAMP 及跨类型场景）
 	selection := make([]uint32, 0, rowCount)
 	for row := uint32(0); row < rowCount; row++ {
 		v := col.GetValue(row)
@@ -117,6 +126,70 @@ func tryFastFilter(input *storage.Chunk, cond Expression, schema []ColumnDef, ro
 		}
 	}
 	return selection, true
+}
+
+// fastFilterTyped 对同构类型的列与字面量执行类型特化的向量化过滤。
+// 返回 (selection, true) 表示类型匹配并已完成过滤；
+// (nil, false) 表示类型不匹配，调用方应回退到通用逐行路径。
+func fastFilterTyped(col *storage.ColumnVector, op BinaryOp, lit common.Value, rowCount uint32) ([]uint32, bool) {
+	switch {
+	case col.Typ.IsIntFamily() && lit.Typ.IsIntFamily():
+		return fastFilterInt64(col, op, lit.Int64, rowCount), true
+	case col.Typ == common.TypeFloat64 && lit.Typ == common.TypeFloat64:
+		return fastFilterFloat64(col, op, lit.Float64, rowCount), true
+	case col.Typ == common.TypeString && lit.Typ == common.TypeString:
+		return fastFilterString(col, op, lit.Str, rowCount), true
+	}
+	return nil, false
+}
+
+// fastFilterInt64 对整数族列与 int64 字面量执行向量化比较。
+// 直接访问 int64s 底层数组与 null bitmap，跳过 GetValue 的类型分发与 Value 构造。
+func fastFilterInt64(col *storage.ColumnVector, op BinaryOp, lit int64, rowCount uint32) []uint32 {
+	data := col.Int64Data()
+	nulls := col.NullBitmap()
+	selection := make([]uint32, 0, rowCount)
+	for row := uint32(0); row < rowCount; row++ {
+		if nulls.Get(row) {
+			continue
+		}
+		if compareOrdered(op, data[row], lit) {
+			selection = append(selection, row)
+		}
+	}
+	return selection
+}
+
+// fastFilterFloat64 对 FLOAT64 列与 float64 字面量执行向量化比较。
+func fastFilterFloat64(col *storage.ColumnVector, op BinaryOp, lit float64, rowCount uint32) []uint32 {
+	data := col.Float64Data()
+	nulls := col.NullBitmap()
+	selection := make([]uint32, 0, rowCount)
+	for row := uint32(0); row < rowCount; row++ {
+		if nulls.Get(row) {
+			continue
+		}
+		if compareOrdered(op, data[row], lit) {
+			selection = append(selection, row)
+		}
+	}
+	return selection
+}
+
+// fastFilterString 对 STRING 列与 string 字面量执行向量化比较。
+func fastFilterString(col *storage.ColumnVector, op BinaryOp, lit string, rowCount uint32) []uint32 {
+	data := col.StringData()
+	nulls := col.NullBitmap()
+	selection := make([]uint32, 0, rowCount)
+	for row := uint32(0); row < rowCount; row++ {
+		if nulls.Get(row) {
+			continue
+		}
+		if compareOrdered(op, data[row], lit) {
+			selection = append(selection, row)
+		}
+	}
+	return selection
 }
 
 // resolveColumnIndex 从表达式中解析列索引，返回 (-1, "") 表示无法解析。

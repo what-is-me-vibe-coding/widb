@@ -1,6 +1,8 @@
 package query
 
 import (
+	"cmp"
+
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/index"
 )
@@ -23,6 +25,28 @@ func compareValues(op BinaryOp, left, right common.Value) bool {
 		return !right.Less(left)
 	case OpGe:
 		return !left.Less(right)
+	}
+	return false
+}
+
+// compareOrdered 对有序标量类型（int64/float64/string）执行比较运算。
+// 用于过滤快速路径中直接对列底层数组元素进行比较，跳过 Value 构造与
+// compareValues 的方法分发。语义与 compareValues 在同类型非 NULL 场景一致。
+// 编译器对每个具现化类型单态化，无运行时分发开销。
+func compareOrdered[T cmp.Ordered](op BinaryOp, left, right T) bool {
+	switch op {
+	case OpEq:
+		return left == right
+	case OpNe:
+		return left != right
+	case OpLt:
+		return left < right
+	case OpLe:
+		return left <= right
+	case OpGt:
+		return left > right
+	case OpGe:
+		return left >= right
 	}
 	return false
 }

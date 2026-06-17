@@ -158,3 +158,108 @@ func BenchmarkEndToEndSelect(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+
+// --- 过滤快速路径基准测试 ---
+//
+// 以下基准直接对预构建的 Chunk 调用 filterChunk，隔离过滤算子开销，
+// 用于度量类型特化快速路径（int-family/float64/string）的吞吐。
+// 数据规模 8192 行，命中约一半行，覆盖典型 OLAP 范围扫描过滤场景。
+
+const benchFilterRows = 8192
+
+// buildBenchFilterChunk 构建一个包含 id(INT64)/score(FLOAT64)/name(STRING)
+// 三列、benchFilterRows 行的 Chunk，用于过滤基准测试。
+func buildBenchFilterChunk() *storage.Chunk {
+	rowCount := uint32(benchFilterRows)
+	idCol := storage.NewColumnVector(0, common.TypeInt64, rowCount)
+	scoreCol := storage.NewColumnVector(1, common.TypeFloat64, rowCount)
+	nameCol := storage.NewColumnVector(2, common.TypeString, rowCount)
+	for i := uint32(0); i < rowCount; i++ {
+		idCol.SetInt64(i, int64(i))
+		scoreCol.SetFloat64(i, float64(i))
+		nameCol.SetString(i, fmtBenchName(i))
+	}
+	idCol.SetLen(rowCount)
+	scoreCol.SetLen(rowCount)
+	nameCol.SetLen(rowCount)
+	chunk := storage.NewChunk(rowCount)
+	_ = chunk.AddColumn(idCol)
+	_ = chunk.AddColumn(scoreCol)
+	_ = chunk.AddColumn(nameCol)
+	return chunk
+}
+
+func fmtBenchName(i uint32) string {
+	return "name-" + fmtIntKey(int(i))
+}
+
+func benchSchema() []ColumnDef {
+	return []ColumnDef{
+		{Name: benchColID, Type: common.TypeInt64, Nullable: false},
+		{Name: benchColScore, Type: common.TypeFloat64, Nullable: true},
+		{Name: benchColName, Type: common.TypeString, Nullable: true},
+	}
+}
+
+func BenchmarkFilterInt64FastPath(b *testing.B) {
+	chunk := buildBenchFilterChunk()
+	schema := benchSchema()
+	cond := &BinaryExpr{
+		Op:    OpGt,
+		Left:  &ResolvedColumnExpr{Name: benchColID, Idx: 0, typ: common.TypeInt64},
+		Right: &LiteralExpr{Value: common.NewInt64(benchFilterRows / 2)},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out, err := filterChunk(chunk, cond, schema, buildColIdxMapFromSchema(schema))
+		if err != nil {
+			b.Fatal(err)
+		}
+		if out.RowCount() == 0 {
+			b.Fatal("expected non-empty result")
+		}
+	}
+	b.ReportAllocs()
+}
+
+func BenchmarkFilterFloat64FastPath(b *testing.B) {
+	chunk := buildBenchFilterChunk()
+	schema := benchSchema()
+	cond := &BinaryExpr{
+		Op:    OpGe,
+		Left:  &ResolvedColumnExpr{Name: benchColScore, Idx: 1, typ: common.TypeFloat64},
+		Right: &LiteralExpr{Value: common.NewFloat64(float64(benchFilterRows) / 2)},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out, err := filterChunk(chunk, cond, schema, buildColIdxMapFromSchema(schema))
+		if err != nil {
+			b.Fatal(err)
+		}
+		if out.RowCount() == 0 {
+			b.Fatal("expected non-empty result")
+		}
+	}
+	b.ReportAllocs()
+}
+
+func BenchmarkFilterStringFastPath(b *testing.B) {
+	chunk := buildBenchFilterChunk()
+	schema := benchSchema()
+	cond := &BinaryExpr{
+		Op:    OpEq,
+		Left:  &ResolvedColumnExpr{Name: benchColName, Idx: 2, typ: common.TypeString},
+		Right: &LiteralExpr{Value: common.NewString(fmtBenchName(benchFilterRows / 2))},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out, err := filterChunk(chunk, cond, schema, buildColIdxMapFromSchema(schema))
+		if err != nil {
+			b.Fatal(err)
+		}
+		if out.RowCount() != 1 {
+			b.Fatalf("expected 1 row, got %d", out.RowCount())
+		}
+	}
+	b.ReportAllocs()
+}
