@@ -47,19 +47,22 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 		return &Response{Code: -1, Message: fmt.Sprintf("SQL 执行错误: %v", err)}, nil
 	}
 
-	// 从查询计划的 Schema 中提取列名，用于 JSON 响应的 key
+	// 从查询计划的 Schema 中提取列名与列类型，用于 JSON 响应的 key 与 pgwire 类型映射
 	var colNames []string
+	var colTypes []common.DataType
 	if schema := optimized.Schema(); len(schema) > 0 {
 		colNames = make([]string, len(schema))
+		colTypes = make([]common.DataType, len(schema))
 		for i, col := range schema {
 			colNames[i] = col.Name
+			colTypes[i] = col.Type
 		}
 	}
 	data := chunksToRows(chunks, colNames)
 	totalRows := countRows(chunks)
 
 	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
-	return &Response{Code: 0, Data: data, Rows: totalRows, Columns: colNames}, nil
+	return &Response{Code: 0, Data: data, Rows: totalRows, Columns: colNames, ColumnTypes: colTypes}, nil
 }
 
 // handleInsert 执行 INSERT 语句，将行数据写入存储引擎。

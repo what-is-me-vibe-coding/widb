@@ -28,6 +28,14 @@ func (a *pgwireAdapter) ExecuteSQL(sql string) (*pgwire.SQLResult, error) {
 		CommandTag:   buildCommandTag(sql, resp),
 	}
 
+	// 透传列类型，使 pgwire 能生成准确的 RowDescription（DATE/TIMESTAMP/INT 等）。
+	if len(resp.ColumnTypes) > 0 {
+		result.ColumnTypes = make([]int, len(resp.ColumnTypes))
+		for i, t := range resp.ColumnTypes {
+			result.ColumnTypes[i] = int(t)
+		}
+	}
+
 	if resp.Data != nil {
 		if rows, ok := resp.Data.([]map[string]any); ok {
 			result.Rows = rows
