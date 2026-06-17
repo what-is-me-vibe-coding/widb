@@ -421,6 +421,29 @@ func TestHandleQueryPacketValid(t *testing.T) {
 	}
 }
 
+// TestHandleQueryReturnsColumns 验证查询响应按 Schema 顺序携带列名，供客户端按原序渲染表格。
+func TestHandleQueryReturnsColumns(t *testing.T) {
+	srv := newTestServerWithTable(t)
+	defer func() { _ = srv.Stop() }()
+
+	resp, err := srv.handleQuery(&QueryRequest{SQL: testSelectAll})
+	if err != nil {
+		t.Fatalf("handleQuery failed: %v", err)
+	}
+	if resp.Code != 0 {
+		t.Fatalf("unexpected error code: %d, msg: %s", resp.Code, resp.Message)
+	}
+	want := []string{"id", testColName, testColScore}
+	if len(resp.Columns) != len(want) {
+		t.Fatalf("columns = %v, want %v", resp.Columns, want)
+	}
+	for i, c := range want {
+		if resp.Columns[i] != c {
+			t.Errorf("columns[%d] = %q, want %q (full: %v)", i, resp.Columns[i], c, resp.Columns)
+		}
+	}
+}
+
 // TestHandleWritePacketValid 测试写入包的正常处理。
 func TestHandleWritePacketValid(t *testing.T) {
 	srv := newTestServerWithTable(t)

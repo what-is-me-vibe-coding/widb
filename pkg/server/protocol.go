@@ -118,9 +118,12 @@ type WriteRequest struct {
 }
 
 // Response 是统一的响应 JSON 结构。
+// Columns 携带查询结果集的列名（按 Schema 顺序），供客户端按原始列序渲染表格；
+// 写入或无结果集的响应该字段为空（JSON 中因 omitempty 而省略）。
 type Response struct {
-	Code    int    `json:"code"`
-	Message string `json:"message,omitempty"`
-	Data    any    `json:"data,omitempty"`
-	Rows    int    `json:"rows,omitempty"`
+	Code    int      `json:"code"`
+	Message string   `json:"message,omitempty"`
+	Data    any      `json:"data,omitempty"`
+	Rows    int      `json:"rows,omitempty"`
+	Columns []string `json:"columns,omitempty"`
 }

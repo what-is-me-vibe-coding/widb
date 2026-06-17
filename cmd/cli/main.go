@@ -24,11 +24,13 @@ const (
 	banner = `widb-cli - WiDB 命令行客户端
 输入 SQL 语句执行查询，输入 \q 退出，输入 \h 查看帮助`
 	helpText = `可用命令:
-  \q          退出客户端
-  \h          显示帮助
-  \status     显示服务器状态
-  \use HTTP   切换到 HTTP 模式
-  \use TCP    切换到 TCP 模式`
+  \q              退出客户端
+  \h              显示帮助
+  \status         显示服务器状态
+  \use HTTP       切换到 HTTP 模式
+  \use TCP        切换到 TCP 模式
+  \format         显示当前输出格式
+  \format <fmt>   切换输出格式: pretty/vertical/json/csv`
 )
 
 // cli 是命令行客户端。
@@ -38,6 +40,7 @@ type cli struct {
 	httpAddr string
 	conn     net.Conn
 	httpCli  *http.Client
+	format   string // 输出格式：pretty/vertical/json/csv
 }
 
 func newCLI(tcpAddr, httpAddr string, mode string) *cli {
@@ -46,6 +49,7 @@ func newCLI(tcpAddr, httpAddr string, mode string) *cli {
 		tcpAddr:  tcpAddr,
 		httpAddr: httpAddr,
 		httpCli:  &http.Client{Timeout: 30 * time.Second},
+		format:   formatPretty,
 	}
 }
 
@@ -109,7 +113,7 @@ func (c *cli) executeTCP(sql string) (string, error) {
 		return "", fmt.Errorf("解析响应失败: %w", err)
 	}
 
-	return server.FormatResponse(&resp), nil
+	return renderResponse(&resp, c.format), nil
 }
 
 // executeHTTP 通过 HTTP REST API 执行查询。
@@ -139,7 +143,7 @@ func (c *cli) executeHTTP(sql string) (string, error) {
 		return "", fmt.Errorf("解析响应失败: %w", err)
 	}
 
-	return server.FormatResponse(&resp), nil
+	return renderResponse(&resp, c.format), nil
 }
 
 // pingTCP 通过 TCP 发送心跳检测。
@@ -228,6 +232,9 @@ func (c *cli) readMultiLineSQL(scanner *bufio.Scanner, writer io.Writer, firstLi
 
 // handleCommand 处理反斜杠命令。
 func (c *cli) handleCommand(writer io.Writer, cmd string) error {
+	if strings.HasPrefix(cmd, "\\format") {
+		return c.handleFormatCommand(writer, cmd)
+	}
 	switch cmd {
 	case "\\q", "\\quit":
 		_, _ = fmt.Fprintln(writer, "再见!")
@@ -254,6 +261,22 @@ func (c *cli) handleCommand(writer io.Writer, cmd string) error {
 	return nil
 }
 
+// handleFormatCommand 处理 \format 命令：无参数显示当前格式，有参数切换格式。
+func (c *cli) handleFormatCommand(writer io.Writer, cmd string) error {
+	arg := strings.TrimSpace(strings.TrimPrefix(cmd, "\\format"))
+	if arg == "" {
+		_, _ = fmt.Fprintf(writer, "当前格式: %s（支持: %s）\n", c.format, strings.Join(supportedFormats, ", "))
+		return nil
+	}
+	if !isValidFormat(arg) {
+		_, _ = fmt.Fprintf(writer, "未知格式: %s，支持: %s\n", arg, strings.Join(supportedFormats, ", "))
+		return nil
+	}
+	c.format = arg
+	_, _ = fmt.Fprintf(writer, "已切换到 %s 格式\n", arg)
+	return nil
+}
+
 // runCLI 是主逻辑，提取出来便于测试。
 func runCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("widb-cli", flag.ContinueOnError)
@@ -261,6 +284,7 @@ func runCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	httpAddr := fs.String("http", "127.0.0.1:8080", "服务器 HTTP 地址")
 	mode := fs.String("mode", "tcp", "连接模式: tcp 或 http")
 	execute := fs.String("e", "", "执行单条 SQL 语句后退出")
+	format := fs.String("format", formatPretty, "输出格式: pretty/vertical/json/csv")
 
 	if err := fs.Parse(args); err != nil {
 		_, _ = fmt.Fprintf(stderr, "参数解析错误: %v\n", err)
@@ -269,6 +293,11 @@ func runCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	c := newCLI(*tcpAddr, *httpAddr, strings.ToLower(*mode))
 	defer c.close()
+	if !isValidFormat(*format) {
+		_, _ = fmt.Fprintf(stderr, "未知输出格式: %s（支持: %s）\n", *format, strings.Join(supportedFormats, ", "))
+		return 1
+	}
+	c.format = *format
 
 	if *execute != "" {
 		result, err := c.execute(*execute)
