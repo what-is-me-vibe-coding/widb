@@ -35,6 +35,7 @@ jobs:
 
       - name: Run tests with race detector
         run: |
+          sudo prlimit --fsize=unlimited:unlimited --pid $$ 2>/dev/null || true
           ulimit -f unlimited
           go test -race -p=1 ./...
         env:
@@ -43,6 +44,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
+          sudo prlimit --fsize=unlimited:unlimited --pid $$ 2>/dev/null || true
           ulimit -f unlimited
           go test -race -coverprofile=coverage.out -p=1 ./...
         env:
