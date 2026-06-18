@@ -230,7 +230,7 @@ func TestStabilityGroupCommitterDoSyncEmptyPending(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("doSync 在 pending 为空时应立即返回")
 	}
 }

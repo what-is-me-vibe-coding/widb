@@ -14,6 +14,7 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/config"
+	"github.com/what-is-me-vibe-coding/test-db/pkg/render"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/server"
 )
 
@@ -76,7 +77,7 @@ func TestRunREPLCreateInsertSelect(t *testing.T) {
 	})
 	input := strings.NewReader("SELECT * FROM t;\n\\q\n")
 	var out bytes.Buffer
-	code := runREPL(srv, input, &out)
+	code := runREPL(srv, render.FormatPretty, input, &out)
 	if code != 0 {
 		t.Fatalf("runREPL 退出码 = %d, want 0", code)
 	}
@@ -94,7 +95,7 @@ func TestRunREPLEOF(t *testing.T) {
 	srv := newTestServer(t)
 	input := strings.NewReader("SELECT 1;\n")
 	var out bytes.Buffer
-	code := runREPL(srv, input, &out)
+	code := runREPL(srv, render.FormatPretty, input, &out)
 	if code != 0 {
 		t.Fatalf("runREPL 退出码 = %d, want 0", code)
 	}
@@ -105,7 +106,7 @@ func TestRunREPLHelpCommand(t *testing.T) {
 	srv := newTestServer(t)
 	input := strings.NewReader("\\h\n\\q\n")
 	var out bytes.Buffer
-	_ = runREPL(srv, input, &out)
+	_ = runREPL(srv, render.FormatPretty, input, &out)
 	if !strings.Contains(out.String(), "可用命令") {
 		t.Errorf("输出缺少帮助文本，输出: %s", out.String())
 	}
@@ -116,7 +117,7 @@ func TestRunREPLStatusCommand(t *testing.T) {
 	srv := newTestServer(t)
 	input := strings.NewReader("\\status\n\\q\n")
 	var out bytes.Buffer
-	_ = runREPL(srv, input, &out)
+	_ = runREPL(srv, render.FormatPretty, input, &out)
 	if !strings.Contains(out.String(), "正常") {
 		t.Errorf("输出缺少服务状态，输出: %s", out.String())
 	}
@@ -127,7 +128,7 @@ func TestRunREPLAddrsCommand(t *testing.T) {
 	srv := newTestServer(t)
 	input := strings.NewReader("\\addrs\n\\q\n")
 	var out bytes.Buffer
-	_ = runREPL(srv, input, &out)
+	_ = runREPL(srv, render.FormatPretty, input, &out)
 	output := out.String()
 	if !strings.Contains(output, "TCP:") {
 		t.Errorf("输出缺少 TCP 地址，输出: %s", output)
@@ -142,7 +143,7 @@ func TestRunREPLUnknownCommand(t *testing.T) {
 	srv := newTestServer(t)
 	input := strings.NewReader("\\unknown\n\\q\n")
 	var out bytes.Buffer
-	_ = runREPL(srv, input, &out)
+	_ = runREPL(srv, render.FormatPretty, input, &out)
 	if !strings.Contains(out.String(), "未知命令") {
 		t.Errorf("输出缺少未知命令提示，输出: %s", out.String())
 	}
@@ -155,7 +156,7 @@ func TestRunREPLMultiLineSQL(t *testing.T) {
 		"CREATE TABLE\n  multi (id INT64, PRIMARY KEY(id));\n\\q\n",
 	)
 	var out bytes.Buffer
-	code := runREPL(srv, input, &out)
+	code := runREPL(srv, render.FormatPretty, input, &out)
 	if code != 0 {
 		t.Fatalf("runREPL 退出码 = %d, want 0", code)
 	}
@@ -166,7 +167,7 @@ func TestRunREPLEmptyLineIgnored(t *testing.T) {
 	srv := newTestServer(t)
 	input := strings.NewReader("\n  \n\\q\n")
 	var out bytes.Buffer
-	code := runREPL(srv, input, &out)
+	code := runREPL(srv, render.FormatPretty, input, &out)
 	if code != 0 {
 		t.Fatalf("runREPL 退出码 = %d, want 0", code)
 	}
@@ -177,7 +178,7 @@ func TestRunREPLInvalidSQL(t *testing.T) {
 	srv := newTestServer(t)
 	input := strings.NewReader("INVALID SQL !!!\n\\q\n")
 	var out bytes.Buffer
-	code := runREPL(srv, input, &out)
+	code := runREPL(srv, render.FormatPretty, input, &out)
 	if code != 0 {
 		t.Fatalf("runREPL 退出码 = %d, want 0", code)
 	}
@@ -191,7 +192,7 @@ func TestRunOneShotSuccess(t *testing.T) {
 	srv := newTestServer(t)
 	seedTable(t, srv, "one", []map[string]any{{"id": int64(1), "name": "ok"}})
 	var out, errOut bytes.Buffer
-	code := runOneShot(srv, "SELECT * FROM one", &out, &errOut)
+	code := runOneShot(srv, render.FormatPretty, "SELECT * FROM one", &out, &errOut)
 	if code != 0 {
 		t.Fatalf("runOneShot 退出码 = %d, want 0", code)
 	}
@@ -205,7 +206,7 @@ func TestRunOneShotQuery(t *testing.T) {
 	srv := newTestServer(t)
 	seedTable(t, srv, "q", []map[string]any{{"id": int64(1), "name": "hello"}})
 	var out, errOut bytes.Buffer
-	code := runOneShot(srv, "SELECT * FROM q", &out, &errOut)
+	code := runOneShot(srv, render.FormatPretty, "SELECT * FROM q", &out, &errOut)
 	if code != 0 {
 		t.Fatalf("runOneShot 退出码 = %d, want 0", code)
 	}
@@ -217,11 +218,12 @@ func TestRunOneShotQuery(t *testing.T) {
 // TestHandleCommandQuit 验证 \q 命令返回 true（应退出）。
 func TestHandleCommandQuit(t *testing.T) {
 	srv := newTestServer(t)
+	format := render.FormatPretty
 	var out bytes.Buffer
-	if shouldExit := handleCommand(srv, &out, "\\q"); !shouldExit {
+	if shouldExit := handleCommand(srv, &format, &out, "\\q"); !shouldExit {
 		t.Error("\\q 应返回 true")
 	}
-	if shouldExit := handleCommand(srv, &out, "\\quit"); !shouldExit {
+	if shouldExit := handleCommand(srv, &format, &out, "\\quit"); !shouldExit {
 		t.Error("\\quit 应返回 true")
 	}
 }
@@ -229,9 +231,10 @@ func TestHandleCommandQuit(t *testing.T) {
 // TestHandleCommandNonExit 验证非退出命令返回 false。
 func TestHandleCommandNonExit(t *testing.T) {
 	srv := newTestServer(t)
+	format := render.FormatPretty
 	var out bytes.Buffer
 	for _, cmd := range []string{"\\h", "\\status", "\\addrs", "\\unknown"} {
-		if shouldExit := handleCommand(srv, &out, cmd); shouldExit {
+		if shouldExit := handleCommand(srv, &format, &out, cmd); shouldExit {
 			t.Errorf("%s 不应返回 true", cmd)
 		}
 	}
@@ -450,5 +453,124 @@ func TestLoadConfigFromYAML(t *testing.T) {
 	}
 	if cfg.Storage.DataDir != "./data" {
 		t.Errorf("DataDir = %q, want ./data", cfg.Storage.DataDir)
+	}
+}
+
+// --- 美化输出（issue #180）测试 ---
+
+// TestRunREPLPrettyDefault 验证 REPL 默认使用 pretty 格式渲染为表格。
+func TestRunREPLPrettyDefault(t *testing.T) {
+	srv := newTestServer(t)
+	seedTable(t, srv, "pt", []map[string]any{
+		{"id": int64(1), "name": "alice"},
+	})
+	input := strings.NewReader("SELECT * FROM pt;\n\\q\n")
+	var out bytes.Buffer
+	code := runREPL(srv, render.FormatPretty, input, &out)
+	if code != 0 {
+		t.Fatalf("runREPL 退出码 = %d, want 0", code)
+	}
+	output := out.String()
+	// pretty 表格应包含圆角边框字符
+	if !strings.Contains(output, "│") {
+		t.Errorf("pretty 输出应包含表格边框 '│': %q", output)
+	}
+	if !strings.Contains(output, "alice") {
+		t.Errorf("pretty 输出应包含数据 alice: %q", output)
+	}
+}
+
+// TestRunREPLFormatShow 验证 \format 命令显示当前格式。
+func TestRunREPLFormatShow(t *testing.T) {
+	srv := newTestServer(t)
+	input := strings.NewReader("\\format\n\\q\n")
+	var out bytes.Buffer
+	_ = runREPL(srv, render.FormatPretty, input, &out)
+	if !strings.Contains(out.String(), "当前格式") {
+		t.Errorf("输出应包含当前格式: %q", out.String())
+	}
+}
+
+// TestRunREPLFormatSwitch 验证 \format csv 切换格式后输出为 CSV。
+func TestRunREPLFormatSwitch(t *testing.T) {
+	srv := newTestServer(t)
+	seedTable(t, srv, "sw", []map[string]any{
+		{"id": int64(1), "name": "alice"},
+	})
+	input := strings.NewReader("\\format csv\nSELECT * FROM sw;\n\\q\n")
+	var out bytes.Buffer
+	code := runREPL(srv, render.FormatPretty, input, &out)
+	if code != 0 {
+		t.Fatalf("runREPL 退出码 = %d, want 0", code)
+	}
+	output := out.String()
+	if !strings.Contains(output, "已切换到 csv 格式") {
+		t.Errorf("应显示切换成功: %q", output)
+	}
+	// CSV 首行应为列名
+	if !strings.Contains(output, "id,name") {
+		t.Errorf("csv 输出应包含列名行: %q", output)
+	}
+	// CSV 格式不应包含表格边框
+	if strings.Contains(output, "│") {
+		t.Errorf("csv 输出不应包含表格边框: %q", output)
+	}
+}
+
+// TestRunREPLFormatUnknown 验证未知格式给出提示。
+func TestRunREPLFormatUnknown(t *testing.T) {
+	srv := newTestServer(t)
+	input := strings.NewReader("\\format xml\n\\q\n")
+	var out bytes.Buffer
+	_ = runREPL(srv, render.FormatPretty, input, &out)
+	if !strings.Contains(out.String(), "未知格式") {
+		t.Errorf("应显示未知格式提示: %q", out.String())
+	}
+}
+
+// TestRunOneShotCSVFormat 验证 -e 模式使用 csv 格式输出。
+func TestRunOneShotCSVFormat(t *testing.T) {
+	srv := newTestServer(t)
+	seedTable(t, srv, "csv_t", []map[string]any{
+		{"id": int64(1), "name": "alice"},
+	})
+	var out, errOut bytes.Buffer
+	code := runOneShot(srv, render.FormatCSV, "SELECT * FROM csv_t", &out, &errOut)
+	if code != 0 {
+		t.Fatalf("runOneShot 退出码 = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "id,name") {
+		t.Errorf("csv 输出应包含列名行: %q", out.String())
+	}
+}
+
+// TestRunMainWithArgsFormatFlag 验证 -format 标志端到端流程。
+func TestRunMainWithArgsFormatFlag(t *testing.T) {
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	code := runMainWithArgs(
+		[]string{"-data", dir, "-tcp", "127.0.0.1:0", "-http", "127.0.0.1:0",
+			"-format", "csv", "-e", "CREATE TABLE fmt_e2e (id INT64, PRIMARY KEY(id))"},
+		strings.NewReader(""), &out, &errOut,
+	)
+	if code != 0 {
+		t.Fatalf("预期退出码 0，实际 %d，stderr: %s", code, errOut.String())
+	}
+}
+
+// TestRunMainWithArgsFormatInvalid 验证 -format 无效值返回 1。
+func TestRunMainWithArgsFormatInvalid(t *testing.T) {
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	code := runMainWithArgs(
+		[]string{"-data", dir, "-tcp", "127.0.0.1:0", "-http", "127.0.0.1:0",
+			"-format", "xml", "-e", "SELECT 1"},
+		strings.NewReader(""), &out, &errOut,
+	)
+	if code != 1 {
+		t.Fatalf("预期退出码 1，实际 %d", code)
+	}
+	if !strings.Contains(errOut.String(), "未知输出格式") {
+		t.Errorf("stderr 应包含错误: %q", errOut.String())
 	}
 }

@@ -1,6 +1,4 @@
-// Package main 提供 widb-cli 的多格式结果渲染能力。
-// 支持 pretty（ClickHouse 风格表格）、vertical（垂直行块）、json、csv 四种格式。
-package main
+package render
 
 import (
 	"encoding/json"
@@ -10,23 +8,24 @@ import (
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
+
 	"github.com/what-is-me-vibe-coding/test-db/pkg/server"
 )
 
 // 输出格式常量。
 const (
-	formatPretty   = "pretty"
-	formatVertical = "vertical"
-	formatJSON     = "json"
-	formatCSV      = "csv"
+	FormatPretty   = "pretty"
+	FormatVertical = "vertical"
+	FormatJSON     = "json"
+	FormatCSV      = "csv"
 )
 
-// supportedFormats 是所有支持的输出格式列表。
-var supportedFormats = []string{formatPretty, formatVertical, formatJSON, formatCSV}
+// SupportedFormats 是所有支持的输出格式列表。
+var SupportedFormats = []string{FormatPretty, FormatVertical, FormatJSON, FormatCSV}
 
-// isValidFormat 判断格式名称是否合法。
-func isValidFormat(f string) bool {
-	for _, s := range supportedFormats {
+// IsValidFormat 判断格式名称是否合法。
+func IsValidFormat(f string) bool {
+	for _, s := range SupportedFormats {
 		if s == f {
 			return true
 		}
@@ -34,15 +33,10 @@ func isValidFormat(f string) bool {
 	return false
 }
 
-// formatResponse 以 JSON 格式渲染响应，保留原行为用于向后兼容。
-func formatResponse(resp *server.Response) string {
-	return renderResponse(resp, formatJSON)
-}
-
-// renderResponse 根据指定格式渲染响应。
+// Response 根据指定格式渲染响应。
 // 错误响应统一返回 "错误: <message>"；无结果集的响应返回标量信息；
 // 有结果集的响应按 format 指定的方式渲染。
-func renderResponse(resp *server.Response, format string) string {
+func Response(resp *server.Response, format string) string {
 	if resp.Code != 0 {
 		return "错误: " + resp.Message
 	}
@@ -54,13 +48,13 @@ func renderResponse(resp *server.Response, format string) string {
 
 	cols := resultColumns(resp, rows)
 	switch format {
-	case formatPretty:
+	case FormatPretty:
 		return renderPretty(cols, rows)
-	case formatVertical:
+	case FormatVertical:
 		return renderVertical(cols, rows)
-	case formatCSV:
+	case FormatCSV:
 		return renderCSV(cols, rows)
-	case formatJSON:
+	case FormatJSON:
 		return renderJSONRows(rows)
 	default:
 		return renderJSONRows(rows)
@@ -83,12 +77,20 @@ func renderScalar(resp *server.Response) string {
 }
 
 // extractRows 从 Data 中提取行列表。
-// Data 必须是 []interface{} 且每个元素是 map[string]interface{} 才视为结果集；
+// 支持两种来源：
+//   - 进程内调用（cmd/widb）：Data 为 []map[string]any
+//   - 网络反序列化（cmd/cli）：Data 为 []interface{}，每个元素是 map[string]interface{}
+//
 // 空切片或非切片类型均返回 ok=false，交由 renderScalar 处理。
 func extractRows(data any) ([]map[string]any, bool) {
 	if data == nil {
 		return nil, false
 	}
+	// 进程内调用路径：直接返回 []map[string]any
+	if rows, ok := data.([]map[string]any); ok && len(rows) > 0 {
+		return rows, true
+	}
+	// 网络反序列化路径：[]interface{} 中每个元素为 map[string]interface{}
 	slice, ok := data.([]interface{})
 	if !ok || len(slice) == 0 {
 		return nil, false

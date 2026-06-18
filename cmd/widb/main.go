@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/config"
+	"github.com/what-is-me-vibe-coding/test-db/pkg/render"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/server"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
@@ -32,10 +33,12 @@ const (
 外部客户端仍可通过 TCP/HTTP 连接本服务`
 
 	helpText = `可用命令:
-  \q          退出客户端并关闭服务
-  \h          显示帮助
-  \status     显示服务状态
-  \addrs      显示监听地址`
+  \q              退出客户端并关闭服务
+  \h              显示帮助
+  \status         显示服务状态
+  \addrs          显示监听地址
+  \format         显示当前输出格式
+  \format <fmt>   切换输出格式: pretty/vertical/json/csv`
 )
 
 // cliFlags 封装命令行参数，语义与 cmd/server 一致。
@@ -54,6 +57,7 @@ type cliFlags struct {
 	walCleanInterval  *time.Duration
 	walCleanThreshold *int64
 	execute           *string
+	format            *string
 }
 
 // newCLIFlags 构建命令行参数集。
@@ -74,6 +78,7 @@ func newCLIFlags() *cliFlags {
 		walCleanInterval:  fs.Duration("scheduler.wal-clean-interval", 0, "WAL 清理检查间隔（覆盖配置文件）"),
 		walCleanThreshold: fs.Int64("scheduler.wal-clean-threshold", 0, "WAL 文件大小阈值（覆盖配置文件）"),
 		execute:           fs.String("e", "", "执行单条 SQL 语句后退出"),
+		format:            fs.String("format", render.FormatPretty, "输出格式: pretty/vertical/json/csv"),
 	}
 }
 
@@ -167,6 +172,10 @@ func runMainWithArgs(args []string, stdin io.Reader, stdout, stderr io.Writer) i
 		log.Printf("配置不合法: %v", err)
 		return 1
 	}
+	if !render.IsValidFormat(*c.format) {
+		_, _ = fmt.Fprintf(stderr, "未知输出格式: %s（支持: %s）\n", *c.format, strings.Join(render.SupportedFormats, ", "))
+		return 1
+	}
 
 	srv, err := server.NewServer(toServerConfig(cfg), server.WithMetricsRegistry(prometheus.NewRegistry()))
 	if err != nil {
@@ -192,24 +201,24 @@ func runMainWithArgs(args []string, stdin io.Reader, stdout, stderr io.Writer) i
 	log.Printf("TCP 监听 %s | HTTP 监听 %s", srv.TCPAddr(), srv.HTTPAddr())
 
 	if *c.execute != "" {
-		return runOneShot(srv, *c.execute, stdout, stderr)
+		return runOneShot(srv, *c.format, *c.execute, stdout, stderr)
 	}
-	return runREPL(srv, stdin, stdout)
+	return runREPL(srv, *c.format, stdin, stdout)
 }
 
 // runOneShot 执行单条 SQL 后退出。
-func runOneShot(srv *server.Server, sql string, stdout, stderr io.Writer) int {
+func runOneShot(srv *server.Server, format string, sql string, stdout, stderr io.Writer) int {
 	resp, err := srv.ExecuteQuery(sql)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "错误: %v\n", err)
 		return 1
 	}
-	_, _ = fmt.Fprintln(stdout, server.FormatResponse(resp))
+	_, _ = fmt.Fprintln(stdout, render.Response(resp, format))
 	return 0
 }
 
-// runREPL 运行交互式 REPL，返回退出码。
-func runREPL(srv *server.Server, reader io.Reader, writer io.Writer) int {
+// runREPL 运行交互式 REPL，返回退出码。format 可通过 \format 命令在运行时切换。
+func runREPL(srv *server.Server, format string, reader io.Reader, writer io.Writer) int {
 	_, _ = fmt.Fprintln(writer, banner)
 	_, _ = fmt.Fprintf(writer, "TCP: %s | HTTP: %s\n\n", srv.TCPAddr(), srv.HTTPAddr())
 
@@ -224,7 +233,7 @@ func runREPL(srv *server.Server, reader io.Reader, writer io.Writer) int {
 			continue
 		}
 		if strings.HasPrefix(line, "\\") {
-			if shouldExit := handleCommand(srv, writer, line); shouldExit {
+			if shouldExit := handleCommand(srv, &format, writer, line); shouldExit {
 				_, _ = fmt.Fprintln(writer, "再见!")
 				return 0
 			}
@@ -234,7 +243,7 @@ func runREPL(srv *server.Server, reader io.Reader, writer io.Writer) int {
 		if sql == "" {
 			continue
 		}
-		executeAndPrint(srv, writer, sql)
+		executeAndPrint(srv, format, writer, sql)
 	}
 	if err := scanner.Err(); err != nil {
 		_, _ = fmt.Fprintf(writer, "读取输入失败: %v\n", err)
@@ -257,7 +266,10 @@ func readMultiLineSQL(scanner *bufio.Scanner, writer io.Writer, firstLine string
 }
 
 // handleCommand 处理反斜杠命令，返回 true 表示应退出 REPL。
-func handleCommand(srv *server.Server, writer io.Writer, cmd string) bool {
+func handleCommand(srv *server.Server, format *string, writer io.Writer, cmd string) bool {
+	if strings.HasPrefix(cmd, "\\format") {
+		return handleFormatCommand(format, writer, cmd)
+	}
 	switch cmd {
 	case "\\q", "\\quit":
 		return true
@@ -273,14 +285,30 @@ func handleCommand(srv *server.Server, writer io.Writer, cmd string) bool {
 	return false
 }
 
+// handleFormatCommand 处理 \format 命令：无参数显示当前格式，有参数切换格式。
+func handleFormatCommand(format *string, writer io.Writer, cmd string) bool {
+	arg := strings.TrimSpace(strings.TrimPrefix(cmd, "\\format"))
+	if arg == "" {
+		_, _ = fmt.Fprintf(writer, "当前格式: %s（支持: %s）\n", *format, strings.Join(render.SupportedFormats, ", "))
+		return false
+	}
+	if !render.IsValidFormat(arg) {
+		_, _ = fmt.Fprintf(writer, "未知格式: %s，支持: %s\n", arg, strings.Join(render.SupportedFormats, ", "))
+		return false
+	}
+	*format = arg
+	_, _ = fmt.Fprintf(writer, "已切换到 %s 格式\n", arg)
+	return false
+}
+
 // executeAndPrint 执行 SQL 并打印结果。
-func executeAndPrint(srv *server.Server, writer io.Writer, sql string) {
+func executeAndPrint(srv *server.Server, format string, writer io.Writer, sql string) {
 	resp, err := srv.ExecuteQuery(sql)
 	if err != nil {
 		_, _ = fmt.Fprintf(writer, "错误: %v\n", err)
 		return
 	}
-	_, _ = fmt.Fprintln(writer, server.FormatResponse(resp))
+	_, _ = fmt.Fprintln(writer, render.Response(resp, format))
 }
 
 func main() {

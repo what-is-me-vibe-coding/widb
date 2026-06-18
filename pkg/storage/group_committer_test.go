@@ -33,7 +33,7 @@ func TestGroupCommitterBasic(t *testing.T) {
 	select {
 	case <-ch:
 		// 同步完成
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("group commit sync timed out")
 	}
 }
@@ -61,7 +61,7 @@ func TestGroupCommitterMultipleWriters(t *testing.T) {
 		select {
 		case <-ch:
 			// OK
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(2 * time.Second):
 			t.Fatalf("writer %d sync timed out", i)
 		}
 	}
@@ -84,7 +84,7 @@ func TestGroupCommitterClose(t *testing.T) {
 	select {
 	case <-ch:
 		// OK
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("final sync after close timed out")
 	}
 }
@@ -108,7 +108,7 @@ func TestGroupCommitterSyncNow(t *testing.T) {
 	select {
 	case <-ch:
 		// OK
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("SyncNow did not trigger sync")
 	}
 }

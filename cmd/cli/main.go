@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/what-is-me-vibe-coding/test-db/pkg/render"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/server"
 )
 
@@ -49,7 +50,7 @@ func newCLI(tcpAddr, httpAddr string, mode string) *cli {
 		tcpAddr:  tcpAddr,
 		httpAddr: httpAddr,
 		httpCli:  &http.Client{Timeout: 30 * time.Second},
-		format:   formatPretty,
+		format:   render.FormatPretty,
 	}
 }
 
@@ -113,7 +114,7 @@ func (c *cli) executeTCP(sql string) (string, error) {
 		return "", fmt.Errorf("解析响应失败: %w", err)
 	}
 
-	return renderResponse(&resp, c.format), nil
+	return render.Response(&resp, c.format), nil
 }
 
 // executeHTTP 通过 HTTP REST API 执行查询。
@@ -143,7 +144,7 @@ func (c *cli) executeHTTP(sql string) (string, error) {
 		return "", fmt.Errorf("解析响应失败: %w", err)
 	}
 
-	return renderResponse(&resp, c.format), nil
+	return render.Response(&resp, c.format), nil
 }
 
 // pingTCP 通过 TCP 发送心跳检测。
@@ -265,11 +266,11 @@ func (c *cli) handleCommand(writer io.Writer, cmd string) error {
 func (c *cli) handleFormatCommand(writer io.Writer, cmd string) error {
 	arg := strings.TrimSpace(strings.TrimPrefix(cmd, "\\format"))
 	if arg == "" {
-		_, _ = fmt.Fprintf(writer, "当前格式: %s（支持: %s）\n", c.format, strings.Join(supportedFormats, ", "))
+		_, _ = fmt.Fprintf(writer, "当前格式: %s（支持: %s）\n", c.format, strings.Join(render.SupportedFormats, ", "))
 		return nil
 	}
-	if !isValidFormat(arg) {
-		_, _ = fmt.Fprintf(writer, "未知格式: %s，支持: %s\n", arg, strings.Join(supportedFormats, ", "))
+	if !render.IsValidFormat(arg) {
+		_, _ = fmt.Fprintf(writer, "未知格式: %s，支持: %s\n", arg, strings.Join(render.SupportedFormats, ", "))
 		return nil
 	}
 	c.format = arg
@@ -284,7 +285,7 @@ func runCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	httpAddr := fs.String("http", "127.0.0.1:8080", "服务器 HTTP 地址")
 	mode := fs.String("mode", "tcp", "连接模式: tcp 或 http")
 	execute := fs.String("e", "", "执行单条 SQL 语句后退出")
-	format := fs.String("format", formatPretty, "输出格式: pretty/vertical/json/csv")
+	format := fs.String("format", render.FormatPretty, "输出格式: pretty/vertical/json/csv")
 
 	if err := fs.Parse(args); err != nil {
 		_, _ = fmt.Fprintf(stderr, "参数解析错误: %v\n", err)
@@ -293,8 +294,8 @@ func runCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	c := newCLI(*tcpAddr, *httpAddr, strings.ToLower(*mode))
 	defer c.close()
-	if !isValidFormat(*format) {
-		_, _ = fmt.Fprintf(stderr, "未知输出格式: %s（支持: %s）\n", *format, strings.Join(supportedFormats, ", "))
+	if !render.IsValidFormat(*format) {
+		_, _ = fmt.Fprintf(stderr, "未知输出格式: %s（支持: %s）\n", *format, strings.Join(render.SupportedFormats, ", "))
 		return 1
 	}
 	c.format = *format
