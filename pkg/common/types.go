@@ -103,9 +103,30 @@ func (v Value) IsNull() bool {
 	return !v.Valid
 }
 
+// float64Value 返回 Value 的 float64 数值表示，仅供跨类型数值比较使用。
+// FLOAT64 直接取 Float64 字段；整数族（含 DATE）将 Int64 转为 float64；
+// 非数值类型返回 0，调用方需确保仅在数值类型间使用。
+func (v Value) float64Value() float64 {
+	if v.Typ == TypeFloat64 {
+		return v.Float64
+	}
+	if v.Typ.IsIntFamily() {
+		return float64(v.Int64)
+	}
+	return 0
+}
+
+// isFloatIntCrossType 报告两个类型是否为 FLOAT64 与整数族的跨类型组合，
+// 此类组合需按 float64 提升后比较，使 `WHERE float_col > 25`（字面量为 INT64）能正确命中。
+func isFloatIntCrossType(a, b DataType) bool {
+	return (a == TypeFloat64 && b.IsIntFamily()) ||
+		(b == TypeFloat64 && a.IsIntFamily())
+}
+
 // Equal 比较两个 Value 是否相等（支持 NULL 比较）。
 // 整数族类型（INT8/16/32/64/UINT64/DATE）跨类型按 Int64 字段比较，
 // 使 `WHERE int8_col = 5`（字面量为 INT64）能正确命中。
+// FLOAT64 与整数族跨类型按 float64 比较，使 `WHERE float_col = 30` 能正确命中。
 func (v Value) Equal(other Value) bool {
 	if !v.Valid && !other.Valid {
 		return true
@@ -115,6 +136,9 @@ func (v Value) Equal(other Value) bool {
 	}
 	if v.Typ.IsIntFamily() && other.Typ.IsIntFamily() {
 		return v.Int64 == other.Int64
+	}
+	if isFloatIntCrossType(v.Typ, other.Typ) {
+		return v.float64Value() == other.float64Value()
 	}
 	if v.Typ != other.Typ {
 		return false
@@ -136,13 +160,16 @@ func (v Value) Equal(other Value) bool {
 }
 
 // Less 比较 Value 是否小于另一个（类型不同或任一 NULL 时返回 false）。
-// 整数族类型跨类型按 Int64 字段比较。
+// 整数族类型跨类型按 Int64 字段比较；FLOAT64 与整数族跨类型按 float64 比较。
 func (v Value) Less(other Value) bool {
 	if !v.Valid || !other.Valid {
 		return false
 	}
 	if v.Typ.IsIntFamily() && other.Typ.IsIntFamily() {
 		return v.Int64 < other.Int64
+	}
+	if isFloatIntCrossType(v.Typ, other.Typ) {
+		return v.float64Value() < other.float64Value()
 	}
 	if v.Typ != other.Typ {
 		return false

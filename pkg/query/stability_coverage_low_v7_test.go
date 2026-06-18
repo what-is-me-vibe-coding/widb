@@ -680,13 +680,14 @@ func TestValueLess_Timestamp(t *testing.T) {
 	}
 }
 
-// TestValueLess_DifferentTypes 测试不同类型比较返回 false。
+// TestValueLess_DifferentTypes 测试不同类型比较的语义。
+// FLOAT64 与整数族跨类型按 float64 数值比较；非数值跨类型返回 false。
 func TestValueLess_DifferentTypes(t *testing.T) {
-	if common.NewInt64(1).Less(common.NewFloat64(2.0)) {
-		t.Error("期望不同类型比较返回 false")
+	if !common.NewInt64(1).Less(common.NewFloat64(2.0)) {
+		t.Error("期望 INT64(1) < FLOAT64(2.0) 跨类型数值比较返回 true")
 	}
 	if common.NewString("a").Less(common.NewInt64(1)) {
-		t.Error("期望不同类型比较返回 false")
+		t.Error("期望 STRING 与 INT64 非数值跨类型比较返回 false")
 	}
 }
 

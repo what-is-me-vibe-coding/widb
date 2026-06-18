@@ -150,14 +150,14 @@ func TestFastFilterIntFamilyTypes(t *testing.T) {
 // TestFastFilterTypeMismatchFallback 验证列与字面量类型不同构时
 // 回退到通用逐行路径仍能得到正确结果。
 func TestFastFilterTypeMismatchFallback(t *testing.T) {
-	// FLOAT64 列与 INT64 字面量：类型不同构，Equal/Less 返回 false，无行命中
+	// FLOAT64 列与 INT64 字面量：类型不同构，回退到通用路径按 float64 跨类型比较
 	values := []common.Value{
 		common.NewFloat64(1.0), common.NewFloat64(2.0), common.NewFloat64(3.0),
 	}
 	chunk, schema := buildSingleColChunk(common.TypeFloat64, values)
 	lit := common.NewInt64(2)
-	if got := runFastFilter(t, chunk, schema, OpEq, lit); got != 0 {
-		t.Errorf("float64 col vs int64 lit OpEq: got %d want 0 (type mismatch)", got)
+	if got := runFastFilter(t, chunk, schema, OpEq, lit); got != 1 {
+		t.Errorf("float64 col vs int64 lit OpEq: got %d want 1 (cross-type numeric)", got)
 	}
 
 	// BOOL 列与 BOOL 字面量：不在特化路径中，走通用路径

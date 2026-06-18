@@ -88,7 +88,8 @@ func TestValueEqual(t *testing.T) {
 		{"Float64 相等", NewFloat64(1.5), NewFloat64(1.5), true},
 		{"String 相等", NewString("a"), NewString("a"), true},
 		{"String 不相等", NewString("a"), NewString("b"), false},
-		{"类型不同不相等", NewInt64(1), NewFloat64(1), false},
+		{"类型不同不相等", NewInt64(1), NewFloat64(2), false},
+		{"INT64 与 FLOAT64 跨类型数值相等", NewInt64(1), NewFloat64(1), true},
 		{"Timestamp 相等", NewTimestamp(ts1), NewTimestamp(ts1), true},
 		{"Timestamp 不相等", NewTimestamp(ts1), NewTimestamp(ts2), false},
 		{"Timestamp 与 Int64 类型不同", NewTimestamp(ts1), NewInt64(ts1.Unix()), false},
@@ -149,7 +150,8 @@ func TestValueLess(t *testing.T) {
 		{NewString("b"), NewString("a"), false},
 		{NewBool(false), NewBool(true), true},
 		{NewBool(true), NewBool(false), false},
-		{NewInt64(1), NewFloat64(2), false}, // 类型不同
+		{NewInt64(1), NewFloat64(2), true},  // INT64 与 FLOAT64 跨类型按 float64 比较
+		{NewInt64(2), NewFloat64(1), false}, // 跨类型反向
 		{NewTimestamp(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), NewTimestamp(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)), true},
 		{NewTimestamp(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)), NewTimestamp(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), false},
 		{NewTimestamp(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), NewTimestamp(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), false},

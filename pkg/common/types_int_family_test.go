@@ -140,7 +140,8 @@ func TestIntFamilyEqual(t *testing.T) {
 		{"UINT64 与 DATE 同值相等", NewUint64(100), NewDate(100), true},
 		{"INT32 与 INT32 同值相等", NewInt32(-1), NewInt32(-1), true},
 		{"DATE 与 INT64 跨类型相等", NewDate(19723), NewInt64(19723), true},
-		{"INT8 与 FLOAT64 类型不同不等", NewInt8(1), NewFloat64(1), false},
+		{"INT8 与 FLOAT64 跨类型数值相等", NewInt8(1), NewFloat64(1), true},
+		{"INT8 与 FLOAT64 跨类型数值不等", NewInt8(1), NewFloat64(2), false},
 		{"INT8 与 STRING 类型不同不等", NewInt8(1), NewString("1"), false},
 	}
 	for _, tt := range tests {
@@ -164,7 +165,8 @@ func TestIntFamilyLess(t *testing.T) {
 		{"INT16 < INT32 跨类型", NewInt16(100), NewInt32(101), true},
 		{"DATE < DATE 同类型", NewDate(100), NewDate(101), true},
 		{"UINT64 < INT64 跨类型", NewUint64(99), NewInt64(100), true},
-		{"INT8 与 FLOAT64 类型不同返回 false", NewInt8(1), NewFloat64(2), false},
+		{"INT8 < FLOAT64 跨类型数值比较", NewInt8(1), NewFloat64(2), true},
+		{"INT8 < FLOAT64 跨类型反向", NewInt8(3), NewFloat64(2), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
