@@ -189,6 +189,35 @@ func buildBenchFilterChunk() *storage.Chunk {
 	return chunk
 }
 
+// buildBenchFilterChunkWithNulls 构建与 buildBenchFilterChunk 同结构的 Chunk，
+// 但每隔 8 行将 id/score/name 置为 NULL，用于度量含 NULL 列的过滤开销
+// （走 fastFilterTyped 的 nulls.Get 逐行检查分支）。
+func buildBenchFilterChunkWithNulls() *storage.Chunk {
+	rowCount := uint32(benchFilterRows)
+	idCol := storage.NewColumnVector(0, common.TypeInt64, rowCount)
+	scoreCol := storage.NewColumnVector(1, common.TypeFloat64, rowCount)
+	nameCol := storage.NewColumnVector(2, common.TypeString, rowCount)
+	for i := uint32(0); i < rowCount; i++ {
+		if i%8 == 0 {
+			idCol.SetNull(i)
+			scoreCol.SetNull(i)
+			nameCol.SetNull(i)
+			continue
+		}
+		idCol.SetInt64(i, int64(i))
+		scoreCol.SetFloat64(i, float64(i))
+		nameCol.SetString(i, fmtBenchName(i))
+	}
+	idCol.SetLen(rowCount)
+	scoreCol.SetLen(rowCount)
+	nameCol.SetLen(rowCount)
+	chunk := storage.NewChunk(rowCount)
+	_ = chunk.AddColumn(idCol)
+	_ = chunk.AddColumn(scoreCol)
+	_ = chunk.AddColumn(nameCol)
+	return chunk
+}
+
 func fmtBenchName(i uint32) string {
 	return "name-" + fmtIntKey(int(i))
 }
@@ -250,6 +279,53 @@ func BenchmarkFilterStringFastPath(b *testing.B) {
 		Op:    OpEq,
 		Left:  &ResolvedColumnExpr{Name: benchColName, Idx: 2, typ: common.TypeString},
 		Right: &LiteralExpr{Value: common.NewString(fmtBenchName(benchFilterRows / 2))},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out, err := filterChunk(chunk, cond, schema, buildColIdxMapFromSchema(schema))
+		if err != nil {
+			b.Fatal(err)
+		}
+		if out.RowCount() != 1 {
+			b.Fatalf("expected 1 row, got %d", out.RowCount())
+		}
+	}
+	b.ReportAllocs()
+}
+
+// 以下基准对含 NULL 的列执行过滤，走 fastFilterTyped 的 nulls.Get 逐行检查分支，
+// 用于回归“无 NULL 快速路径”优化后，含 NULL 场景未发生退化。
+
+func BenchmarkFilterInt64FastPathWithNulls(b *testing.B) {
+	chunk := buildBenchFilterChunkWithNulls()
+	schema := benchSchema()
+	cond := &BinaryExpr{
+		Op:    OpGt,
+		Left:  &ResolvedColumnExpr{Name: benchColID, Idx: 0, typ: common.TypeInt64},
+		Right: &LiteralExpr{Value: common.NewInt64(benchFilterRows / 2)},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out, err := filterChunk(chunk, cond, schema, buildColIdxMapFromSchema(schema))
+		if err != nil {
+			b.Fatal(err)
+		}
+		if out.RowCount() == 0 {
+			b.Fatal("expected non-empty result")
+		}
+	}
+	b.ReportAllocs()
+}
+
+func BenchmarkFilterStringFastPathWithNulls(b *testing.B) {
+	chunk := buildBenchFilterChunkWithNulls()
+	schema := benchSchema()
+	// benchFilterRows/2 为 8 的倍数，在 buildBenchFilterChunkWithNulls 中被置为 NULL，
+	// 故 +1 选取非 NULL 行作为等值匹配目标。
+	cond := &BinaryExpr{
+		Op:    OpEq,
+		Left:  &ResolvedColumnExpr{Name: benchColName, Idx: 2, typ: common.TypeString},
+		Right: &LiteralExpr{Value: common.NewString(fmtBenchName(benchFilterRows/2 + 1))},
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

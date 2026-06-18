@@ -145,14 +145,24 @@ func fastFilterTyped(col *storage.ColumnVector, op BinaryOp, lit common.Value, r
 
 // fastFilterInt64 对整数族列与 int64 字面量执行向量化比较。
 // 直接访问 int64s 底层数组与 null bitmap，跳过 GetValue 的类型分发与 Value 构造。
+// 多数 OLAP 列无 NULL：先用 IsEmpty 整体判断，无 NULL 时跳过逐行 nulls.Get
+// 的边界检查+除法+取模+位与开销（与 ColumnVector.CopySelected 的优化一致）。
 func fastFilterInt64(col *storage.ColumnVector, op BinaryOp, lit int64, rowCount uint32) []uint32 {
 	data := col.Int64Data()
 	nulls := col.NullBitmap()
 	selection := make([]uint32, 0, rowCount)
-	for row := uint32(0); row < rowCount; row++ {
-		if nulls.Get(row) {
-			continue
+	if !nulls.IsEmpty() {
+		for row := uint32(0); row < rowCount; row++ {
+			if nulls.Get(row) {
+				continue
+			}
+			if compareOrdered(op, data[row], lit) {
+				selection = append(selection, row)
+			}
 		}
+		return selection
+	}
+	for row := uint32(0); row < rowCount; row++ {
 		if compareOrdered(op, data[row], lit) {
 			selection = append(selection, row)
 		}
@@ -161,14 +171,23 @@ func fastFilterInt64(col *storage.ColumnVector, op BinaryOp, lit int64, rowCount
 }
 
 // fastFilterFloat64 对 FLOAT64 列与 float64 字面量执行向量化比较。
+// 无 NULL 时跳过逐行 nulls.Get 开销（见 fastFilterInt64 说明）。
 func fastFilterFloat64(col *storage.ColumnVector, op BinaryOp, lit float64, rowCount uint32) []uint32 {
 	data := col.Float64Data()
 	nulls := col.NullBitmap()
 	selection := make([]uint32, 0, rowCount)
-	for row := uint32(0); row < rowCount; row++ {
-		if nulls.Get(row) {
-			continue
+	if !nulls.IsEmpty() {
+		for row := uint32(0); row < rowCount; row++ {
+			if nulls.Get(row) {
+				continue
+			}
+			if compareOrdered(op, data[row], lit) {
+				selection = append(selection, row)
+			}
 		}
+		return selection
+	}
+	for row := uint32(0); row < rowCount; row++ {
 		if compareOrdered(op, data[row], lit) {
 			selection = append(selection, row)
 		}
@@ -177,14 +196,23 @@ func fastFilterFloat64(col *storage.ColumnVector, op BinaryOp, lit float64, rowC
 }
 
 // fastFilterString 对 STRING 列与 string 字面量执行向量化比较。
+// 无 NULL 时跳过逐行 nulls.Get 开销（见 fastFilterInt64 说明）。
 func fastFilterString(col *storage.ColumnVector, op BinaryOp, lit string, rowCount uint32) []uint32 {
 	data := col.StringData()
 	nulls := col.NullBitmap()
 	selection := make([]uint32, 0, rowCount)
-	for row := uint32(0); row < rowCount; row++ {
-		if nulls.Get(row) {
-			continue
+	if !nulls.IsEmpty() {
+		for row := uint32(0); row < rowCount; row++ {
+			if nulls.Get(row) {
+				continue
+			}
+			if compareOrdered(op, data[row], lit) {
+				selection = append(selection, row)
+			}
 		}
+		return selection
+	}
+	for row := uint32(0); row < rowCount; row++ {
 		if compareOrdered(op, data[row], lit) {
 			selection = append(selection, row)
 		}
