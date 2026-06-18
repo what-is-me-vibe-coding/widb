@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -102,6 +104,15 @@ func NewServer(cfg Config, opts ...Option) (*Server, error) {
 		conns:     make(map[net.Conn]struct{}),
 	}
 
+	// 恢复每张 LSM 表的独立引擎（位于 dataDir/tables/<name>/），
+	// 实现表间数据隔离。仅恢复存在独立数据目录的表，无目录的表回退到默认引擎。
+	if err := s.recoverLSMEngines(); err != nil {
+		if closeErr := eng.Close(); closeErr != nil {
+			log.Printf("server: close engine after lsm recovery failure: %v", closeErr)
+		}
+		return nil, fmt.Errorf("server: recover lsm engines: %w", err)
+	}
+
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -173,6 +184,11 @@ func (s *Server) Start() error {
 	// 启动后台调度器
 	if s.cfg.EnableScheduler {
 		s.storage.StartScheduler(s.cfg.SchedulerConfig)
+		s.adapter.forEachLSMEngine(func(eng TableEngine) {
+			if lsmEng, ok := eng.(*storage.Engine); ok {
+				lsmEng.StartScheduler(s.cfg.SchedulerConfig)
+			}
+		})
 		log.Println("后台调度器已启动")
 	}
 
@@ -219,7 +235,7 @@ func (s *Server) Stop() error {
 		s.closeAllConns()
 		s.wg.Wait()
 
-		// 先关闭所有内存引擎表，再关闭默认 LSM 引擎。
+		// 先关闭所有内存引擎表与 LSM 表引擎，再关闭默认 LSM 引擎。
 		if s.adapter != nil {
 			s.adapter.closeAll()
 		}
@@ -234,6 +250,41 @@ func (s *Server) Stop() error {
 		log.Println("服务器已关闭")
 	})
 	return stopErr
+}
+
+// tableDataDir 返回指定 LSM 表的独立数据目录路径：dataDir/tables/<escaped-name>/。
+// 使用 url.PathEscape 对表名转义，避免表名包含路径分隔符等特殊字符。
+func (s *Server) tableDataDir(table string) string {
+	return filepath.Join(s.cfg.DataDir, "tables", url.PathEscape(table))
+}
+
+// recoverLSMEngines 在服务器启动时为 catalog 中每张 LSM 表恢复独立引擎。
+// 仅恢复存在独立数据目录（dataDir/tables/<name>/）的表；无目录的表回退到默认引擎，
+// 兼容历史数据（建表于本隔离机制引入之前）。
+func (s *Server) recoverLSMEngines() error {
+	snap := s.catalog.Snapshot()
+	for name, tbl := range snap.Tables {
+		if tbl.Engine != catalog.EngineLSM {
+			continue
+		}
+		tableDir := s.tableDataDir(name)
+		if _, err := os.Stat(tableDir); err != nil {
+			continue // 无独立目录，回退到默认引擎
+		}
+		eng, err := storage.NewEngine(storage.EngineConfig{
+			DataDir:         tableDir,
+			MaxMemTableSize: s.cfg.MaxMemTableSize,
+		})
+		if err != nil {
+			return fmt.Errorf("recover lsm engine for table %q: %w", name, err)
+		}
+		eng.SetColumnMeta(buildColumnMeta(tbl.Columns))
+		if err := s.adapter.registerLSMEngine(name, eng); err != nil {
+			_ = eng.Close()
+			return fmt.Errorf("register lsm engine for table %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // closeListeners 关闭 TCP 监听器、HTTP 监听器和 HTTP 服务器。

@@ -47,10 +47,13 @@ func (a *engineAdapter) PrimaryIndex() *index.PrimaryIndex { return a.engine.Pri
 func (a *engineAdapter) SparseIndex() *index.SparseIndex { return a.engine.SparseIndex() }
 
 // routingAdapter 是表感知的 StorageProvider，按表名路由到不同的 TableEngine。
-// 默认引擎（LSM）处理未注册内存引擎的表；内存引擎表通过 ForTable 返回专属适配器。
+// 每张 LSM 表拥有独立的 *storage.Engine（位于 dataDir/tables/<name>/），
+// 实现表间键空间、列元数据与 WAL 的完全隔离；内存引擎表通过 ForTable 返回专属适配器。
+// defaultEng 仅作为未注册引擎的回退（兼容历史数据），不再承载新表数据。
 // 同时实现 query.TableStorageProvider 接口，使 executor 能按 ScanNode.Table 路由。
 type routingAdapter struct {
 	defaultEng TableEngine
+	lsmEngines map[string]TableEngine // 每张 LSM 表的独立引擎
 	memEngines map[string]TableEngine
 	mu         sync.RWMutex
 }
@@ -59,6 +62,7 @@ type routingAdapter struct {
 func newRoutingAdapter(defaultEng TableEngine) *routingAdapter {
 	return &routingAdapter{
 		defaultEng: defaultEng,
+		lsmEngines: make(map[string]TableEngine),
 		memEngines: make(map[string]TableEngine),
 	}
 }
@@ -71,6 +75,17 @@ func (r *routingAdapter) registerMemoryEngine(table string, eng TableEngine) err
 		return fmt.Errorf("memory engine for table %q already registered", table)
 	}
 	r.memEngines[table] = eng
+	return nil
+}
+
+// registerLSMEngine 注册一张 LSM 表的独立引擎。重复注册同一表名会返回错误。
+func (r *routingAdapter) registerLSMEngine(table string, eng TableEngine) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.lsmEngines[table]; ok {
+		return fmt.Errorf("lsm engine for table %q already registered", table)
+	}
+	r.lsmEngines[table] = eng
 	return nil
 }
 
@@ -90,14 +105,43 @@ func (r *routingAdapter) unregisterMemoryEngine(table string) error {
 	return nil
 }
 
-// engineForTable 返回指定表的引擎。内存引擎表返回其专属引擎，其余返回默认 LSM 引擎。
+// unregisterLSMEngine 注销一张 LSM 表的独立引擎并关闭之，释放数据目录资源。
+// 用于 DROP TABLE 与 CREATE TABLE 失败回滚。若该表未注册独立引擎，返回错误。
+func (r *routingAdapter) unregisterLSMEngine(table string) error {
+	r.mu.Lock()
+	eng, ok := r.lsmEngines[table]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("lsm engine for table %q not registered", table)
+	}
+	delete(r.lsmEngines, table)
+	r.mu.Unlock()
+	_ = eng.Close()
+	return nil
+}
+
+// engineForTable 返回指定表的引擎。优先返回该表的独立 LSM 引擎，其次内存引擎，
+// 最后回退到默认引擎（兼容历史数据）。
 func (r *routingAdapter) engineForTable(table string) TableEngine {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	if eng, ok := r.lsmEngines[table]; ok {
+		return eng
+	}
 	if eng, ok := r.memEngines[table]; ok {
 		return eng
 	}
 	return r.defaultEng
+}
+
+// forEachLSMEngine 遍历所有已注册的 LSM 表引擎，用于批量启动调度器等操作。
+// 遍历期间持读锁，调用方不应在 fn 中修改路由表。
+func (r *routingAdapter) forEachLSMEngine(fn func(eng TableEngine)) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, eng := range r.lsmEngines {
+		fn(eng)
+	}
 }
 
 // ForTable 返回指定表的 StorageProvider，实现 query.TableStorageProvider。
@@ -105,13 +149,18 @@ func (r *routingAdapter) ForTable(table string) query.StorageProvider {
 	return &engineAdapter{engine: r.engineForTable(table)}
 }
 
-// closeAll 关闭所有内存引擎。默认 LSM 引擎由 Server.Stop 单独关闭。
+// closeAll 关闭所有内存引擎与 LSM 表引擎。默认 LSM 引擎由 Server.Stop 单独关闭。
 func (r *routingAdapter) closeAll() {
 	r.mu.Lock()
-	engines := r.memEngines
+	lsmEngines := r.lsmEngines
+	r.lsmEngines = make(map[string]TableEngine)
+	memEngines := r.memEngines
 	r.memEngines = make(map[string]TableEngine)
 	r.mu.Unlock()
-	for _, eng := range engines {
+	for _, eng := range lsmEngines {
+		_ = eng.Close()
+	}
+	for _, eng := range memEngines {
 		_ = eng.Close()
 	}
 }

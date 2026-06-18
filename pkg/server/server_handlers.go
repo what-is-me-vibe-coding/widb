@@ -243,7 +243,8 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 
 // handleCreateTable 处理 CREATE TABLE 语句：在 catalog 中注册表，
 // 并根据 ENGINE 选项创建对应的存储引擎（memory 或默认 LSM）。
-// 若表已存在且未指定 IF NOT EXISTS，返回错误响应。
+// LSM 表获得独立的 *storage.Engine（位于 dataDir/tables/<name>/），
+// 实现表间数据隔离；内存表获得独立的内存引擎。若表已存在且未指定 IF NOT EXISTS，返回错误响应。
 func (s *Server) handleCreateTable(ct *query.CreateTableStatement) (*Response, error) {
 	cols := make([]catalog.ColumnDef, len(ct.Columns))
 	for i, c := range ct.Columns {
@@ -259,13 +260,48 @@ func (s *Server) handleCreateTable(ct *query.CreateTableStatement) (*Response, e
 		return s.createMemoryTable(ct, cols, opts)
 	}
 
-	// LSM 表：在 catalog 建表，并同步列元数据到存储引擎，使后台调度器自动刷盘能正确编码列。
+	return s.createLSMTable(ct, cols, opts)
+}
+
+// createLSMTable 创建一张 LSM 表：先创建独立引擎并注册，再在 catalog 建表，
+// 确保表对外可见时引擎已就绪（避免并发查询回退到默认引擎）。
+// catalog 建表失败则回滚（注销引擎）。若启用调度器，为新引擎启动后台任务。
+func (s *Server) createLSMTable(ct *query.CreateTableStatement, cols []catalog.ColumnDef, opts catalog.TableOptions) (*Response, error) {
+	if _, err := s.catalog.GetTable(ct.Table); err == nil {
+		return s.tableAlreadyExistsResponse(ct), nil
+	}
+	eng, err := s.createLSMEngineForTable(ct.Table, cols)
+	if err != nil {
+		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
+		return &Response{Code: -1, Message: fmt.Sprintf("创建表错误: %v", err)}, nil
+	}
+	if err := s.adapter.registerLSMEngine(ct.Table, eng); err != nil {
+		_ = eng.Close()
+		return s.tableAlreadyExistsResponse(ct), nil
+	}
 	if err := s.catalog.CreateTable(ct.Table, cols, ct.PrimaryKey, opts); err != nil {
+		_ = s.adapter.unregisterLSMEngine(ct.Table)
 		return s.createTableErrorResponse(ct, err), nil
 	}
-	s.storage.SetColumnMeta(buildColumnMeta(cols))
+	if s.cfg.EnableScheduler {
+		eng.StartScheduler(s.cfg.SchedulerConfig)
+	}
 	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
 	return &Response{Code: 0, Rows: 0}, nil
+}
+
+// createLSMEngineForTable 为指定表创建独立的 LSM 引擎，数据目录位于
+// dataDir/tables/<escaped-name>/，并设置该表的列元数据。
+func (s *Server) createLSMEngineForTable(table string, cols []catalog.ColumnDef) (*storage.Engine, error) {
+	eng, err := storage.NewEngine(storage.EngineConfig{
+		DataDir:         s.tableDataDir(table),
+		MaxMemTableSize: s.cfg.MaxMemTableSize,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create lsm engine for table %q: %w", table, err)
+	}
+	eng.SetColumnMeta(buildColumnMeta(cols))
+	return eng, nil
 }
 
 // createMemoryTable 创建内存引擎表。先注册内存引擎再在 catalog 建表，确保当表在

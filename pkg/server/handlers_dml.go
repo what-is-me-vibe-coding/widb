@@ -120,7 +120,7 @@ func checkPKConflict(eng TableEngine, key string) error {
 }
 
 // handleDropTable 执行 DROP TABLE 语句：从 catalog 中删除表元数据，
-// 并注销对应的内存引擎（若为内存表）。LSM 表的数据清理受限于共享引擎架构。
+// 并注销对应的存储引擎（LSM 表的独立引擎或内存引擎）。
 func (s *Server) handleDropTable(dt *query.DropTableStatement) (*Response, error) {
 	if _, err := s.catalog.GetTable(dt.Table); err != nil {
 		if dt.IfExists {
@@ -131,7 +131,8 @@ func (s *Server) handleDropTable(dt *query.DropTableStatement) (*Response, error
 		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
 	}
 
-	// 注销内存引擎（若为内存表）；LSM 表使用共享引擎，不单独清理数据。
+	// 注销该表的独立引擎（LSM 或内存）；使用默认引擎的表无独立引擎可注销。
+	_ = s.adapter.unregisterLSMEngine(dt.Table)
 	_ = s.adapter.unregisterMemoryEngine(dt.Table)
 
 	if err := s.catalog.DropTable(dt.Table); err != nil {
