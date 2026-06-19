@@ -236,6 +236,13 @@ func DeserializeSegment(data []byte) (*Segment, error) {
 	footerOffsetPos := len(data) - 8
 	footerOffset := int64(binary.LittleEndian.Uint64(data[footerOffsetPos:]))
 
+	// 校验 footerOffset 范围，防止损坏文件触发越界 panic：
+	//   - footerOffset < 4 会使下方 data[footerOffset-4:] 越界；
+	//   - footerOffset > footerOffsetPos 表示 footer 起点越过尾部偏移区，非法。
+	if footerOffset < 4 || footerOffset > int64(footerOffsetPos) {
+		return nil, fmt.Errorf("segment: invalid footer offset %d", footerOffset)
+	}
+
 	footerLen := binary.LittleEndian.Uint32(data[footerOffset-4:])
 	footerStart := footerOffset
 	footerEnd := footerStart + int64(footerLen)

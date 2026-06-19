@@ -452,10 +452,14 @@ func TestBlockCachePutOversizedEntry(t *testing.T) {
 	dc := decodedColumn{data: make([]int64, 1000), typ: common.TypeInt64}
 	cache.put(CacheKey{SegmentID: 1, ColumnIdx: 0}, dc)
 
-	// 条目应该被放入（即使超过容量），因为 LRU 淘汰后仍可能不够
+	// 超大条目应被拒绝，以维持 used <= capacity 不变式，
+	// 否则缓存会陷入“全驱逐仍超容”的病态。
 	stats := cache.Stats()
-	if stats.Entries == 0 {
-		t.Fatal("expected at least one entry even if oversized")
+	if stats.Entries != 0 {
+		t.Fatalf("oversized entry should be rejected, got entries=%d", stats.Entries)
+	}
+	if stats.Size > stats.Capacity {
+		t.Fatalf("invariant violated: used=%d > capacity=%d", stats.Size, stats.Capacity)
 	}
 }
 

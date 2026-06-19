@@ -102,6 +102,19 @@ func (c *BlockCache) put(key CacheKey, data decodedColumn) {
 		entry.size = size
 		c.used += size
 		c.order.MoveToFront(elem)
+		// 更新后若条目超过容量，淘汰自身以维持 used <= capacity 不变式。
+		if c.used > c.capacity {
+			c.order.Remove(elem)
+			delete(c.items, key)
+			c.removeFromSegIndex(key)
+			c.used -= size
+		}
+		return
+	}
+
+	// 单条目超过总容量时直接拒绝缓存：否则淘汰循环会清空全部条目，
+	// 仍写入超大条目，破坏 used <= capacity 不变式，使缓存陷入病态。
+	if size > c.capacity {
 		return
 	}
 
