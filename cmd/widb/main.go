@@ -164,6 +164,9 @@ func runMainWithArgs(args []string, stdin io.Reader, stdout, stderr io.Writer) i
 	if *c.execute != "" {
 		return runOneShot(srv, *c.format, *c.execute, stdout, stderr)
 	}
+	if cli.IsTerminalReader(stdin) && cli.IsTerminalWriter(stdout) {
+		return runREPLTTY(srv, *c.format, stdout)
+	}
 	return runREPL(srv, *c.format, stdin, stdout)
 }
 
@@ -217,6 +220,101 @@ func runREPL(srv *server.Server, format string, reader io.Reader, writer io.Writ
 // 实际逻辑由 pkg/cli.ReadMultiLineSQL 提供，本函数为保持历史 API 兼容而保留。
 func readMultiLineSQL(scanner *bufio.Scanner, writer io.Writer, firstLine string) string {
 	return cli.ReadMultiLineSQL(scanner, writer, firstLine)
+}
+
+// runREPLTTY 是 TTY 增强版 REPL：使用 peterh/liner 提供历史/补全，
+// 使用 fatih/color 高亮错误/成功/提示符。仅在 stdin/stdout 同时是 TTY 时调用。
+//
+// 行为与 runREPL 保持一致：反斜杠命令（\q/\h/\status/\addrs/\format）分发，
+// 多行 SQL 以分号结束，执行结果通过 render.Response 格式化输出。
+func runREPLTTY(srv *server.Server, format string, writer io.Writer) int {
+	cli.EnableColorGlobally()
+	defer cli.DisableColorGlobally()
+
+	_, _ = fmt.Fprintln(writer, banner)
+	_, _ = fmt.Fprintf(writer, "TCP: %s | HTTP: %s\n\n", srv.TCPAddr(), srv.HTTPAddr())
+
+	session, err := cli.NewLinerSession("widb> ", cli.DefaultHistoryFile(), 1000)
+	if err != nil {
+		_, _ = fmt.Fprintf(writer, "%s: %v\n", cli.ColorizeError("初始化 REPL 失败"), err)
+		return 1
+	}
+	defer session.Close(cli.DefaultHistoryFile())
+
+	formatState := cli.NewFormatState()
+	formatState.Set(format)
+	prompt := cli.ColorizePrompt("widb> ")
+	contPrompt := "  ...> "
+
+	for {
+		line, err := session.PromptWith(prompt)
+		if err != nil {
+			if err == io.EOF {
+				return 0
+			}
+			_, _ = fmt.Fprintf(writer, "%s: %v\n", cli.ColorizeError("读取输入失败"), err)
+			return 1
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		session.AppendHistory(trimmed)
+
+		if strings.HasPrefix(trimmed, "\\") {
+			if exit, handled := handleCommandTTY(srv, formatState, writer, trimmed); handled {
+				if exit {
+					_, _ = fmt.Fprintln(writer, cli.ColorizeSuccess("再见!"))
+					return 0
+				}
+				continue
+			}
+		}
+
+		sql, _ := cli.ReadMultiLineSQLWithLiner(session, contPrompt, trimmed)
+		if sql == "" {
+			continue
+		}
+		executeAndPrintTTY(srv, formatState, writer, sql)
+	}
+}
+
+// handleCommandTTY 在 TTY 模式下处理反斜杠命令。
+// 返回 (shouldExit, handled)。当 handled=false 时表示该行不是命令，由 SQL 路径处理。
+func handleCommandTTY(srv *server.Server, formatState *cli.FormatState, writer io.Writer, cmd string) (bool, bool) {
+	if strings.HasPrefix(cmd, "\\format") {
+		before := formatState.Current()
+		formatState.HandleCommand(writer, cmd)
+		if formatState.Current() != before {
+			formatState.Set(formatState.Current())
+		}
+		return false, true
+	}
+	switch cmd {
+	case "\\q", "\\quit":
+		return true, true
+	case "\\h", "\\help":
+		_, _ = fmt.Fprintln(writer, helpText)
+		return false, true
+	case "\\status":
+		_, _ = fmt.Fprintf(writer, "服务状态: 正常 (%s)\n", srv.Ping())
+		return false, true
+	case "\\addrs":
+		_, _ = fmt.Fprintf(writer, "TCP: %s\nHTTP: %s\nPG: %s\n", srv.TCPAddr(), srv.HTTPAddr(), srv.PGAddr())
+		return false, true
+	}
+	_, _ = fmt.Fprintf(writer, "%s: %s，输入 \\h 查看帮助\n", cli.ColorizeError("未知命令"), cmd)
+	return false, true
+}
+
+// executeAndPrintTTY 在 TTY 模式下执行 SQL 并打印结果，错误信息用红色高亮。
+func executeAndPrintTTY(srv *server.Server, formatState *cli.FormatState, writer io.Writer, sql string) {
+	resp, err := srv.ExecuteQuery(sql)
+	if err != nil {
+		_, _ = fmt.Fprintln(writer, cli.ColorizeError("错误: "+err.Error()))
+		return
+	}
+	_, _ = fmt.Fprintln(writer, render.Response(resp, formatState.Current()))
 }
 
 // handleCommand 处理反斜杠命令，返回 true 表示应退出 REPL。

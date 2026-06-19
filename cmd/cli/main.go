@@ -228,6 +228,120 @@ func (c *cli) readMultiLineSQL(scanner *bufio.Scanner, writer io.Writer, firstLi
 	return clishared.ReadMultiLineSQL(scanner, writer, firstLine)
 }
 
+// runInteractiveTTY 是 TTY 增强版 REPL：使用 peterh/liner 提供历史/补全，
+// 使用 fatih/color 高亮错误/成功/提示符。仅在 stdin/stdout 同时是 TTY 时调用。
+//
+// 行为与 runInteractive 保持一致：反斜杠命令（\q/\h/\status/\use/\format）分发，
+// 多行 SQL 以分号结束，执行结果通过 render.Response 格式化输出。
+func (c *cli) runInteractiveTTY(writer io.Writer) error {
+	clishared.EnableColorGlobally()
+	defer clishared.DisableColorGlobally()
+
+	_, _ = fmt.Fprintln(writer, banner)
+	_, _ = fmt.Fprintf(writer, "模式: %s | TCP: %s | HTTP: %s\n", c.mode, c.tcpAddr, c.httpAddr)
+	_, _ = fmt.Fprintln(writer)
+
+	session, err := clishared.NewLinerSession("widb> ", clishared.DefaultHistoryFile(), 1000)
+	if err != nil {
+		return fmt.Errorf("初始化 REPL 失败: %w", err)
+	}
+	defer session.Close(clishared.DefaultHistoryFile())
+
+	formatState := clishared.NewFormatState()
+	formatState.Set(c.format)
+
+	for {
+		trimmed, err := readTTYLine(session, clishared.ColorizePrompt("widb> "))
+		if err != nil {
+			return err
+		}
+		if trimmed == "" {
+			continue
+		}
+		session.AppendHistory(trimmed)
+
+		if strings.HasPrefix(trimmed, "\\") {
+			done, shouldExit := c.handleCommandTTY(writer, trimmed, formatState)
+			if done && shouldExit {
+				_, _ = fmt.Fprintln(writer, clishared.ColorizeSuccess("再见!"))
+				return nil
+			}
+			if done {
+				continue
+			}
+		}
+
+		sql, _ := clishared.ReadMultiLineSQLWithLiner(session, "  ...> ", trimmed)
+		if sql == "" {
+			continue
+		}
+		c.executeTTY(writer, sql)
+	}
+}
+
+// readTTYLine 从 liner 读取一行并 TrimSpace。EOF 转换为 io.EOF 返回。
+func readTTYLine(session *clishared.LinerSession, prompt string) (string, error) {
+	line, err := session.PromptWith(prompt)
+	if err != nil {
+		if err == io.EOF {
+			return "", io.EOF
+		}
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+// executeTTY 在 TTY 模式下执行 SQL 并打印结果，错误信息用红色高亮。
+func (c *cli) executeTTY(writer io.Writer, sql string) {
+	result, err := c.execute(sql)
+	if err != nil {
+		_, _ = fmt.Fprintln(writer, clishared.ColorizeError("错误: "+err.Error()))
+		return
+	}
+	_, _ = fmt.Fprintln(writer, result)
+}
+
+// handleCommandTTY 在 TTY 模式下处理反斜杠命令。
+// 返回 (handled, shouldExit)。当 handled=false 时表示该行不是命令，由 SQL 路径处理。
+func (c *cli) handleCommandTTY(writer io.Writer, cmd string, formatState *clishared.FormatState) (bool, bool) {
+	// \format 委托给 FormatState
+	if strings.HasPrefix(cmd, "\\format") {
+		before := formatState.Current()
+		formatState.HandleCommand(writer, cmd)
+		if formatState.Current() != before {
+			c.format = formatState.Current()
+		}
+		return true, false
+	}
+	switch cmd {
+	case "\\q", "\\quit":
+		return true, true
+	case "\\h", "\\help":
+		_, _ = fmt.Fprintln(writer, helpText)
+		return true, false
+	case "\\status":
+		result, err := c.pingTCP()
+		if err != nil {
+			_, _ = fmt.Fprintf(writer, "%s: 不可达 (%v)\n", clishared.ColorizeError("服务器状态"), err)
+		} else {
+			_, _ = fmt.Fprintf(writer, "服务器状态: 正常 (%s)\n", result)
+		}
+		return true, false
+	case "\\use TCP":
+		c.mode = modeTCP
+		c.conn = nil
+		_, _ = fmt.Fprintln(writer, clishared.ColorizeSuccess("已切换到 TCP 模式"))
+		return true, false
+	case "\\use HTTP":
+		c.mode = modeHTTP
+		c.conn = nil
+		_, _ = fmt.Fprintln(writer, clishared.ColorizeSuccess("已切换到 HTTP 模式"))
+		return true, false
+	}
+	_, _ = fmt.Fprintf(writer, "%s: %s，输入 \\h 查看帮助\n", clishared.ColorizeError("未知命令"), cmd)
+	return true, false
+}
+
 // handleCommand 处理反斜杠命令。
 func (c *cli) handleCommand(writer io.Writer, cmd string) error {
 	if strings.HasPrefix(cmd, "\\format") {
@@ -304,6 +418,13 @@ func runCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 
+	if clishared.IsTerminalReader(stdin) && clishared.IsTerminalWriter(stdout) {
+		if err := c.runInteractiveTTY(stdout); err != nil && err != io.EOF {
+			_, _ = fmt.Fprintf(stderr, "错误: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if err := c.runInteractive(stdin, stdout); err != nil && err != io.EOF {
 		_, _ = fmt.Fprintf(stderr, "错误: %v\n", err)
 		return 1

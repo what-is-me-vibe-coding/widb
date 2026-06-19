@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fatih/color"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 
@@ -190,17 +191,19 @@ func renderJSONRows(rows []map[string]any) string {
 }
 
 // formatCell 将单元格值格式化为 go-pretty 可显示的值，nil 显示为 "NULL"。
+// 当全局颜色开关启用时，NULL 单元格使用黄色高亮，便于在宽表输出中快速识别。
 func formatCell(v any) any {
 	if v == nil {
-		return "NULL"
+		return colorizeNull("NULL")
 	}
 	return v
 }
 
 // cellToString 将单元格值转为字符串，nil 显示为 "NULL"。
+// 字符串场景（如 CSV/Vertical）使用与 formatCell 一致的颜色处理。
 func cellToString(v any) string {
 	if v == nil {
-		return "NULL"
+		return colorizeNull("NULL")
 	}
 	switch val := v.(type) {
 	case string:
@@ -211,4 +214,13 @@ func cellToString(v any) string {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}
+}
+
+// colorizeNull 在颜色启用时返回黄色 "NULL"，否则原样返回。
+// 内部使用 fatih/color 的全局 NoColor 开关，遵守 NO_COLOR 环境变量。
+func colorizeNull(s string) string {
+	if color.NoColor {
+		return s
+	}
+	return color.YellowString(s)
 }
