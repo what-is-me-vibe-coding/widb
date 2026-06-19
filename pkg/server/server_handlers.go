@@ -42,6 +42,8 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 		return s.handleShowTables()
 	case *query.DescribeStatement:
 		return s.handleDescribe(st)
+	case *query.ExplainStatement:
+		return s.handleExplain(st)
 	}
 
 	plan, err := s.analyzer.Analyze(stmt)

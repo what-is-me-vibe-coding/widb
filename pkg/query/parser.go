@@ -37,9 +37,15 @@ func NewParser() *Parser {
 
 // Parse 将 SQL 字符串解析为 Statement。
 // 支持 SELECT、INSERT、CREATE TABLE、UPDATE、DELETE、DROP TABLE、
-// SHOW TABLES、DESCRIBE 语句。
+// SHOW TABLES、DESCRIBE、EXPLAIN 语句。
 func (p *Parser) Parse(sql string) (Statement, error) {
-	// SHOW TABLES / DESCRIBE 不被 sqlparser 支持，在此预先拦截。
+	// EXPLAIN <stmt>：sqlparser 会将其解析为 OtherRead 丢失内部语句，
+	// 需在入口拦截并递归解析内部语句，同时透传内部解析错误。
+	if stmt, handled, err := tryParseExplain(sql); handled {
+		return stmt, err
+	}
+	// SHOW TABLES / DESCRIBE table / DESC table 不被 sqlparser 支持，
+	// 在此预先拦截。
 	if stmt, ok := tryParseMetaCommand(sql); ok {
 		return stmt, nil
 	}
@@ -226,6 +232,36 @@ func tryParseMetaCommand(sql string) (Statement, bool) {
 		return nil, false // 语法不完整，交由 sqlparser 报错
 	}
 	return &DescribeStatement{Table: table}, true
+}
+
+// explainRe 匹配 EXPLAIN 关键字开头的语句（大小写不敏感）。
+var explainRe = regexp.MustCompile(`(?i)^\s*EXPLAIN\b(.*)$`)
+
+// tryParseExplain 尝试解析 EXPLAIN <stmt> 语句。
+// 返回 (stmt, true, nil) 表示成功解析为 ExplainStatement；
+// 返回 (nil, true, err) 表示匹配到 EXPLAIN 但内部语句解析失败，err 为透传的解析错误；
+// 返回 (nil, false, nil) 表示非 EXPLAIN 语句，交由后续流程处理。
+//
+// 仅允许只读查询（SELECT）走 EXPLAIN 路径；DDL/DML 等由服务层直接处理的语句
+// 返回错误，避免 EXPLAIN 语义歧义。内部语句的解析错误会被透传，使调用者能看到
+// 真实的语法错误而非 sqlparser 的 OtherRead 报错。
+func tryParseExplain(sql string) (Statement, bool, error) {
+	m := explainRe.FindStringSubmatch(sql)
+	if m == nil {
+		return nil, false, nil
+	}
+	innerSQL := strings.TrimRight(strings.TrimSpace(m[1]), ";")
+	if innerSQL == "" {
+		return nil, true, fmt.Errorf("query parse: EXPLAIN 后缺少待解释的语句")
+	}
+	inner, err := NewParser().Parse(innerSQL)
+	if err != nil {
+		return nil, true, fmt.Errorf("query parse: EXPLAIN 内部语句: %w", err)
+	}
+	if _, ok := inner.(*SelectStatement); !ok {
+		return nil, true, fmt.Errorf("query parse: EXPLAIN 仅支持 SELECT 语句，不支持 %T", inner)
+	}
+	return &ExplainStatement{Inner: inner}, true, nil
 }
 
 // convertSelectExprs 转换 SELECT 列表。

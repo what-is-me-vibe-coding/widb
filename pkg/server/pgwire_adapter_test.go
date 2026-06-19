@@ -26,7 +26,8 @@ func TestBuildCommandTag(t *testing.T) {
 		{"drop", "DROP TABLE t", 0, "DROP"},
 		{"delete", "DELETE FROM t", 7, "DELETE 7"},
 		{"update", "UPDATE t SET a=1", 2, "UPDATE 2"},
-		{"unknown", "EXPLAIN SELECT 1", 0, "OK"},
+		{"explain", "EXPLAIN SELECT 1", 2, "EXPLAIN 2"},
+		{"explain lowercase", "explain select * from t", 1, "EXPLAIN 1"},
 		{"empty", "", 0, "OK"},
 	}
 	for _, tt := range tests {

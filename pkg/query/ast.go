@@ -223,6 +223,18 @@ func (s *DescribeStatement) String() string {
 	return fmt.Sprintf("DESCRIBE %s", s.Table)
 }
 
+// ExplainStatement 表示 EXPLAIN 语句，对其内部语句进行语义分析与计划生成，
+// 返回查询计划树而不实际执行。仅支持可走 analyzer/executor 路径的只读查询
+// （如 SELECT）；DDL/DML 等由服务层直接处理的语句不支持 EXPLAIN。
+type ExplainStatement struct {
+	Inner Statement
+}
+
+func (s *ExplainStatement) statementNode() {}
+func (s *ExplainStatement) String() string {
+	return fmt.Sprintf("EXPLAIN %s", s.Inner.String())
+}
+
 // CreateTableStatement 表示 CREATE TABLE 语句。
 type CreateTableStatement struct {
 	Table       string

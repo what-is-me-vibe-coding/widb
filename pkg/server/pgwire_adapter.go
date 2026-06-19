@@ -51,6 +51,8 @@ func buildCommandTag(sql string, resp *Response) string {
 	switch {
 	case strings.HasPrefix(upper, "SELECT"):
 		return fmt.Sprintf("SELECT %d", resp.Rows)
+	case strings.HasPrefix(upper, "EXPLAIN"):
+		return fmt.Sprintf("EXPLAIN %d", resp.Rows)
 	case strings.HasPrefix(upper, "INSERT"):
 		return fmt.Sprintf("INSERT 0 %d", resp.Rows)
 	case strings.HasPrefix(upper, "CREATE TABLE"):
