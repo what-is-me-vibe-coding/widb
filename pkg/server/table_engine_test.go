@@ -225,8 +225,9 @@ func TestEngineAdapterPrimaryAndSparseIndex(t *testing.T) {
 // 若接口签名变更或 engineAdapter 缺失某方法，本测试在编译期即可发现。
 func TestEngineAdapterStorageProviderInterface(t *testing.T) {
 	srv := newTestServer(t)
-	var sp query.StorageProvider = srv.adapter.ForTable("compile_check")
-	// 触发所有方法以提升覆盖率；任一 panic 即说明实现缺失方法。
+	// 编译期断言：若 engineAdapter 不实现 query.StorageProvider 接口，本行
+	// 编译失败。运行期触发所有方法以提升覆盖率，任一 panic 即说明实现缺失。
+	sp := query.StorageProvider(srv.adapter.ForTable("compile_check"))
 	_ = sp.ScanRange("", "\xff")
 	_ = sp.ScanRangeWithPruning("", "\xff", nil)
 	_ = sp.ColumnMeta()
