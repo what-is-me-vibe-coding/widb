@@ -285,7 +285,8 @@ test-db/
 │   ├── tutorial.md     # 端到端上手教程（场景化示例）
 │   ├── sql-reference.md  # SQL 语法权威参考
 │   ├── cookbook.md     # 常见 SQL 套路与最佳实践
-│   └── troubleshooting.md # 故障排查指南
+│   ├── troubleshooting.md # 故障排查指南
+│   └── operations.md   # 运维手册（部署/监控/备份/恢复/容量规划/升级）
 └── .agent_plan/        # 开发设计文档
 ```
 
