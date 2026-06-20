@@ -101,13 +101,13 @@ func mrpcmRunOnce(t *testing.T, dataDir string) (*server.Server, int) {
 	for i := 0; i < mrpcmClients; i++ {
 		wg.Add(1)
 		via := mrpcmAssignProtocol(i)
-		go func(clientID, protoIdx int, via string) {
+		go func(clientID int, via string) {
 			defer wg.Done()
 			if err := mrpcmClientInsert(s, via, clientID); err != nil {
 				atomic.AddInt64(&insertFail, 1)
 				lastErr.Store(fmt.Sprintf("[%s c%d] %v", via, clientID, err))
 			}
-		}(i, protoIdxFromClientID(i), via)
+		}(i, via)
 	}
 	wg.Wait()
 	if insertFail > 0 {
@@ -143,9 +143,6 @@ func mrpcmAssignProtocol(clientID int) string {
 		return "pg"
 	}
 }
-
-// protoIdxFromClientID 保留 clientID 模 3 之后的协议索引，便于日志输出。
-func protoIdxFromClientID(clientID int) int { return clientID % 3 }
 
 // mrpcmClientInsert 单个客户端按分配区间执行插入。
 func mrpcmClientInsert(s *sqlServer, via string, clientID int) error {
