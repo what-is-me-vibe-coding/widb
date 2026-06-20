@@ -424,3 +424,116 @@ func TestSQLUpdateArithmeticExprWithWhere(t *testing.T) {
 		t.Errorf("id=3 的 v = %d, 期望 130", got)
 	}
 }
+
+// TestSQLDeleteWithRangePredicate 验证 DELETE 的范围谓词在段裁剪路径下
+// 仍能正确删除匹配行（覆盖 ColumnPredicate 下推到 ScanRangeWithPruning 的正确性）。
+func TestSQLDeleteWithRangePredicate(t *testing.T) {
+	srv := newTestServer(t)
+	defer func() { _ = srv.Stop() }()
+
+	runSQL(t, srv, "CREATE TABLE t (id INT64, v STRING, PRIMARY KEY (id))")
+	runSQL(t, srv, "INSERT INTO t (id, v) VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')")
+
+	// 删除 id > 2 的行（应删除 3、4、5）
+	resp := runSQL(t, srv, "DELETE FROM t WHERE id > 2")
+	if resp.Rows != 3 {
+		t.Errorf("DELETE 影响行数 = %d, 期望 3", resp.Rows)
+	}
+
+	// 验证只剩余 id=1、2
+	resp = runSQL(t, srv, "SELECT id FROM t ORDER BY id")
+	if resp.Rows != 2 {
+		t.Fatalf("DELETE 后剩余 %d 行, 期望 2", resp.Rows)
+	}
+	rows := resp.Data.([]map[string]any)
+	if rows[0]["id"].(int64) != 1 || rows[1]["id"].(int64) != 2 {
+		t.Errorf("剩余行 = %+v, 期望 id=1,2", rows)
+	}
+}
+
+// TestSQLUpdateWithRangePredicate 验证 UPDATE 的范围谓词在段裁剪路径下
+// 仍能正确更新匹配行。
+func TestSQLUpdateWithRangePredicate(t *testing.T) {
+	srv := newTestServer(t)
+	defer func() { _ = srv.Stop() }()
+
+	runSQL(t, srv, "CREATE TABLE t (id INT64, v STRING, PRIMARY KEY (id))")
+	runSQL(t, srv, "INSERT INTO t (id, v) VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')")
+
+	// 更新 id >= 3 的行（应更新 3、4、5）
+	resp := runSQL(t, srv, "UPDATE t SET v = 'updated' WHERE id >= 3")
+	if resp.Rows != 3 {
+		t.Errorf("UPDATE 影响行数 = %d, 期望 3", resp.Rows)
+	}
+
+	want := map[int64]string{1: "a", 2: "b", 3: "updated", 4: "updated", 5: "updated"}
+	for id, exp := range want {
+		sql := "SELECT v FROM t WHERE id = "
+		if got := queryString(t, srv, sql+strconv.FormatInt(id, 10), "v"); got != exp {
+			t.Errorf("id=%d 的 v = %q, 期望 %q", id, got, exp)
+		}
+	}
+}
+
+// TestSQLDeleteWithCompoundPredicate 验证 AND 连接复合谓词中
+// 列-字面量部分走段裁剪（id = 2），剩余 LIKE 部分在 EvalRowPredicate 二次过滤。
+// 这同时验证段裁剪的安全性：仅当匹配行可能在段内时才返回，再由上层精确过滤。
+func TestSQLDeleteWithCompoundPredicate(t *testing.T) {
+	srv := newTestServer(t)
+	defer func() { _ = srv.Stop() }()
+
+	runSQL(t, srv, "CREATE TABLE t (id INT64, name STRING, PRIMARY KEY (id))")
+	runSQL(t, srv, "INSERT INTO t (id, name) VALUES (1, 'alice'), (2, 'bob'), (3, 'bob_jr')")
+
+	// id = 2 AND name LIKE 'bob'  → 仅删除 id=2（id=3 的 name='bob_jr' 不匹配 LIKE）
+	resp := runSQL(t, srv, "DELETE FROM t WHERE id = 2 AND name LIKE 'bob'")
+	if resp.Rows != 1 {
+		t.Errorf("DELETE 影响行数 = %d, 期望 1", resp.Rows)
+	}
+
+	// 验证 id=1（name=alice）和 id=3（name=bob_jr）均未删除
+	resp = runSQL(t, srv, "SELECT COUNT(*) FROM t")
+	if resp.Rows != 1 {
+		t.Fatalf("剩余行数 = %v, 期望 1", resp.Data)
+	}
+}
+
+// TestSQLDeleteWithOrPredicate 验证 OR 连接谓词时不下推（避免漏匹配），
+// 走 EvalRowPredicate 完整求值：DELETE 仍能正确处理 OR 条件。
+func TestSQLDeleteWithOrPredicate(t *testing.T) {
+	srv := newTestServer(t)
+	defer func() { _ = srv.Stop() }()
+
+	runSQL(t, srv, "CREATE TABLE t (id INT64, v STRING, PRIMARY KEY (id))")
+	runSQL(t, srv, "INSERT INTO t (id, v) VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+
+	// id = 1 OR id = 3 → 删除 id=1 和 id=3（OR 不下推，由 EvalRowPredicate 完整求值）
+	resp := runSQL(t, srv, "DELETE FROM t WHERE id = 1 OR id = 3")
+	if resp.Rows != 2 {
+		t.Errorf("DELETE 影响行数 = %d, 期望 2", resp.Rows)
+	}
+
+	resp = runSQL(t, srv, "SELECT id FROM t")
+	if resp.Rows != 1 {
+		t.Fatalf("剩余行数 = %d, 期望 1", resp.Rows)
+	}
+	rows := resp.Data.([]map[string]any)
+	if rows[0]["id"].(int64) != 2 {
+		t.Errorf("剩余 id = %v, 期望 2", rows[0]["id"])
+	}
+}
+
+// queryString 执行 SELECT 并返回首行指定列的字符串值，简化断言。
+func queryString(t *testing.T, srv *Server, sql, col string) string {
+	t.Helper()
+	resp := runSQL(t, srv, sql)
+	rows := resp.Data.([]map[string]any)
+	if len(rows) == 0 {
+		t.Fatalf("SQL %q 无结果行", sql)
+	}
+	v, ok := rows[0][col].(string)
+	if !ok {
+		t.Fatalf("SQL %q 列 %s = %v（类型 %T），期望 string", sql, col, rows[0][col], rows[0][col])
+	}
+	return v
+}

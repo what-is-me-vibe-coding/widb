@@ -9,8 +9,10 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
 
-// handleDelete 执行 DELETE 语句：扫描表中所有行，按 WHERE 过滤后删除匹配行。
-// 无 WHERE 子句时删除全表数据（保留表结构）。
+// handleDelete 执行 DELETE 语句：按 WHERE 过滤后删除匹配行。
+// 优化：从 WHERE 中提取列级条件（如 "col = lit" / "col > lit"）下推到存储层
+// 的 ScanRangeWithPruning，跳过不可能包含匹配行的 Segment，对大表选择性
+// 删除场景显著降低 I/O。无 WHERE 子句时删除全表数据（保留表结构）。
 func (s *Server) handleDelete(del *query.DeleteStatement) (*Response, error) {
 	if _, err := s.catalog.GetTable(del.Table); err != nil {
 		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
@@ -18,10 +20,18 @@ func (s *Server) handleDelete(del *query.DeleteStatement) (*Response, error) {
 	}
 
 	eng := s.adapter.engineForTable(del.Table)
-	entries := eng.ScanRange("", "\xff\xff\xff\xff")
+	// 谓词下推：让存储层利用稀疏索引跳过无关 Segment
+	columnPreds := query.ExtractColumnPredicates(del.Where)
+	var entries []storage.ScanEntry
+	if len(columnPreds) > 0 {
+		entries = eng.ScanRangeWithPruning("", "\xff\xff\xff\xff", columnPreds)
+	} else {
+		entries = eng.ScanRange("", "\xff\xff\xff\xff")
+	}
 
 	deleted := 0
 	for _, entry := range entries {
+		// 仍需逐行求值完整 WHERE：下推仅过滤了 Segment，未覆盖复杂谓词（OR、LIKE 等）
 		if !query.EvalRowPredicate(del.Where, entry.Value.Columns) {
 			continue
 		}
@@ -36,8 +46,9 @@ func (s *Server) handleDelete(del *query.DeleteStatement) (*Response, error) {
 	return &Response{Code: 0, Rows: deleted}, nil
 }
 
-// handleUpdate 执行 UPDATE 语句：扫描表中所有行，按 WHERE 过滤后对匹配行
-// 应用 SET 赋值并重新写入。若更新导致主键变更且新主键已存在，返回冲突错误。
+// handleUpdate 执行 UPDATE 语句：按 WHERE 过滤后对匹配行应用 SET 赋值并重新写入。
+// 若更新导致主键变更且新主键已存在，返回冲突错误。
+// 优化：与 handleDelete 相同，从 WHERE 中提取列级条件并下推到 ScanRangeWithPruning。
 func (s *Server) handleUpdate(upd *query.UpdateStatement) (*Response, error) {
 	tbl, err := s.catalog.GetTable(upd.Table)
 	if err != nil {
@@ -47,10 +58,18 @@ func (s *Server) handleUpdate(upd *query.UpdateStatement) (*Response, error) {
 
 	eng := s.adapter.engineForTable(upd.Table)
 	colTypes := tbl.ColTypeMap()
-	entries := eng.ScanRange("", "\xff\xff\xff\xff")
+	// 谓词下推：让存储层利用稀疏索引跳过无关 Segment
+	columnPreds := query.ExtractColumnPredicates(upd.Where)
+	var entries []storage.ScanEntry
+	if len(columnPreds) > 0 {
+		entries = eng.ScanRangeWithPruning("", "\xff\xff\xff\xff", columnPreds)
+	} else {
+		entries = eng.ScanRange("", "\xff\xff\xff\xff")
+	}
 
 	updated := 0
 	for _, entry := range entries {
+		// 仍需逐行求值完整 WHERE：下推仅过滤了 Segment，未覆盖复杂谓词（OR、LIKE 等）
 		if !query.EvalRowPredicate(upd.Where, entry.Value.Columns) {
 			continue
 		}

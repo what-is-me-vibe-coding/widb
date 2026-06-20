@@ -168,61 +168,17 @@ func (e *Executor) extractKeyRange(pred Expression) keyRange {
 }
 
 // extractColumnPredicates 从谓词中提取可用于段裁剪的列级条件。
-// 仅提取形如 "column op literal" 的简单比较谓词（AND 连接），
+// 委托到公开函数 ExtractColumnPredicates，保留方法签名以兼容既有调用方与测试。
 // 复杂表达式（OR、嵌套、函数调用等）不参与段裁剪，保证安全性。
 func (e *Executor) extractColumnPredicates(pred Expression) []storage.ColumnPredicate {
-	conjuncts := splitConjuncts(pred)
-	var preds []storage.ColumnPredicate
-	for _, c := range conjuncts {
-		bin, ok := c.(*BinaryExpr)
-		if !ok {
-			continue
-		}
-		colPred, ok := e.binaryExprToColumnPredicate(bin)
-		if !ok {
-			continue
-		}
-		preds = append(preds, colPred)
-	}
-	return preds
+	return ExtractColumnPredicates(pred)
 }
 
 // binaryExprToColumnPredicate 将二元表达式转换为列谓词。
+// 委托到公开函数 columnBinaryToPredicate，保留方法签名以兼容既有测试。
 // 仅处理 "column op literal" 或 "literal op column" 形式的比较表达式。
 func (e *Executor) binaryExprToColumnPredicate(bin *BinaryExpr) (storage.ColumnPredicate, bool) {
-	// 仅处理比较运算符
-	var colName string
-	var value common.Value
-	var op index.PredicateOp
-	var ok bool
-
-	// 尝试 "column op literal" 形式
-	if col, isCol := bin.Left.(*ResolvedColumnExpr); isCol {
-		if lit, isLit := bin.Right.(*LiteralExpr); isLit && lit.Value.Valid {
-			colName = col.Name
-			value = lit.Value
-			op, ok = queryOpToIndexOp(bin.Op)
-			if !ok {
-				return storage.ColumnPredicate{}, false
-			}
-			return storage.ColumnPredicate{ColumnName: colName, Op: op, Value: value}, true
-		}
-	}
-
-	// 尝试 "literal op column" 形式（需要翻转运算符）
-	if col, isCol := bin.Right.(*ResolvedColumnExpr); isCol {
-		if lit, isLit := bin.Left.(*LiteralExpr); isLit && lit.Value.Valid {
-			colName = col.Name
-			value = lit.Value
-			op, ok = queryOpToIndexOpFlip(bin.Op)
-			if !ok {
-				return storage.ColumnPredicate{}, false
-			}
-			return storage.ColumnPredicate{ColumnName: colName, Op: op, Value: value}, true
-		}
-	}
-
-	return storage.ColumnPredicate{}, false
+	return columnBinaryToPredicate(bin)
 }
 
 // queryOpToIndexOp 将查询层的 BinaryOp 映射为索引层的 PredicateOp。
