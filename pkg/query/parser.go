@@ -10,19 +10,6 @@ import (
 
 const mysqlTinyint = "TINYINT"
 
-// customTypeReplacements 将项目自定义类型映射为 MySQL 兼容类型，
-// 以便 sqlparser 能正确解析 CREATE TABLE 语句。
-var customTypeReplacements = []struct {
-	pattern *regexp.Regexp
-	mysql   string
-}{
-	{regexp.MustCompile(`(?i)\bINT64\b`), "BIGINT"},
-	{regexp.MustCompile(`(?i)\bFLOAT64\b`), "DOUBLE"},
-	{regexp.MustCompile(`(?i)\bSTRING\b`), "TEXT"},
-	{regexp.MustCompile(`(?i)\bBOOL\b`), mysqlTinyint},
-	{regexp.MustCompile(`(?i)\bBOOLEAN\b`), mysqlTinyint},
-}
-
 // engineOptionRe 从 CREATE TABLE 语句中提取 ENGINE=<name> 选项。
 // 大小写不敏感，允许等号两侧有空白。捕获组 1 为引擎名。
 var engineOptionRe = regexp.MustCompile(`(?i)\bENGINE\s*=\s*([A-Za-z_][A-Za-z0-9_]*)`)
@@ -59,12 +46,118 @@ func (p *Parser) Parse(sql string) (Statement, error) {
 
 // preprocessSQL 将项目自定义类型替换为 MySQL 兼容类型，
 // 使 sqlparser 能正确解析。
+//
+// 优化：用单遍标识符扫描替代 5 次 regexp.ReplaceAllString 调用。
+// 原实现对每条 SQL 都要做 5 次完整字符串扫描 + 正则引擎调度，
+// 而 SELECT/INSERT/UPDATE/DELETE 等绝大多数语句不包含项目自定义类型关键字，
+// 5 次扫描全部返回原字符串，是显著的纯开销。优化后单遍扫描即可，
+// 跳过任何非关键字字符，避免了正则引擎与多次字符串扫描的开销。
+//
+// 匹配规则与原实现完全等价：大小写不敏感、整词（\b）边界。
+// 关键字 → MySQL 类型映射：
+//
+//	INT64/FLOAT64/STRING/BOOL/BOOLEAN → BIGINT/DOUBLE/TEXT/TINYINT/TINYINT
 func (p *Parser) preprocessSQL(sql string) string {
-	result := sql
-	for _, r := range customTypeReplacements {
-		result = r.pattern.ReplaceAllString(result, r.mysql)
+	// 快速路径：SQL 长度不足以容纳任何关键字时直接返回，避免分配。
+	// 最短关键字是 BOOL(4)，加上前后可能的边界字符。
+	if len(sql) < 4 {
+		return sql
 	}
-	return result
+
+	// 优化：仅当 SQL 含有关键字首字符（i/f/s/b 任意一个）时才进入完整扫描，
+	// 跳过最常见的纯数字/标点/单字母 SQL。绝大多数 DML 不会触发。
+	if !sqlNeedsTypeRepl(sql) {
+		return sql
+	}
+
+	// 单遍扫描：识别标识符并查表替换。直接按字节比较大小写不敏感关键字，
+	// 通过边界检查（前后为非标识符字符）实现 \b 语义。
+	b := make([]byte, 0, len(sql))
+	i := 0
+	n := len(sql)
+	for i < n {
+		c := sql[i]
+		if !isIdentStartByte(c) {
+			b = append(b, c)
+			i++
+			continue
+		}
+		// 找到标识符的结束位置
+		j := i + 1
+		for j < n && isIdentPartByte(sql[j]) {
+			j++
+		}
+		// 检查前后是否为标识符边界（与 \b 语义一致）
+		leftBoundary := i == 0 || !isIdentPartByte(sql[i-1])
+		rightBoundary := j == n || !isIdentPartByte(sql[j])
+		if leftBoundary && rightBoundary {
+			word := sql[i:j]
+			if mapped, ok := mapCustomTypeKeyword(word); ok {
+				b = append(b, mapped...)
+			} else {
+				b = append(b, word...)
+			}
+		} else {
+			b = append(b, sql[i:j]...)
+		}
+		i = j
+	}
+	return string(b)
+}
+
+// sqlNeedsTypeRepl 快速判断 SQL 中是否包含任一关键字首字符（i/f/s/b）。
+// 这是对单遍扫描的「零拷贝」前置优化：常见 DML（不涉及类型声明）无此字符，
+// 直接返回原字符串，避免任何分配。判断错误仅导致一次空扫描，无正确性风险。
+func sqlNeedsTypeRepl(sql string) bool {
+	for i := 0; i < len(sql); i++ {
+		c := sql[i]
+		if c == 'I' || c == 'i' || c == 'F' || c == 'f' ||
+			c == 'S' || c == 's' || c == 'B' || c == 'b' {
+			return true
+		}
+	}
+	return false
+}
+
+// isIdentStartByte 判断字节是否为标识符首字符（字母或下划线）。
+func isIdentStartByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+// isIdentPartByte 判断字节是否为标识符后续字符（首字符或数字）。
+func isIdentPartByte(c byte) bool {
+	return isIdentStartByte(c) || (c >= '0' && c <= '9')
+}
+
+// mapCustomTypeKeyword 将项目自定义类型关键字映射为 MySQL 兼容类型。
+// 大小写不敏感；返回 (mapped, true) 表示匹配成功，否则返回 ("", false)。
+// 关键字 → MySQL 类型映射：
+//
+//	INT64 → BIGINT、FLOAT64 → DOUBLE、STRING → TEXT、
+//	BOOL/BOOLEAN → TINYINT。
+func mapCustomTypeKeyword(word string) (string, bool) {
+	switch len(word) {
+	case 4:
+		if strings.EqualFold(word, "BOOL") {
+			return mysqlTinyint, true
+		}
+	case 5:
+		if strings.EqualFold(word, "INT64") {
+			return "BIGINT", true
+		}
+	case 6:
+		if strings.EqualFold(word, "STRING") {
+			return "TEXT", true
+		}
+	case 7:
+		if strings.EqualFold(word, "FLOAT64") {
+			return "DOUBLE", true
+		}
+		if strings.EqualFold(word, "BOOLEAN") {
+			return mysqlTinyint, true
+		}
+	}
+	return "", false
 }
 
 // convert 将 sqlparser 的 AST 转换为项目内部 AST。

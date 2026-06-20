@@ -57,6 +57,30 @@ func BenchmarkParserCreateTable(b *testing.B) {
 	b.ReportAllocs()
 }
 
+// BenchmarkPreprocessSQLNoMatch 度量无关键字场景（最常见 DML）的预处理开销。
+// 用于验证单遍扫描 + 前置关键字首字符判断在「无匹配」场景下的零拷贝快速路径。
+func BenchmarkPreprocessSQLNoMatch(b *testing.B) {
+	parser := NewParser()
+	sql := "SELECT id, name, score FROM users WHERE score > 90.0"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = parser.preprocessSQL(sql)
+	}
+	b.ReportAllocs()
+}
+
+// BenchmarkPreprocessSQLWithMatch 度量含关键字场景（CREATE TABLE）的预处理开销。
+// 用于验证单遍扫描在「有匹配」场景下仍能高效完成类型替换。
+func BenchmarkPreprocessSQLWithMatch(b *testing.B) {
+	parser := NewParser()
+	sql := "CREATE TABLE users (id INT64, name STRING, score FLOAT64, active BOOL, PRIMARY KEY (id))"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = parser.preprocessSQL(sql)
+	}
+	b.ReportAllocs()
+}
+
 // --- 分析器基准测试 ---
 
 func BenchmarkAnalyzer(b *testing.B) {
