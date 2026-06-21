@@ -92,7 +92,8 @@ func (it *memTableIterator) Count() int { return len(it.pairs) }
 
 // segmentIterator iterates over a Segment's rows within a key range.
 // 延迟物化优化：Next() 仅记录行索引和 key，不构建 map[string]Value，
-// Entry() 时按需构建行数据。同时复用 map 缓冲区，避免每行重新分配。
+// Entry() 时按需构建行数据。每次 Entry() 分配新 map，确保返回值可安全
+// 持有跨行引用——这是 ScanEntry 在结果切片中存储的契约基础。
 // Column decoding is deferred until the first row is accessed, avoiding
 // unnecessary work for segments that are skipped by index pruning.
 // Thread safety: ensureDecoded uses sync.Once for idempotent lazy init;
@@ -202,7 +203,8 @@ func (it *segmentIterator) Next() bool {
 }
 
 // buildRowMap 从解码后的列数据构建当前行的列值映射。
-// 每次调用创建新 map，确保返回值可安全持有跨行引用。
+// 每次调用创建新 map，确保返回值可安全持有跨行引用（这是 ScanRange/Scan
+// 返回 []ScanEntry 时的契约基础：每个条目持有独立的 Columns 引用）。
 func (it *segmentIterator) buildRowMap() map[string]common.Value {
 	values := make(map[string]common.Value, len(it.colMeta))
 	for colIdx, col := range it.colMeta {
@@ -325,43 +327,34 @@ func (mi *MergeIterator) advanceFirst() bool {
 		mi.finished = true
 		return false
 	}
-
 	mi.started = true
-	entry := mi.heap[0]
-	mi.current = ScanEntry{Key: entry.key}
-
-	it := entry.it
-	mi.current.Value = it.Entry().Value
-
-	mi.advanceHeapTop()
+	mi.setCurrentFromHeapTop()
 	return true
 }
 
 func (mi *MergeIterator) advanceNext() bool {
-	if len(mi.heap) == 0 {
-		mi.finished = true
-		return false
-	}
-
 	prevKey := mi.current.Key
-
 	for len(mi.heap) > 0 && mi.heap[0].key == prevKey {
 		mi.advanceHeapTop()
 	}
-
 	if len(mi.heap) == 0 {
 		mi.finished = true
 		return false
 	}
+	mi.setCurrentFromHeapTop()
+	return true
+}
 
+// setCurrentFromHeapTop 将堆顶 entry 的 key/value 复制到 mi.current，
+// 然后推进堆顶迭代器。调用者需保证 mi.heap 非空；空堆时该函数不应被调用。
+// 该辅助方法将 advanceFirst/advanceNext 共享的"取堆顶 + 推进"逻辑集中，
+// 避免在两处维护重复的字段读取与堆操作。
+func (mi *MergeIterator) setCurrentFromHeapTop() {
 	entry := mi.heap[0]
 	mi.current = ScanEntry{Key: entry.key}
-
 	it := entry.it
 	mi.current.Value = it.Entry().Value
-
 	mi.advanceHeapTop()
-	return true
 }
 
 func (mi *MergeIterator) advanceHeapTop() {

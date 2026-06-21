@@ -2,6 +2,7 @@ package storage
 
 import (
 	"container/heap"
+	"reflect"
 	"sort"
 	"testing"
 
@@ -116,6 +117,40 @@ func TestSegmentIteratorNoOverlap(t *testing.T) {
 	it := newSegmentIterator(seg, colMeta, "a", "c", nil)
 	if it.Next() {
 		t.Error("expected no entries for non-overlapping range")
+	}
+}
+
+// TestSegmentIteratorEntryReturnsFreshMap 锁定 segmentIterator.Entry() 的
+// "每次返回新 map" 契约。这是 ScanRange/Scan 返回 []ScanEntry 时的安全性
+// 基础：调用方可在结果切片中直接持有每个 entry.Value.Columns 的引用而无需
+// 自行 copy。任意优化（如 rowBuf 复用）若要打破此契约，必须同步更新本测试
+// 与公开 API 文档。
+func TestSegmentIteratorEntryReturnsFreshMap(t *testing.T) {
+	seg := buildTestSegment(t, []string{"a", "b", "c"}, []int64{10, 20, 30})
+	colMeta := []ColumnMeta{{ID: 0, Name: colVal, Type: common.TypeInt64}}
+	it := newSegmentIterator(seg, colMeta, "a", "c", nil)
+
+	if !it.Next() {
+		t.Fatal("expected first row")
+	}
+	e1 := it.Entry()
+	addr1 := reflect.ValueOf(e1.Value.Columns).Pointer()
+
+	if !it.Next() {
+		t.Fatal("expected second row")
+	}
+	e2 := it.Entry()
+	addr2 := reflect.ValueOf(e2.Value.Columns).Pointer()
+
+	// 通过比较底层 hmap 指针确认是两张不同的 map（reflect.Value.Pointer 对 map
+	// 返回其 hmap 指针，可用于区分不同实例）。
+	if addr1 == addr2 {
+		t.Errorf("Entry() 应每次返回新 map，但两次调用得到同一 hmap 指针（addr=0x%x）", addr1)
+	}
+
+	// 持有旧引用不应当被后续行污染
+	if v := e1.Value.Columns[colVal].Int64; v != 10 {
+		t.Errorf("旧的 e1.Value.Columns 被后续行污染，得到 val=%d, want 10", v)
 	}
 }
 
