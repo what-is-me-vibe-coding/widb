@@ -1,5 +1,7 @@
 # WiDB 系统架构
 
+> 想了解端到端时序图、函数调用链、磁盘格式与内存模型？请阅读 [architecture-deep-dive.md](architecture-deep-dive.md)。
+
 ## 1. 整体架构
 
 WiDB 采用分层架构，自底向上分为：公共层、存储引擎层、索引层、查询引擎层、元数据层、服务层。

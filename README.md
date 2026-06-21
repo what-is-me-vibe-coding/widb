@@ -286,7 +286,9 @@ test-db/
 │   ├── sql-reference.md  # SQL 语法权威参考
 │   ├── cookbook.md     # 常见 SQL 套路与最佳实践
 │   ├── troubleshooting.md # 故障排查指南
-│   └── operations.md   # 运维手册（部署/监控/备份/恢复/容量规划/升级）
+│   ├── operations.md   # 运维手册（部署/监控/备份/恢复/容量规划/升级）
+│   ├── development.md  # 开发与贡献指南
+│   └── architecture-deep-dive.md # 架构深度解析（时序图/调用链/格式/内存模型）
 └── .agent_plan/        # 开发设计文档
 ```
 
