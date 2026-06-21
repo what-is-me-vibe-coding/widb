@@ -282,6 +282,15 @@ func TestRealisticBusinessScenarioSQL(t *testing.T) {
 	bizSetupTables(t, s)
 
 	// 阶段 1：4 客户端 × 3 轮分析查询
+	bizRunConcurrentQueryPhase(t, s)
+	// 阶段 2：DML 变更 + 阶段 3：行数校验
+	bizRunDMLAndVerifyRowCount(t, s)
+	// 阶段 4：跨协议读一致性
+	bizVerifyCrossProtocolStateConsistency(t, s)
+}
+
+// bizRunConcurrentQueryPhase 阶段 1：4 客户端并发执行 3 轮分析查询。
+func bizRunConcurrentQueryPhase(t *testing.T, s *sqlServer) {
 	var errCount int64
 	var wg sync.WaitGroup
 	for i := 0; i < bizClientCount; i++ {
@@ -295,31 +304,25 @@ func TestRealisticBusinessScenarioSQL(t *testing.T) {
 	if errCount > 0 {
 		t.Fatalf("多客户端分析查询失败 %d 次", errCount)
 	}
+}
 
-	// 阶段 2：DML 变更 → 重新校验行数
-	// UPDATE：把 id 1..3 的状态改为 completed
+// bizRunDMLAndVerifyRowCount 阶段 2 + 3：执行 UPDATE/DELETE 并校验 DML 后
+// 行数与期望一致。期望行数计算：除仍为 cancelled 的行外，其余保留（被 UPDATE
+// 的前 3 行均被改成 completed）。
+func bizRunDMLAndVerifyRowCount(t *testing.T, s *sqlServer) {
+	// 阶段 2：DML 变更
 	for i := 0; i < 3; i++ {
 		execSQLVia(t, s, "tcp", fmt.Sprintf(
 			"UPDATE "+bizOrderTable+" SET state = 'completed' WHERE id = %d",
 			bizBaseOrderID+i))
 	}
-	// DELETE：删除所有 state='cancelled' 的行
 	execSQLVia(t, s, "tcp",
 		"DELETE FROM "+bizOrderTable+" WHERE state = 'cancelled'")
 
-	// 阶段 3：变更后行数校验（仅保留 completed + shipped）
-	// 初始状态：每 state 占 bizInitialOrders/bizStateCount 行。
-	// UPDATE 把 id 1..3 中 state 非 completed 的行（shipped 1 行、cancelled 1
-	// 行）变为 completed；DELETE 删除所有 cancelled 行。
+	// 阶段 3：行数校验
 	wantRemaining := int64(0)
 	for i := 0; i < bizInitialOrders; i++ {
 		stateIdx := i % bizStateCount
-		// UPDATE 目标 id 1..3 = bizBaseOrderID+0/1/2，对应 i=0/1/2：
-		//   i=0: state='completed' → UPDATE 幂等
-		//   i=1: state='shipped'   → UPDATE 后变 completed
-		//   i=2: state='cancelled' → UPDATE 后变 completed
-		// DELETE 删除所有 state='cancelled'。综合：除仍为 cancelled 的行外，
-		// 其余行保留。
 		isUpdatedRow := i < 3
 		wasCancelled := bizStates[stateIdx] == "cancelled"
 		if isUpdatedRow || !wasCancelled {
@@ -334,8 +337,11 @@ func TestRealisticBusinessScenarioSQL(t *testing.T) {
 	if got != wantRemaining {
 		t.Errorf("DML 后行数: 期望 %d，得到 %d", wantRemaining, got)
 	}
+}
 
-	// 阶段 4：跨协议读一致性——TCP 与 HTTP 同时拉取 state 分布，结果应一致
+// bizVerifyCrossProtocolStateConsistency 阶段 4：TCP 与 HTTP 拉取 state 分
+// 布并断言结果一致。任一协议查询失败或分组数不一致均 Fatal。
+func bizVerifyCrossProtocolStateConsistency(t *testing.T, s *sqlServer) {
 	tcpResp := queryVia(t, s, "tcp",
 		"SELECT state, COUNT(*) AS cnt FROM "+bizOrderTable+
 			" GROUP BY state")
