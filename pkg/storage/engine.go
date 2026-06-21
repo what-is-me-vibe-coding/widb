@@ -365,17 +365,27 @@ func (e *Engine) Close() error {
 
 	// 尝试刷写所有 immutable memtable，确保数据持久化
 	// 刷写失败不阻止关闭流程，因为数据仍在 WAL 中，重启后可恢复
-	for _, mem := range immutable {
-		seg, err := e.flusher.Flush(mem, cols)
-		if err != nil {
-			log.Printf("engine close: flush memtable failed (data recoverable from WAL): %v", err)
-			continue
+	//
+	// 注意：若引擎从未注册任何 ColumnMeta（典型场景：测试中只开引擎、未建表就
+	// 直接 Close），Flusher 会因为 SegmentBuilder 无列而失败，并打印大量日志，
+	// 在 CI 上聚合后可能触发 testlog.txt "file too large"。这里在 cols 为空且
+	// memtable 中无数据行时直接跳过该循环，避免无意义的日志与失败路径。
+	if len(cols) > 0 {
+		for _, mem := range immutable {
+			if mem.Size() == 0 {
+				continue
+			}
+			seg, err := e.flusher.Flush(mem, cols)
+			if err != nil {
+				log.Printf("engine close: flush memtable failed (data recoverable from WAL): %v", err)
+				continue
+			}
+			e.mu.Lock()
+			if err := e.addSegment(seg, 0); err != nil {
+				log.Printf("engine close: register segment %d: %v", seg.ID, err)
+			}
+			e.mu.Unlock()
 		}
-		e.mu.Lock()
-		if err := e.addSegment(seg, 0); err != nil {
-			log.Printf("engine close: register segment %d: %v", seg.ID, err)
-		}
-		e.mu.Unlock()
 	}
 
 	e.mu.Lock()

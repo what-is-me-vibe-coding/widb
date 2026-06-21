@@ -147,7 +147,7 @@ func bizClientWork(s *sqlServer, clientID int) error {
 //
 // 断言要点：
 //   - 总订单数 = bizInitialOrders
-//   - 按 region 分组求和 = 该 region 在种子数据中行数 × bizAmountFor 之和
+//   - 按 region 分组求和 = bizExpectedRegionSum(ri)
 func bizRunAggregateQueries(s *sqlServer, via string) error {
 	resp, err := rawQuery(s, via, "SELECT COUNT(*) AS cnt FROM "+bizOrderTable)
 	if err != nil {
@@ -169,40 +169,55 @@ func bizRunAggregateQueries(s *sqlServer, via string) error {
 	}
 
 	for ri := 0; ri < bizRegionCount; ri++ {
-		resp, err = rawQuery(s, via, fmt.Sprintf(
-			"SELECT SUM(amount) AS total FROM "+bizOrderTable+
-				" WHERE customer_id >= %d AND customer_id <= %d",
-			ri*bizLevelCount+1, ri*bizLevelCount+bizLevelCount))
-		if err != nil {
-			return fmt.Errorf("region-%d SUM 请求: %w", ri, err)
-		}
-		if resp.Code != 0 {
-			return fmt.Errorf("region-%d SUM 失败: %s", ri, resp.Message)
-		}
-		rows := respRows(resp)
-		if len(rows) != 1 {
-			return fmt.Errorf("region-%d SUM 期望 1 行，得到 %d", ri, len(rows))
-		}
-		got, ok := toFloat64(rows[0]["total"])
-		if !ok {
-			return fmt.Errorf("region-%d SUM 类型异常: %T", ri, rows[0]["total"])
-		}
-		// 期望：region ri 的客户持有 bizInitialOrders/bizRegionCount 行订单，
-		// 每行 amount 在 4 个 product 间循环。计算期望值：
-		ordersThisRegion := bizInitialOrders / bizRegionCount
-		want := 0.0
-		for pi := 0; pi < bizProductCount; pi++ {
-			count := ordersThisRegion / bizProductCount
-			if pi < ordersThisRegion%bizProductCount {
-				count++
-			}
-			want += float64(count) * bizAmountFor(ri, pi)
-		}
-		if math.Abs(got-want) > bizFloatEpsilon {
-			return fmt.Errorf("region-%d SUM: 期望 %.2f，得到 %.2f", ri, want, got)
+		if err := bizVerifyRegionSum(s, via, ri); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// bizVerifyRegionSum 校验单个 region 的 SUM(amount) 与种子期望一致。
+func bizVerifyRegionSum(s *sqlServer, via string, ri int) error {
+	resp, err := rawQuery(s, via, fmt.Sprintf(
+		"SELECT SUM(amount) AS total FROM "+bizOrderTable+
+			" WHERE customer_id >= %d AND customer_id <= %d",
+		ri*bizLevelCount+1, ri*bizLevelCount+bizLevelCount))
+	if err != nil {
+		return fmt.Errorf("region-%d SUM 请求: %w", ri, err)
+	}
+	if resp.Code != 0 {
+		return fmt.Errorf("region-%d SUM 失败: %s", ri, resp.Message)
+	}
+	rows := respRows(resp)
+	if len(rows) != 1 {
+		return fmt.Errorf("region-%d SUM 期望 1 行，得到 %d", ri, len(rows))
+	}
+	got, ok := toFloat64(rows[0]["total"])
+	if !ok {
+		return fmt.Errorf("region-%d SUM 类型异常: %T", ri, rows[0]["total"])
+	}
+	want := bizExpectedRegionSum(ri)
+	if math.Abs(got-want) > bizFloatEpsilon {
+		return fmt.Errorf("region-%d SUM: 期望 %.2f，得到 %.2f", ri, want, got)
+	}
+	return nil
+}
+
+// bizExpectedRegionSum 计算 region ri 在种子数据中所有订单的 SUM(amount)。
+//
+// 每个 region 持有 bizInitialOrders/bizRegionCount 行订单，每行 amount 在
+// 4 个 product 间循环，循环余数的前几行多分配一次。
+func bizExpectedRegionSum(ri int) float64 {
+	ordersThisRegion := bizInitialOrders / bizRegionCount
+	want := 0.0
+	for pi := 0; pi < bizProductCount; pi++ {
+		count := ordersThisRegion / bizProductCount
+		if pi < ordersThisRegion%bizProductCount {
+			count++
+		}
+		want += float64(count) * bizAmountFor(ri, pi)
+	}
+	return want
 }
 
 // bizRunFilterQueries 业务过滤查询：state 过滤 + LIKE 模糊匹配 + 多条件 AND。
