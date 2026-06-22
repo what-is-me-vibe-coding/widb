@@ -37,6 +37,26 @@ const restartMemoryTableName = "restart_mem"
 // restartLSMTableName 是测试用的 LSM 表名，集中放置便于排查日志。
 const restartLSMTableName = "restart_lsm"
 
+// restartLSMRows 是测试第一阶段写入到 LSM 表的行集合。
+func restartLSMRows() []map[string]any {
+	return []map[string]any{
+		{"id": 1, "name": "lsm-a"},
+		{"id": 2, "name": "lsm-b"},
+		{"id": 3, "name": "lsm-c"},
+	}
+}
+
+// restartMemoryRows 是测试第一阶段写入到内存表的行集合。
+func restartMemoryRows() []map[string]any {
+	return []map[string]any{
+		{"id": 10, "name": "mem-a"},
+		{"id": 11, "name": "mem-b"},
+		{"id": 12, "name": "mem-c"},
+		{"id": 13, "name": "mem-d"},
+		{"id": 14, "name": "mem-e"},
+	}
+}
+
 // startSQLServerWithDir 在指定的 dataDir 上启动一个 server 实例，便于「重启」场景复用同一目录。
 // 返回的 *sqlServer 持有 server 句柄与监听地址；调用方负责在测试结束时调用 srv.Stop()。
 func startSQLServerWithDir(t *testing.T, dataDir string) *sqlServer {
@@ -71,6 +91,59 @@ func stopSQLServer(t *testing.T, s *sqlServer) {
 	}
 }
 
+// restartSeedData 在 server #1 上建 LSM 表与内存表并写入测试数据。
+// 数据量与内容由 restartLSMRows / restartMemoryRows 给出。
+func restartSeedData(t *testing.T, s *sqlServer) {
+	t.Helper()
+	// 建 LSM 表（默认引擎），写入 3 行。
+	createLSM := queryVia(t, s, "tcp",
+		"CREATE TABLE "+restartLSMTableName+" (id INT64 NOT NULL, name STRING NULL, PRIMARY KEY(id))")
+	if createLSM.Code != 0 {
+		t.Fatalf("建 LSM 表失败: %s", createLSM.Message)
+	}
+	writeVia(t, s, "tcp", restartLSMTableName, restartLSMRows())
+
+	// 建内存表（ENGINE=memory），写入 5 行。
+	createMem := queryVia(t, s, "tcp",
+		"CREATE TABLE "+restartMemoryTableName+" (id INT64 NOT NULL, name STRING NULL, PRIMARY KEY(id)) ENGINE=memory")
+	if createMem.Code != 0 {
+		t.Fatalf("建内存表失败: %s", createMem.Message)
+	}
+	writeVia(t, s, "tcp", restartMemoryTableName, restartMemoryRows())
+	// 不需要显式 FLUSH：每次写入在 engine 层已 Sync WAL，
+	// Stop 会关闭所有引擎与 WAL，新启动时 replay 即可恢复。
+}
+
+// restartCollectTableNames 执行 SHOW TABLES 并返回表名集合，便于后续断言。
+func restartCollectTableNames(t *testing.T, s *sqlServer) map[string]bool {
+	t.Helper()
+	resp := queryVia(t, s, "tcp", "SHOW TABLES")
+	if resp.Code != 0 {
+		t.Fatalf("SHOW TABLES 失败: %s", resp.Message)
+	}
+	names := make(map[string]bool)
+	for _, r := range respRows(resp) {
+		if name, ok := r["table"].(string); ok {
+			names[name] = true
+		}
+	}
+	return names
+}
+
+// restartAssertCount 断言指定表的 COUNT(*) 等于 want。
+func restartAssertCount(t *testing.T, s *sqlServer, table string, want float64) {
+	t.Helper()
+	resp := queryVia(t, s, "tcp", "SELECT COUNT(*) AS cnt FROM "+table)
+	if resp.Code != 0 {
+		t.Fatalf("%s COUNT 失败: %s", table, resp.Message)
+	}
+	rows := respRows(resp)
+	if len(rows) != 1 {
+		t.Fatalf("%s COUNT 期望 1 行聚合结果，得到 %d", table, len(rows))
+	}
+	assertFloat(t, table, "cnt", rows[0]["cnt"], want)
+}
+
 // TestMemoryEngineRestartDropsData 验证内存引擎表在 server 重启后行数据全部丢失，
 // 同时 LSM 表数据完整恢复，catalog 中两张表的元数据均可见。
 //
@@ -88,37 +161,7 @@ func TestMemoryEngineRestartDropsData(t *testing.T) {
 	// ---------- 阶段 1：写入阶段 ----------
 	s1 := startSQLServerWithDir(t, dataDir)
 	t.Cleanup(func() { stopSQLServer(t, s1) })
-
-	// 建 LSM 表（默认引擎），写入 3 行。
-	createLSM := queryVia(t, s1, "tcp",
-		"CREATE TABLE "+restartLSMTableName+" (id INT64 NOT NULL, name STRING NULL, PRIMARY KEY(id))")
-	if createLSM.Code != 0 {
-		t.Fatalf("建 LSM 表失败: %s", createLSM.Message)
-	}
-	writeVia(t, s1, "tcp", restartLSMTableName, []map[string]any{
-		{"id": 1, "name": "lsm-a"},
-		{"id": 2, "name": "lsm-b"},
-		{"id": 3, "name": "lsm-c"},
-	})
-
-	// 建内存表（ENGINE=memory），写入 5 行。
-	createMem := queryVia(t, s1, "tcp",
-		"CREATE TABLE "+restartMemoryTableName+" (id INT64 NOT NULL, name STRING NULL, PRIMARY KEY(id)) ENGINE=memory")
-	if createMem.Code != 0 {
-		t.Fatalf("建内存表失败: %s", createMem.Message)
-	}
-	writeVia(t, s1, "tcp", restartMemoryTableName, []map[string]any{
-		{"id": 10, "name": "mem-a"},
-		{"id": 11, "name": "mem-b"},
-		{"id": 12, "name": "mem-c"},
-		{"id": 13, "name": "mem-d"},
-		{"id": 14, "name": "mem-e"},
-	})
-
-	// 不需要显式 FLUSH：每次写入在 engine 层已 Sync WAL，
-	// Stop 会关闭所有引擎与 WAL，新启动时 replay 即可恢复。
-
-	// 关闭 server #1；Stop 会把 catalog.json 落盘并关闭所有引擎。
+	restartSeedData(t, s1)
 	stopSQLServer(t, s1)
 	s1 = nil
 
@@ -127,16 +170,7 @@ func TestMemoryEngineRestartDropsData(t *testing.T) {
 	t.Cleanup(func() { stopSQLServer(t, s2) })
 
 	// 校验 1：catalog 恢复后 SHOW TABLES 仍能列出两张表（engine 字段随 catalog 一起持久化）。
-	showResp := queryVia(t, s2, "tcp", "SHOW TABLES")
-	if showResp.Code != 0 {
-		t.Fatalf("SHOW TABLES 失败: %s", showResp.Message)
-	}
-	tableNames := make(map[string]bool)
-	for _, r := range respRows(showResp) {
-		if name, ok := r["table"].(string); ok {
-			tableNames[name] = true
-		}
-	}
+	tableNames := restartCollectTableNames(t, s2)
 	if !tableNames[restartLSMTableName] {
 		t.Errorf("SHOW TABLES 应包含 LSM 表 %q，实际: %v", restartLSMTableName, tableNames)
 	}
@@ -146,28 +180,10 @@ func TestMemoryEngineRestartDropsData(t *testing.T) {
 	}
 
 	// 校验 2：LSM 表数据完整恢复，COUNT=3。
-	descLSM := queryVia(t, s2, "tcp",
-		"SELECT COUNT(*) AS cnt FROM "+restartLSMTableName)
-	if descLSM.Code != 0 {
-		t.Fatalf("LSM 表 COUNT 失败: %s", descLSM.Message)
-	}
-	lsmRows := respRows(descLSM)
-	if len(lsmRows) != 1 {
-		t.Fatalf("LSM COUNT 期望 1 行聚合结果，得到 %d", len(lsmRows))
-	}
-	assertFloat(t, restartLSMTableName, "cnt", lsmRows[0]["cnt"], 3)
+	restartAssertCount(t, s2, restartLSMTableName, 3)
 
 	// 校验 3：内存表行数据应全部丢失，COUNT=0（核心不变量）。
-	descMem := queryVia(t, s2, "tcp",
-		"SELECT COUNT(*) AS cnt FROM "+restartMemoryTableName)
-	if descMem.Code != 0 {
-		t.Fatalf("内存表 COUNT 失败: %s", descMem.Message)
-	}
-	memRows := respRows(descMem)
-	if len(memRows) != 1 {
-		t.Fatalf("内存表 COUNT 期望 1 行聚合结果，得到 %d", len(memRows))
-	}
-	assertFloat(t, restartMemoryTableName, "cnt", memRows[0]["cnt"], 0)
+	restartAssertCount(t, s2, restartMemoryTableName, 0)
 
 	// 校验 4：内存表行数 0 之外，再做一次 SELECT * 双重确认无残留行。
 	allMem := queryVia(t, s2, "tcp", "SELECT * FROM "+restartMemoryTableName)
@@ -183,8 +199,7 @@ func TestMemoryEngineRestartDropsData(t *testing.T) {
 	if descStmt.Code != 0 {
 		t.Fatalf("内存表 DESCRIBE 失败: %s", descStmt.Message)
 	}
-	descRows := respRows(descStmt)
-	if len(descRows) == 0 {
+	if len(respRows(descStmt)) == 0 {
 		t.Errorf("内存表 DESCRIBE 应至少返回 1 列，实际为空")
 	}
 
