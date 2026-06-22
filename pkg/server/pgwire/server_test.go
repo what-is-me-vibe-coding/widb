@@ -38,6 +38,13 @@ func (m *mockExecutor) lastQuery() string {
 	return m.queries[len(m.queries)-1]
 }
 
+// queryCount 返回已收集的查询总数。
+func (m *mockExecutor) queryCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.queries)
+}
+
 // TestNewServer 验证 NewServer 创建实例。
 func TestNewServer(t *testing.T) {
 	exec := &mockExecutor{}

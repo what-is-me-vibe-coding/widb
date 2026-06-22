@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +38,11 @@ type connHandler struct {
 	conn         net.Conn
 	idleTimeout  time.Duration
 	writeTimeout time.Duration
+
+	extMu      sync.Mutex                 // 保护 extStmts / extPortals / extErr 的并发访问
+	extStmts   map[string]*extendedStmt   // prepared statement 名 → SQL
+	extPortals map[string]*extendedPortal // portal 名 → SQL
+	extErr     error                      // extended query 模式下的错误状态；非 nil 时丢弃后续消息直到 Sync
 }
 
 // newConnHandler 创建一个新的连接处理器。
@@ -48,6 +54,8 @@ func newConnHandler(backend *pgproto3.Backend, executor SQLExecutor, conn net.Co
 		conn:         conn,
 		idleTimeout:  idleTimeout,
 		writeTimeout: writeTimeout,
+		extStmts:     make(map[string]*extendedStmt),
+		extPortals:   make(map[string]*extendedPortal),
 	}
 }
 
@@ -175,9 +183,43 @@ func (h *connHandler) dispatchMessage(msg pgproto3.FrontendMessage) bool {
 	case *pgproto3.Terminate:
 		return false
 	case *pgproto3.Sync:
+		// Sync 结束一个 extended query 周期：清除错误状态并发送 ReadyForQuery。
+		h.extMu.Lock()
+		h.extErr = nil
+		h.extMu.Unlock()
 		_ = h.sendReadyForQuery()
 		return true
+	case *pgproto3.Parse:
+		// extended query 模式下，处于错误状态时丢弃消息直到 Sync。
+		if h.consumeExtError() {
+			return true
+		}
+		h.handleParse(m)
+		return true
+	case *pgproto3.Bind:
+		if h.consumeExtError() {
+			return true
+		}
+		h.handleBind(m)
+		return true
+	case *pgproto3.Describe:
+		if h.consumeExtError() {
+			return true
+		}
+		h.handleDescribe(m)
+		return true
+	case *pgproto3.Execute:
+		if h.consumeExtError() {
+			return true
+		}
+		h.handleExecute(m)
+		return true
+	case *pgproto3.Close:
+		// Close 不受错误状态影响（按 PG 协议，即使在错误状态也应处理 Close）。
+		h.handleClose(m)
+		return true
 	case *pgproto3.Flush:
+		// 强制刷新缓冲区；当前实现每次 Send 即刷，无需特殊处理。
 		return true
 	default:
 		return true
