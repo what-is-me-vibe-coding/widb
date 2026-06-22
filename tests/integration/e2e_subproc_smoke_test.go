@@ -114,17 +114,49 @@ func repoRoot() string {
 	return filepath.Clean(filepath.Join(wd, "..", ".."))
 }
 
+// 端口分配互斥锁与计数器：保证同一进程内连续两次 allocateEphemeralPort 不会
+// 返回同一端口（修复 CI 上"两次连续 net.Listen(127.0.0.1:0) 拿到相同端口"
+// 的间歇性 flake）。子进程测试串行执行，故单 mutex 即可。
+var (
+	portAllocMu sync.Mutex
+	nextPort    = ephemeralPortStart
+)
+
+// 端口分配策略：从 30000 起单调递增，若超过 30999 则回绕到 30000。
+// 每次分配先递增计数器，再尝试 bind 验证空闲；若已被占用则继续递增。
+// 选定端口后立刻关闭监听器——portAllocMu 与顺序递增共同保证「在我拿到这个
+// 端口号到子进程 bind 之前」该端口不会被其他 goroutine 再次分配。
+const ephemeralPortStart = 30000
+const ephemeralPortEnd = 30999
+
 // allocateEphemeralPort 在 127.0.0.1 上预占一个空闲端口并立即释放。
-// 进程启动到 listen 之间存在理论竞争窗口，但单机测试场景下可接受。
+//
+// 与旧实现的区别：使用包级单调递增计数器（而非依赖 OS 的 127.0.0.1:0 行为）
+// 显式指定端口号，从根上避免「连续两次拿到同一端口」的问题。
+// portAllocMu 保护 nextPort 的并发安全；同时确保在 t.Cleanup 关闭另一个
+// 监听器之前，本调用不会跨过 nextPort 计数器（消除相邻分配拿到同值的可能）。
 func allocateEphemeralPort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("预占端口失败: %v", err)
+	portAllocMu.Lock()
+	defer portAllocMu.Unlock()
+	for i := 0; i < 1000; i++ {
+		port := nextPort
+		// 单调递增，超过上限回绕
+		if port >= ephemeralPortEnd {
+			nextPort = ephemeralPortStart
+		} else {
+			nextPort = port + 1
+		}
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			_ = l.Close()
+			return port
+		}
+		// 端口被占（其他测试残留或外部进程占用），继续找下一个
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port
+	t.Fatalf("在端口范围 %d-%d 内找不到空闲端口（连续 1000 次失败）",
+		ephemeralPortStart, ephemeralPortEnd)
+	return 0
 }
 
 // startSubprocessServer 用给定的 TCP/HTTP 端口与 DataDir 拉起 cmd/server 子进程。
