@@ -20,8 +20,7 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 
 	stmt, err := s.parser.Parse(req.SQL)
 	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("parse_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("SQL 解析错误: %v", err)}, nil
+		return s.queryErrResp(MetricQueryParseError, "SQL 解析错误: %v", err), nil
 	}
 
 	// DDL/DML 语句（CREATE TABLE / INSERT / UPDATE / DELETE / DROP TABLE /
@@ -48,16 +47,14 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 
 	plan, err := s.analyzer.Analyze(stmt)
 	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("analyze_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("SQL 分析错误: %v", err)}, nil
+		return s.queryErrResp(MetricQueryAnalyzeError, "SQL 分析错误: %v", err), nil
 	}
 
 	optimized := s.optimizer.Optimize(plan)
 
 	chunks, err := s.executor.Execute(optimized)
 	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("SQL 执行错误: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "SQL 执行错误: %v", err), nil
 	}
 
 	// 从查询计划的 Schema 中提取列名与列类型，用于 JSON 响应的 key 与 pgwire 类型映射
@@ -74,7 +71,7 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 	data := chunksToRows(chunks, colNames)
 	totalRows := countRows(chunks)
 
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{Code: 0, Data: data, Rows: totalRows, Columns: colNames, ColumnTypes: colTypes}, nil
 }
 
@@ -82,8 +79,7 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 func (s *Server) handleInsert(ins *query.InsertStatement) (*Response, error) {
 	tbl, err := s.catalog.GetTable(ins.Table)
 	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "表不存在: %v", err), nil
 	}
 
 	// 确定列顺序：显式指定列时使用之，否则使用表定义的全部列
@@ -101,18 +97,16 @@ func (s *Server) handleInsert(ins *query.InsertStatement) (*Response, error) {
 	for rowIdx, rowExprs := range ins.Rows {
 		wr, rErr := s.buildInsertWriteRow(tbl, colNames, colTypes, rowExprs, rowIdx, eng)
 		if rErr != nil {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: rErr.Error()}, nil
+			return s.queryErrResp(MetricQueryExecuteError, "%v", rErr), nil
 		}
 		writeRows = append(writeRows, wr)
 	}
 
 	if err := eng.WriteBatch(writeRows); err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "写入错误: %v", err), nil
 	}
 
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{Code: 0, Rows: len(writeRows)}, nil
 }
 
@@ -226,26 +220,23 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 
 	tbl, err := s.catalog.GetTable(req.Table)
 	if err != nil {
-		s.metrics.WritesTotal.WithLabelValues("table_not_found").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
+		return s.writeErrResp(MetricWriteTableNotFound, "表不存在: %v", err), nil
 	}
 
 	writeRows := make([]storage.WriteRow, 0, len(req.Rows))
 	for _, row := range req.Rows {
 		key, values, convErr := s.convertWriteRow(tbl, row)
 		if convErr != nil {
-			s.metrics.WritesTotal.WithLabelValues("convert_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("行数据转换错误: %v", convErr)}, nil
+			return s.writeErrResp(MetricWriteConvertError, "行数据转换错误: %v", convErr), nil
 		}
 		writeRows = append(writeRows, storage.WriteRow{Key: key, Values: values})
 	}
 
 	if err := s.adapter.engineForTable(req.Table).WriteBatch(writeRows); err != nil {
-		s.metrics.WritesTotal.WithLabelValues("write_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", err)}, nil
+		return s.writeErrResp(MetricWriteError, "写入错误: %v", err), nil
 	}
 
-	s.metrics.WritesTotal.WithLabelValues("success").Add(float64(len(writeRows)))
+	s.writeSuccessInc(len(writeRows))
 	s.metrics.WriteDuration.WithLabelValues("success").Observe(time.Since(start).Seconds())
 	return &Response{Code: 0, Rows: len(writeRows)}, nil
 }
@@ -281,8 +272,7 @@ func (s *Server) createLSMTable(ct *query.CreateTableStatement, cols []catalog.C
 	}
 	eng, err := s.createLSMEngineForTable(ct.Table, cols)
 	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("创建表错误: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "创建表错误: %v", err), nil
 	}
 	if err := s.adapter.registerLSMEngine(ct.Table, eng); err != nil {
 		_ = eng.Close()
@@ -295,7 +285,7 @@ func (s *Server) createLSMTable(ct *query.CreateTableStatement, cols []catalog.C
 	if s.cfg.EnableScheduler {
 		eng.StartScheduler(s.cfg.SchedulerConfig)
 	}
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{Code: 0, Rows: 0}, nil
 }
 
@@ -331,28 +321,26 @@ func (s *Server) createMemoryTable(ct *query.CreateTableStatement, cols []catalo
 		_ = s.adapter.unregisterMemoryEngine(ct.Table) // 建表失败，回滚内存引擎注册
 		return s.createTableErrorResponse(ct, err), nil
 	}
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{Code: 0, Rows: 0}, nil
 }
 
 // createTableErrorResponse 根据建表错误与 IF NOT EXISTS 语义构造响应。
 func (s *Server) createTableErrorResponse(ct *query.CreateTableStatement, err error) *Response {
 	if ct.IfNotExists && strings.Contains(err.Error(), "already exists") {
-		s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+		s.querySuccessInc()
 		return &Response{Code: 0, Rows: 0}
 	}
-	s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-	return &Response{Code: -1, Message: fmt.Sprintf("创建表错误: %v", err)}
+	return s.queryErrResp(MetricQueryExecuteError, "创建表错误: %v", err)
 }
 
 // tableAlreadyExistsResponse 根据 IF NOT EXISTS 语义返回“表已存在”的响应。
 func (s *Server) tableAlreadyExistsResponse(ct *query.CreateTableStatement) *Response {
 	if ct.IfNotExists {
-		s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+		s.querySuccessInc()
 		return &Response{Code: 0, Rows: 0}
 	}
-	s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-	return &Response{Code: -1, Message: fmt.Sprintf("创建表错误: table %q already exists", ct.Table)}
+	return s.queryErrResp(MetricQueryExecuteError, "创建表错误: table %q already exists", ct.Table)
 }
 
 // convertWriteRow 将 JSON 行数据转换为存储引擎需要的格式。

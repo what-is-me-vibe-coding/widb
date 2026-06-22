@@ -15,8 +15,7 @@ import (
 // 删除场景显著降低 I/O。无 WHERE 子句时删除全表数据（保留表结构）。
 func (s *Server) handleDelete(del *query.DeleteStatement) (*Response, error) {
 	if _, err := s.catalog.GetTable(del.Table); err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "表不存在: %v", err), nil
 	}
 
 	eng := s.adapter.engineForTable(del.Table)
@@ -36,13 +35,12 @@ func (s *Server) handleDelete(del *query.DeleteStatement) (*Response, error) {
 			continue
 		}
 		if delErr := eng.Delete(entry.Key); delErr != nil {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("删除错误: %v", delErr)}, nil
+			return s.queryErrResp(MetricQueryExecuteError, "删除错误: %v", delErr), nil
 		}
 		deleted++
 	}
 
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{Code: 0, Rows: deleted}, nil
 }
 
@@ -52,8 +50,7 @@ func (s *Server) handleDelete(del *query.DeleteStatement) (*Response, error) {
 func (s *Server) handleUpdate(upd *query.UpdateStatement) (*Response, error) {
 	tbl, err := s.catalog.GetTable(upd.Table)
 	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "表不存在: %v", err), nil
 	}
 
 	eng := s.adapter.engineForTable(upd.Table)
@@ -75,29 +72,25 @@ func (s *Server) handleUpdate(upd *query.UpdateStatement) (*Response, error) {
 		}
 		newValues, uErr := s.applyUpdateAssignments(entry, upd.Assignments, colTypes)
 		if uErr != nil {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: uErr.Error()}, nil
+			return s.queryErrResp(MetricQueryExecuteError, "%v", uErr), nil
 		}
 		newKey, keyErr := buildPrimaryKeyFromValues(tbl, newValues)
 		if keyErr != nil {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: keyErr.Error()}, nil
+			return s.queryErrResp(MetricQueryExecuteError, "%v", keyErr), nil
 		}
 		if newKey != entry.Key {
 			if conflictErr := checkPKConflict(eng, newKey); conflictErr != nil {
-				s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-				return &Response{Code: -1, Message: conflictErr.Error()}, nil
+				return s.queryErrResp(MetricQueryExecuteError, "%v", conflictErr), nil
 			}
 			_ = eng.Delete(entry.Key)
 		}
 		if wErr := eng.Write(newKey, newValues); wErr != nil {
-			s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-			return &Response{Code: -1, Message: fmt.Sprintf("写入错误: %v", wErr)}, nil
+			return s.queryErrResp(MetricQueryExecuteError, "写入错误: %v", wErr), nil
 		}
 		updated++
 	}
 
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{Code: 0, Rows: updated}, nil
 }
 
@@ -143,11 +136,10 @@ func checkPKConflict(eng TableEngine, key string) error {
 func (s *Server) handleDropTable(dt *query.DropTableStatement) (*Response, error) {
 	if _, err := s.catalog.GetTable(dt.Table); err != nil {
 		if dt.IfExists {
-			s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+			s.querySuccessInc()
 			return &Response{Code: 0, Rows: 0}, nil
 		}
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "表不存在: %v", err), nil
 	}
 
 	// 注销该表的独立引擎（LSM 或内存）；使用默认引擎的表无独立引擎可注销。
@@ -155,11 +147,10 @@ func (s *Server) handleDropTable(dt *query.DropTableStatement) (*Response, error
 	_ = s.adapter.unregisterMemoryEngine(dt.Table)
 
 	if err := s.catalog.DropTable(dt.Table); err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("删除表错误: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "删除表错误: %v", err), nil
 	}
 
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{Code: 0, Rows: 0}, nil
 }
 
@@ -177,7 +168,7 @@ func (s *Server) handleShowTables() (*Response, error) {
 		rows = append(rows, map[string]any{"table": name})
 	}
 
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{Code: 0, Columns: []string{"table"}, Data: rows, Rows: len(rows)}, nil
 }
 
@@ -194,8 +185,7 @@ const (
 func (s *Server) handleDescribe(desc *query.DescribeStatement) (*Response, error) {
 	tbl, err := s.catalog.GetTable(desc.Table)
 	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("execute_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("表不存在: %v", err)}, nil
+		return s.queryErrResp(MetricQueryExecuteError, "表不存在: %v", err), nil
 	}
 
 	pkSet := make(map[string]bool, len(tbl.PrimaryKey))
@@ -213,7 +203,7 @@ func (s *Server) handleDescribe(desc *query.DescribeStatement) (*Response, error
 		})
 	}
 
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{
 		Code:    0,
 		Columns: []string{descColField, descColType, descColNull, descColKey},

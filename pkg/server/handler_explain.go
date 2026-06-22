@@ -1,8 +1,6 @@
 package server
 
 import (
-	"fmt"
-
 	"github.com/what-is-me-vibe-coding/test-db/pkg/common"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/query"
 )
@@ -16,8 +14,7 @@ import (
 func (s *Server) handleExplain(exp *query.ExplainStatement) (*Response, error) {
 	plan, err := s.analyzer.Analyze(exp.Inner)
 	if err != nil {
-		s.metrics.QueriesTotal.WithLabelValues("analyze_error").Inc()
-		return &Response{Code: -1, Message: fmt.Sprintf("SQL 分析错误: %v", err)}, nil
+		return s.queryErrResp(MetricQueryAnalyzeError, "SQL 分析错误: %v", err), nil
 	}
 
 	optimized := s.optimizer.Optimize(plan)
@@ -33,7 +30,7 @@ func (s *Server) handleExplain(exp *query.ExplainStatement) (*Response, error) {
 		})
 	}
 
-	s.metrics.QueriesTotal.WithLabelValues("success").Inc()
+	s.querySuccessInc()
 	return &Response{
 		Code:        0,
 		Columns:     query.ExplainPlanColumns(),
