@@ -348,6 +348,24 @@ SELECT TIMESTAMP '2026-06-01T00:00:00Z';
 
 **解决**：检查 `pkg/server/pgwire/types.go` 中的 OID 映射；如缺类型可提 issue。
 
+## 8a. CLI / REPL 类
+
+### 8a.1 打开 `widb-cli` 立即报 `错误: invalid prompt`
+
+**症状**（issue #233）：
+```
+$ ./widb-cli.exe
+widb-cli - WiDB 命令行客户端
+输入 SQL 语句执行查询，输入 \q 退出，输入 \h 查看帮助
+模式: tcp | TCP: 127.0.0.1:9000 | HTTP: 127.0.0.1:8080
+
+错误: invalid prompt
+```
+
+**原因**：`peterh/liner` 库严格校验 prompt 字符串，凡含 Unicode 类别 C（控制字符，含 ESC `\x1b`）的 prompt 一律返回 `ErrInvalidPrompt("invalid prompt")`。而 WiDB CLI 在 TTY 模式下默认会调用 `ColorizePrompt("widb> ")`，其产物是含 ANSI 转义码的高亮字符串，于是触发该错误。
+
+**解决**：升级到包含此修复的版本（`LinerSession.PromptWithWriter`）。临时绕开方式：设置 `NO_COLOR=1` 关闭颜色，让 prompt 不含控制字符（功能完整，仅缺高亮）。
+
 ## 9. 监控与诊断
 
 ### 9.1 关键指标

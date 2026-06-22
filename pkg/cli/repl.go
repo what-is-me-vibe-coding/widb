@@ -294,8 +294,31 @@ func (s *LinerSession) Prompt() (string, error) {
 
 // PromptWith 输出指定提示符并返回用户输入。
 // prompt 通常为 ANSI 高亮后的字符串；空字符串表示不输出提示。
+//
+// 注意：peterh/liner 拒绝任何包含 Unicode 控制字符（含 ANSI 转义码 ESC \x1b）
+// 的提示符，会直接返回 ErrInvalidPrompt("invalid prompt")。本方法仅适合传入
+// 不含控制字符的纯文本 prompt；如需使用带颜色高亮的 prompt，请改用
+// PromptWithWriter。
 func (s *LinerSession) PromptWith(prompt string) (string, error) {
 	return s.state.Prompt(prompt)
+}
+
+// PromptWithWriter 把 prompt 写入 writer 后再用 liner 读取一行输入。
+//
+// 这是与带 ANSI 颜色高亮 prompt 配套的正确调用方式：liner 不接受任何含
+// Unicode 控制字符（含 ESC \x1b）的 prompt，因此不能把含颜色转义码的
+// 字符串直接传入 liner。改为由调用方先把彩色 prompt 写到 writer，再以空
+// prompt 调用 liner.Prompt。
+//
+// 参数 prompt 允许包含任意字节序列（含 ANSI 转义码）。若 prompt 为空，则
+// 与 Prompt("") 等价，由 liner 输出空 prompt。
+func (s *LinerSession) PromptWithWriter(writer io.Writer, prompt string) (string, error) {
+	if prompt != "" && writer != nil {
+		if _, err := io.WriteString(writer, prompt); err != nil {
+			return "", err
+		}
+	}
+	return s.state.Prompt("")
 }
 
 // ContinuationPrompt 输出续行提示符并返回用户输入。

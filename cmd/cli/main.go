@@ -251,7 +251,7 @@ func (c *cli) runInteractiveTTY(writer io.Writer) error {
 	formatState.Set(c.format)
 
 	for {
-		trimmed, err := readTTYLine(session, clishared.ColorizePrompt("widb> "))
+		trimmed, err := readTTYLine(session, writer, clishared.ColorizePrompt("widb> "))
 		if err != nil {
 			return err
 		}
@@ -280,8 +280,12 @@ func (c *cli) runInteractiveTTY(writer io.Writer) error {
 }
 
 // readTTYLine 从 liner 读取一行并 TrimSpace。EOF 转换为 io.EOF 返回。
-func readTTYLine(session *clishared.LinerSession, prompt string) (string, error) {
-	line, err := session.PromptWith(prompt)
+//
+// prompt 允许包含 ANSI 颜色转义码，调用 PromptWithWriter 把它写到 writer
+// 后再用空 prompt 调 liner.Prompt——这是 peterh/liner 在 prompt 含
+// 控制字符时返回 "invalid prompt" 的标准规避方式。
+func readTTYLine(session *clishared.LinerSession, writer io.Writer, prompt string) (string, error) {
+	line, err := session.PromptWithWriter(writer, prompt)
 	if err != nil {
 		if err == io.EOF {
 			return "", io.EOF

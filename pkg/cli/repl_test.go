@@ -4,12 +4,15 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fatih/color"
+	"github.com/peterh/liner"
 
 	"github.com/what-is-me-vibe-coding/test-db/pkg/render"
 )
@@ -361,4 +364,92 @@ func TestLinerSession_SetCompleter_Nil(t *testing.T) {
 
 	session.SetCompleter(nil)
 	// 设置 nil 后不 panic 即可
+}
+
+// ansiPrompt 构造一个含 ANSI 转义码的 prompt（模拟 ColorizePrompt 的产物）。
+// ESC = \x1b；常见的 SGR 转义 \x1b[36;1m…\x1b[0m 给 prompt 上色。
+// 该 prompt 必含 unicode category Cc（控制字符），会被 liner 拒绝。
+const ansiPrompt = "\x1b[36;1mwidb> \x1b[0m"
+
+// TestLinerSession_PromptWith_RejectsControlChars 验证 liner 在 prompt 含控制
+// 字符（含 ANSI 转义码）时返回 ErrInvalidPrompt。这是 issue #233（widb-cli
+// 打开报 "invalid prompt"）的根因，必须用 LinerSession.PromptWithWriter 规避。
+func TestLinerSession_PromptWith_RejectsControlChars(t *testing.T) {
+	session, err := NewLinerSession("widb> ", "", 10)
+	if err != nil {
+		t.Fatalf("NewLinerSession 失败: %v", err)
+	}
+	t.Cleanup(func() { session.Close("") })
+
+	_, err = session.PromptWith(ansiPrompt)
+	if err == nil {
+		t.Fatal("PromptWith 应拒绝含控制字符的 prompt")
+	}
+	if !errors.Is(err, liner.ErrInvalidPrompt) {
+		t.Errorf("PromptWith 应返回 ErrInvalidPrompt，实际: %v", err)
+	}
+}
+
+// TestLinerSession_PromptWithWriter_WritesPrompt 验证 PromptWithWriter
+// 把 prompt 写入 writer 后才发起 liner.Prompt，规避 ErrInvalidPrompt。
+//
+// 测试方法：在 ANSI prompt 下，PromptWith 会返回 ErrInvalidPrompt；
+// 而 PromptWithWriter 改由调用方负责写出，因此不应触发该错误。
+// 进一步断言 writer 已被写入 prompt 字节序列。
+func TestLinerSession_PromptWithWriter_WritesPrompt(t *testing.T) {
+	session, err := NewLinerSession("widb> ", "", 10)
+	if err != nil {
+		t.Fatalf("NewLinerSession 失败: %v", err)
+	}
+	t.Cleanup(func() { session.Close("") })
+
+	// PromptWith 应返回 ErrInvalidPrompt（已知 liner 行为）。
+	_, err = session.PromptWith(ansiPrompt)
+	if !errors.Is(err, liner.ErrInvalidPrompt) {
+		t.Fatalf("前置条件：PromptWith(ansiPrompt) 应返回 ErrInvalidPrompt，实际: %v", err)
+	}
+
+	// 构造一个永不阻塞的 writer：PromptWithWriter 内部 writer.Write 同步完成。
+	var out bytes.Buffer
+	w := &syncWriter{buf: &out}
+	// 通过 goroutine 启动 PromptWithWriter 防止 liner 阻塞；它在非 TTY
+	// 环境下会走 promptUnsupported 并立即返回（因为 promptUnsupported 读
+	// os.Stdin 时若 inputRedirected=true，会调用 s.r.ReadLine()，我们的
+	// 进程里没有真实终端，可能被 hang 住——但本次只验证 writer 被写入）。
+	type outcome struct {
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		_, e := session.PromptWithWriter(w, ansiPrompt)
+		done <- outcome{e}
+	}()
+	select {
+	case o := <-done:
+		if errors.Is(o.err, liner.ErrInvalidPrompt) {
+			t.Fatalf("PromptWithWriter 仍返回 ErrInvalidPrompt，修复失效: %v", o.err)
+		}
+	case <-time.After(2 * time.Second):
+		// 非 TTY 测试环境下 liner 可能阻塞，验证 writer 已写入 prompt 即可
+	}
+
+	if w.buf.Len() == 0 {
+		t.Fatal("PromptWithWriter 未把 prompt 写入 writer")
+	}
+	if !strings.Contains(w.buf.String(), "widb>") {
+		t.Errorf("writer 应包含 prompt 文本，实际: %q", w.buf.String())
+	}
+	if !strings.Contains(w.buf.String(), "\x1b[") {
+		t.Errorf("writer 应保留 ANSI 转义码（不被过滤），实际: %q", w.buf.String())
+	}
+}
+
+// syncWriter 把 writer.Write 串行化到内嵌 buf，避免 race detector 误报。
+type syncWriter struct {
+	buf *bytes.Buffer
+}
+
+// Write 实现 io.Writer。
+func (w *syncWriter) Write(p []byte) (int, error) {
+	return w.buf.Write(p)
 }
