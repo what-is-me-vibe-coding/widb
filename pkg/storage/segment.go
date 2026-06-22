@@ -430,3 +430,66 @@ func (s *Segment) FindRowByKey(key string) (uint32, bool) {
 	}
 	return 0, false
 }
+
+// FindRowByKeyGE 使用二分查找返回第一个 keys[i] >= key 的行索引。
+// 当所有 keys 都小于 key 时返回 (0, false)。
+func (s *Segment) FindRowByKeyGE(key string) (uint32, bool) {
+	n := len(s.Keys)
+	if n == 0 {
+		return 0, false
+	}
+	lo, hi := 0, n
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1) // 防止 lo+hi 溢出
+		if s.Keys[mid] < key {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo >= n {
+		return 0, false
+	}
+	return uint32(lo), true
+}
+
+// FindRowByKeyLE 使用二分查找返回最后一个 keys[i] <= key 的行索引。
+// 当所有 keys 都大于 key 时返回 (0, false)。
+func (s *Segment) FindRowByKeyLE(key string) (uint32, bool) {
+	n := len(s.Keys)
+	if n == 0 {
+		return 0, false
+	}
+	lo, hi := 0, n
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if s.Keys[mid] <= key {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == 0 {
+		return 0, false
+	}
+	return uint32(lo - 1), true
+}
+
+// ComputeRange 通过二分查找计算 [start, end] 在 Keys 数组中的下标范围。
+// 不相交（含空段、start>max、end<min）时返回 (0, 0, false)。
+// 用于 segmentIterator 构造时一次性确定有效行范围。
+func (s *Segment) ComputeRange(start, end string) (uint32, uint32, bool) {
+	n := len(s.Keys)
+	if n == 0 {
+		return 0, 0, false
+	}
+	startIdx, startOK := s.FindRowByKeyGE(start)
+	if !startOK {
+		return 0, 0, false
+	}
+	endIdx, endOK := s.FindRowByKeyLE(end)
+	if !endOK || startIdx > endIdx {
+		return 0, 0, false
+	}
+	return startIdx, endIdx, true
+}

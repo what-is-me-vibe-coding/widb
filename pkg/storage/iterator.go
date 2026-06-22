@@ -94,6 +94,8 @@ func (it *memTableIterator) Count() int { return len(it.pairs) }
 // 延迟物化优化：Next() 仅记录行索引和 key，不构建 map[string]Value，
 // Entry() 时按需构建行数据。每次 Entry() 分配新 map，确保返回值可安全
 // 持有跨行引用——这是 ScanEntry 在结果切片中存储的契约基础。
+// 范围定位优化：构造时通过 Segment.ComputeRange 二分查找预计算 [startIdx, endIdx]，
+// Next() 仅在小区间内推进，避免宽范围/大段场景下从 0 线性扫描造成的 O(n) 浪费。
 // Column decoding is deferred until the first row is accessed, avoiding
 // unnecessary work for segments that are skipped by index pruning.
 // Thread safety: ensureDecoded uses sync.Once for idempotent lazy init;
@@ -105,6 +107,7 @@ type segmentIterator struct {
 	start       string
 	end         string
 	rowIdx      int
+	endIdx      int // 有效行上界（inclusive），由 ComputeRange 在构造时计算
 	currentKey  string
 	err         error
 	started     bool
@@ -117,8 +120,10 @@ type segmentIterator struct {
 // newSegmentIterator creates an iterator over a Segment for the given range.
 // Column decoding is deferred until the first row is accessed, avoiding
 // unnecessary work for segments that are skipped by index pruning.
+// 通过 Segment.ComputeRange 二分查找预计算有效行范围 [startIdx, endIdx]，
+// Next() 只需在小区间内推进，将定位成本从 O(n) 降低到 O(log n) + O(命中数)。
 func newSegmentIterator(seg *Segment, colMeta []ColumnMeta, start, end string, blockCache *BlockCache) *segmentIterator {
-	return &segmentIterator{
+	it := &segmentIterator{
 		seg:        seg,
 		colMeta:    colMeta,
 		start:      start,
@@ -126,6 +131,16 @@ func newSegmentIterator(seg *Segment, colMeta []ColumnMeta, start, end string, b
 		rowIdx:     -1,
 		blockCache: blockCache,
 	}
+	if startIdx, endIdx, ok := seg.ComputeRange(start, end); ok {
+		// startIdx - 1 使首次 Next() 递增后正好落在 startIdx 上
+		it.rowIdx = int(startIdx) - 1
+		it.endIdx = int(endIdx)
+	} else {
+		// 范围与 Segment 不相交（空段 / start > max / end < min）
+		it.finished = true
+		it.endIdx = -1
+	}
+	return it
 }
 
 // ensureDecoded lazily decodes all columns on first access.
@@ -179,27 +194,20 @@ func (it *segmentIterator) Next() bool {
 		return false
 	}
 
-	for {
-		it.rowIdx++
-		if it.rowIdx >= len(it.seg.Keys) {
-			it.finished = true
-			return false
-		}
-
-		key := it.seg.Keys[it.rowIdx]
-		if key < it.start {
-			continue
-		}
-		if key > it.end {
-			it.finished = true
-			return false
-		}
-
-		// 延迟物化：仅记录 key 和行索引，不构建 map
-		it.currentKey = key
-		it.started = true
-		return true
+	// 范围已在构造时由 ComputeRange 二分定位：
+	// - rowIdx 起始于 startIdx-1，使首次 Next() 落在 startIdx
+	// - endIdx 是有效行的 inclusive 上界
+	// 因此只需简单的索引边界检查，无需再做字符串比较
+	it.rowIdx++
+	if it.rowIdx > it.endIdx || it.rowIdx >= len(it.seg.Keys) {
+		it.finished = true
+		return false
 	}
+
+	// 延迟物化：仅记录 key 和行索引，不构建 map
+	it.currentKey = it.seg.Keys[it.rowIdx]
+	it.started = true
+	return true
 }
 
 // buildRowMap 从解码后的列数据构建当前行的列值映射。
