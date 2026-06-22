@@ -16,8 +16,7 @@
 //
 // 设计要点：
 //  1. 子进程复用 e2e_subproc_smoke_test.go 的 buildSubprocBinary /
-//     startSubprocessServer / stopSubprocessServer 等 helper，
-//     不重复实现端口分配、子进程地址解析、日志收集等基础设施。
+//     startSubprocessServer / stopSubprocessServer 等 helper。
 //  2. TCP 客户端复用同进程 e2e_server_sql_test.go 的 dialTCP / tcpClient
 //     协议（PacketQuery + JSON payload），HTTP 端点直连。
 //  3. 每个 worker 写"自己 ID 区间"的行，避免并发误判；总写入量 = 客户端数 ×
@@ -66,8 +65,8 @@ func subprocGenCreateSQL() string {
 
 // subprocGenInsertSQL 生成 (clientID, seq) 对应的 INSERT SQL。
 //
-// score 始终为正，active 为 INT64 0/1（避免负数 → UnaryExpr 与 BOOL true/false
-// → UnaryExpr 在当前 parser 下无法在 INSERT VALUES 列表中处理）。
+// score 始终为正，active 为 INT64 0/1（避免负号 UnaryExpr 与 BOOL true/false
+// UnaryExpr 在当前 parser 下无法在 INSERT VALUES 列表中处理）。
 func subprocGenInsertSQL(clientID, seq int) string {
 	id := subprocGenBaseID + clientID*subprocGenPerClient + seq
 	score := float64(id) * 0.1
@@ -83,8 +82,7 @@ func subprocGenInsertSQL(clientID, seq int) string {
 
 // subprocGenUpdateSQL 生成 (clientID, seq, round) 对应的 UPDATE SQL。
 //
-// 用 (round, score) 作为固定值，避免跨轮次累加影响最终 SUM 断言；
-// score 始终为正，避免负号被解析为 UnaryExpr。
+// 用 (round, score) 作为固定值，避免跨轮次累加影响最终 SUM 断言。
 func subprocGenUpdateSQL(clientID, seq, round int) string {
 	id := subprocGenBaseID + clientID*subprocGenPerClient + seq
 	score := float64(round+1) * float64(id) * 0.01
@@ -101,10 +99,21 @@ func subprocGenClientIDRange(clientID int) (lo, hi int64) {
 	return
 }
 
+// subprocGenRangeCountSQL 拼接 COUNT(*) 校验 SQL。
+func subprocGenRangeCountSQL(lo, hi int64) string {
+	return fmt.Sprintf("SELECT COUNT(*) AS c FROM %s WHERE id >= %d AND id < %d",
+		subprocGenTable, lo, hi)
+}
+
+// subprocGenRangeAvgSQL 拼接 AVG(score) 校验 SQL。
+func subprocGenRangeAvgSQL(lo, hi int64) string {
+	return fmt.Sprintf("SELECT AVG(score) AS a FROM %s WHERE id >= %d AND id < %d",
+		subprocGenTable, lo, hi)
+}
+
 // httpPostQueryNoT 通过 HTTP POST /query 执行单条 SQL，返回 (code, message, rows, data, err)。
 //
-// 不依赖 *testing.T，以便在 goroutine 内调用。所有错误通过返回值传递，
-// 由调用方汇总到 errCh 统一断言。
+// 不依赖 *testing.T，以便在 goroutine 内调用。所有错误通过返回值传递。
 func httpPostQueryNoT(ctx context.Context, addr, sql string) (int, string, int, json.RawMessage, error) {
 	body, _ := json.Marshal(map[string]string{"sql": sql})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -130,16 +139,170 @@ func httpPostQueryNoT(ctx context.Context, addr, sql string) (int, string, int, 
 	return out.Code, out.Message, out.Rows, out.Data, nil
 }
 
+// subprocGenHTTPInsertRange 通过 HTTP 短连接在自身 ID 区间内批量 INSERT。
+func subprocGenHTTPInsertRange(ctx context.Context, addr string, clientID int, errCh chan<- error) error {
+	for seq := 0; seq < subprocGenPerClient; seq++ {
+		sql := subprocGenInsertSQL(clientID, seq)
+		code, msg, _, _, err := httpPostQueryNoT(ctx, addr, sql)
+		if err != nil {
+			errCh <- fmt.Errorf("http 客户端 %d INSERT 失败: %w", clientID, err)
+			return err
+		}
+		if code != 0 {
+			errCh <- fmt.Errorf("http 客户端 %d INSERT 业务失败: %s", clientID, msg)
+			return fmt.Errorf("%s", msg)
+		}
+	}
+	return nil
+}
+
+// subprocGenHTTPCheckCount 通过 HTTP 校验 COUNT(*) 等于 subprocGenPerClient。
+func subprocGenHTTPCheckCount(ctx context.Context, addr string, clientID, round int, lo, hi int64, errCh chan<- error) error {
+	code, msg, _, countData, err := httpPostQueryNoT(ctx, addr, subprocGenRangeCountSQL(lo, hi))
+	if err != nil {
+		errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 COUNT 失败: %w", clientID, round, err)
+		return err
+	}
+	if code != 0 {
+		errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 COUNT 业务失败: %s", clientID, round, msg)
+		return fmt.Errorf("%s", msg)
+	}
+	if got := subprocGenExtractCountJSON(countData); got != subprocGenPerClient {
+		errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 COUNT = %d, 期望 %d", clientID, round, got, subprocGenPerClient)
+		return fmt.Errorf("count mismatch")
+	}
+	return nil
+}
+
+// subprocGenHTTPUpdateRange 通过 HTTP 短连接在自身 ID 区间内批量 UPDATE。
+func subprocGenHTTPUpdateRange(ctx context.Context, addr string, clientID, round int, errCh chan<- error) error {
+	for seq := 0; seq < subprocGenPerClient; seq++ {
+		sql := subprocGenUpdateSQL(clientID, seq, round)
+		code, msg, rows, _, err := httpPostQueryNoT(ctx, addr, sql)
+		if err != nil {
+			errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 UPDATE 失败: %w", clientID, round, err)
+			return err
+		}
+		if code != 0 {
+			errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 UPDATE 业务失败: %s", clientID, round, msg)
+			return fmt.Errorf("%s", msg)
+		}
+		if rows != 1 {
+			errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 UPDATE 影响行数 = %d, 期望 1", clientID, round, rows)
+			return fmt.Errorf("rows mismatch")
+		}
+	}
+	return nil
+}
+
+// subprocGenRunHTTPWorker 通过 HTTP 短连接完成本客户端的工作负载。
+//
+// 不复用 TCP 长连接是为了验证 HTTP 模式（无连接池）下的并发正确性。
+// INSERT 仅在第 0 轮做（同一主键多次 INSERT 会冲突），后续轮次只 UPDATE。
+func subprocGenRunHTTPWorker(
+	ctx context.Context, addr string, clientID, rounds int, errCh chan<- error,
+) {
+	lo, hi := subprocGenClientIDRange(clientID)
+	for round := 0; round < rounds; round++ {
+		if ctx.Err() != nil {
+			return
+		}
+		if round == 0 {
+			if e := subprocGenHTTPInsertRange(ctx, addr, clientID, errCh); e != nil {
+				return
+			}
+		}
+		if e := subprocGenHTTPCheckCount(ctx, addr, clientID, round, lo, hi, errCh); e != nil {
+			return
+		}
+		if e := subprocGenHTTPUpdateRange(ctx, addr, clientID, round, errCh); e != nil {
+			return
+		}
+	}
+}
+
+// subprocGenTCPInsertRange 通过 TCP 在自身 ID 区间内批量 INSERT。
+func subprocGenTCPInsertRange(t *testing.T, tc *tcpClient, clientID int, errCh chan<- error) error {
+	t.Helper()
+	for seq := 0; seq < subprocGenPerClient; seq++ {
+		sql := subprocGenInsertSQL(clientID, seq)
+		resp, err := tc.query(sql)
+		if err != nil {
+			errCh <- fmt.Errorf("tcp 客户端 %d INSERT 失败: %w", clientID, err)
+			return err
+		}
+		if resp.Code != 0 {
+			errCh <- fmt.Errorf("tcp 客户端 %d INSERT 业务失败: %s", clientID, resp.Message)
+			return fmt.Errorf("%s", resp.Message)
+		}
+	}
+	return nil
+}
+
+// subprocGenTCPCheckCount 通过 TCP 校验 COUNT(*) 等于 subprocGenPerClient。
+func subprocGenTCPCheckCount(t *testing.T, tc *tcpClient, clientID, round int, lo, hi int64, errCh chan<- error) error {
+	t.Helper()
+	resp, err := tc.query(subprocGenRangeCountSQL(lo, hi))
+	if err != nil {
+		errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 COUNT 查询失败: %w", clientID, round, err)
+		return err
+	}
+	if resp.Code != 0 {
+		errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 COUNT 业务失败: %s", clientID, round, resp.Message)
+		return fmt.Errorf("%s", resp.Message)
+	}
+	if got := subprocGenExtractCount(t, resp.Data); got != subprocGenPerClient {
+		errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 COUNT = %d, 期望 %d", clientID, round, got, subprocGenPerClient)
+		return fmt.Errorf("count mismatch")
+	}
+	return nil
+}
+
+// subprocGenTCPUpdateRange 通过 TCP 在自身 ID 区间内批量 UPDATE。
+func subprocGenTCPUpdateRange(t *testing.T, tc *tcpClient, clientID, round int, errCh chan<- error) error {
+	t.Helper()
+	for seq := 0; seq < subprocGenPerClient; seq++ {
+		sql := subprocGenUpdateSQL(clientID, seq, round)
+		resp, err := tc.query(sql)
+		if err != nil {
+			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 UPDATE 失败: %w", clientID, round, err)
+			return err
+		}
+		if resp.Code != 0 {
+			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 UPDATE 业务失败: %s", clientID, round, resp.Message)
+			return fmt.Errorf("%s", resp.Message)
+		}
+		if resp.Rows != 1 {
+			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 UPDATE 影响行数 = %d, 期望 1", clientID, round, resp.Rows)
+			return fmt.Errorf("rows mismatch")
+		}
+	}
+	return nil
+}
+
+// subprocGenTCPCheckAvg 通过 TCP 校验 AVG 查询返回 1 行。
+func subprocGenTCPCheckAvg(t *testing.T, tc *tcpClient, clientID, round int, lo, hi int64, errCh chan<- error) error {
+	t.Helper()
+	resp, err := tc.query(subprocGenRangeAvgSQL(lo, hi))
+	if err != nil {
+		errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 AVG 查询失败: %w", clientID, round, err)
+		return err
+	}
+	if resp.Code != 0 {
+		errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 AVG 业务失败: %s", clientID, round, resp.Message)
+		return fmt.Errorf("%s", resp.Message)
+	}
+	if resp.Rows != 1 {
+		errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 AVG 行数 = %d, 期望 1", clientID, round, resp.Rows)
+		return fmt.Errorf("rows mismatch")
+	}
+	return nil
+}
+
 // subprocGenRunTCPWorker 持长连接完成本客户端的工作负载。
 //
-// 工作流程：
-//   - 第 0 轮：INSERT 自身区间内 subprocGenPerClient 行
-//   - 每一轮：SELECT COUNT 校验 + UPDATE 自身区间内所有行 + SELECT AVG 校验
-//
-// INSERT 只在第 0 轮做（同一主键多次 INSERT 会冲突），UPDATE 每轮都做且
-// 写固定值，便于断言更新生效。
-//
-// 返回值：error（非 nil 表示本客户端失败，汇总到主 goroutine）。
+// 第 0 轮：INSERT；每轮：COUNT → UPDATE → AVG。INSERT/UPDATE/AVG 各自
+// 由 helper 函数实现，便于将单函数长度与圈复杂度都控制在 CI 阈值内。
 func subprocGenRunTCPWorker(
 	ctx context.Context, t *testing.T, addr string, clientID, rounds int, errCh chan<- error,
 ) {
@@ -152,221 +315,29 @@ func subprocGenRunTCPWorker(
 	lo, hi := subprocGenClientIDRange(clientID)
 
 	for round := 0; round < rounds; round++ {
-		// 0. 第 0 轮：INSERT 自身区间所有行
+		if ctx.Err() != nil {
+			return
+		}
 		if round == 0 {
-			for seq := 0; seq < subprocGenPerClient; seq++ {
-				sql := subprocGenInsertSQL(clientID, seq)
-				resp, err := tc.query(sql)
-				if err != nil {
-					errCh <- fmt.Errorf("tcp 客户端 %d INSERT 失败: %w", clientID, err)
-					return
-				}
-				if resp.Code != 0 {
-					errCh <- fmt.Errorf("tcp 客户端 %d INSERT 业务失败: %s", clientID, resp.Message)
-					return
-				}
-			}
-		}
-
-		// 1. SELECT COUNT 校验
-		countSQL := fmt.Sprintf("SELECT COUNT(*) AS c FROM %s WHERE id >= %d AND id < %d",
-			subprocGenTable, lo, hi)
-		resp, err := tc.query(countSQL)
-		if err != nil {
-			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 COUNT 查询失败: %w", clientID, round, err)
-			return
-		}
-		if resp.Code != 0 {
-			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 COUNT 业务失败: %s", clientID, round, resp.Message)
-			return
-		}
-		if got := subprocGenExtractCount(t, resp.Data); got != subprocGenPerClient {
-			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 COUNT = %d, 期望 %d", clientID, round, got, subprocGenPerClient)
-			return
-		}
-
-		// 2. UPDATE
-		for seq := 0; seq < subprocGenPerClient; seq++ {
-			sql := subprocGenUpdateSQL(clientID, seq, round)
-			resp, err := tc.query(sql)
-			if err != nil {
-				errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 UPDATE 失败: %w", clientID, round, err)
-				return
-			}
-			if resp.Code != 0 {
-				errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 UPDATE 业务失败: %s", clientID, round, resp.Message)
-				return
-			}
-			if resp.Rows != 1 {
-				errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 UPDATE 影响行数 = %d, 期望 1", clientID, round, resp.Rows)
+			if e := subprocGenTCPInsertRange(t, tc, clientID, errCh); e != nil {
 				return
 			}
 		}
-
-		// 3. SELECT AVG 校验
-		avgSQL := fmt.Sprintf("SELECT AVG(score) AS a FROM %s WHERE id >= %d AND id < %d",
-			subprocGenTable, lo, hi)
-		resp, err = tc.query(avgSQL)
-		if err != nil {
-			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 AVG 查询失败: %w", clientID, round, err)
+		if e := subprocGenTCPCheckCount(t, tc, clientID, round, lo, hi, errCh); e != nil {
 			return
 		}
-		if resp.Code != 0 {
-			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 AVG 业务失败: %s", clientID, round, resp.Message)
+		if e := subprocGenTCPUpdateRange(t, tc, clientID, round, errCh); e != nil {
 			return
 		}
-		if resp.Rows != 1 {
-			errCh <- fmt.Errorf("tcp 客户端 %d 第 %d 轮 AVG 行数 = %d, 期望 1", clientID, round, resp.Rows)
+		if e := subprocGenTCPCheckAvg(t, tc, clientID, round, lo, hi, errCh); e != nil {
 			return
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		default:
 		}
 	}
 }
 
-// subprocGenRunHTTPWorker 通过 HTTP 短连接完成本客户端的工作负载。
+// subprocGenExtractCount 从 SELECT COUNT(*) 响应中提取整数结果（TCP 路径）。
 //
-// 不复用 TCP 长连接是为了验证 HTTP 模式（无连接池）下的并发正确性。
-// INSERT 仅在第 0 轮做（同一主键多次 INSERT 会冲突），后续轮次只 UPDATE。
-func subprocGenRunHTTPWorker(
-	ctx context.Context, addr string, clientID, rounds int, errCh chan<- error,
-) {
-	lo, hi := subprocGenClientIDRange(clientID)
-	// HTTP 模式下响应 Data 走 json.RawMessage 路径，需要独立 helper 解析
-	extractCount := func(data json.RawMessage) int64 {
-		if len(data) == 0 || string(data) == "null" {
-			return -1
-		}
-		var rows []map[string]any
-		if err := json.Unmarshal(data, &rows); err != nil || len(rows) == 0 {
-			return -1
-		}
-		for _, v := range rows[0] {
-			if n, ok := toInt64(v); ok {
-				return n
-			}
-		}
-		return -1
-	}
-
-	for round := 0; round < rounds; round++ {
-		// 0. 第 0 轮：INSERT 自身区间所有行
-		if round == 0 {
-			for seq := 0; seq < subprocGenPerClient; seq++ {
-				sql := subprocGenInsertSQL(clientID, seq)
-				code, msg, _, _, err := httpPostQueryNoT(ctx, addr, sql)
-				if err != nil {
-					errCh <- fmt.Errorf("http 客户端 %d INSERT 失败: %w", clientID, err)
-					return
-				}
-				if code != 0 {
-					errCh <- fmt.Errorf("http 客户端 %d INSERT 业务失败: %s", clientID, msg)
-					return
-				}
-			}
-		}
-
-		// 1. SELECT COUNT
-		countSQL := fmt.Sprintf("SELECT COUNT(*) AS c FROM %s WHERE id >= %d AND id < %d",
-			subprocGenTable, lo, hi)
-		code, msg, _, countData, err := httpPostQueryNoT(ctx, addr, countSQL)
-		if err != nil {
-			errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 COUNT 失败: %w", clientID, round, err)
-			return
-		}
-		if code != 0 {
-			errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 COUNT 业务失败: %s", clientID, round, msg)
-			return
-		}
-		if got := extractCount(countData); got != subprocGenPerClient {
-			errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 COUNT = %d, 期望 %d", clientID, round, got, subprocGenPerClient)
-			return
-		}
-
-		// 2. UPDATE
-		for seq := 0; seq < subprocGenPerClient; seq++ {
-			sql := subprocGenUpdateSQL(clientID, seq, round)
-			code, msg, rows, _, err := httpPostQueryNoT(ctx, addr, sql)
-			if err != nil {
-				errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 UPDATE 失败: %w", clientID, round, err)
-				return
-			}
-			if code != 0 {
-				errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 UPDATE 业务失败: %s", clientID, round, msg)
-				return
-			}
-			if rows != 1 {
-				errCh <- fmt.Errorf("http 客户端 %d 第 %d 轮 UPDATE 影响行数 = %d, 期望 1", clientID, round, rows)
-				return
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-	}
-}
-
-// subprocGenCheckCrossProtocolConsistency 通过 TCP 与 HTTP 各读一次，验证结果一致。
-//
-// 比较的列：id 列全集。id 列经排序后应完全相同，否则视为协议间结果不一致。
-func subprocGenCheckCrossProtocolConsistency(
-	t *testing.T, s *subprocServer, expectedIDs []int64,
-) {
-	t.Helper()
-	expected := make([]int64, len(expectedIDs))
-	copy(expected, expectedIDs)
-	sort.Slice(expected, func(i, j int) bool { return expected[i] < expected[j] })
-
-	// 1. HTTP 读全集
-	httpCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_, _, _, httpData, err := httpPostQueryNoT(httpCtx, s.httpAddr,
-		fmt.Sprintf("SELECT id FROM %s ORDER BY id", subprocGenTable))
-	if err != nil {
-		t.Fatalf("HTTP SELECT id 失败: %v", err)
-	}
-	gotHTTP := subprocGenParseIDColumn(t, httpData)
-	if !int64SliceEqual(gotHTTP, expected) {
-		t.Errorf("HTTP 返回的 id 集合与期望不一致\n期望: %v\n实际: %v", expected, gotHTTP)
-	}
-
-	// 2. TCP 读全集
-	tc, err := dialTCP(s.tcpAddr)
-	if err != nil {
-		t.Fatalf("TCP 拨号失败: %v", err)
-	}
-	defer tc.close()
-	tcpResp, err := tc.query(
-		fmt.Sprintf("SELECT id FROM %s ORDER BY id", subprocGenTable))
-	if err != nil {
-		t.Fatalf("TCP SELECT id 失败: %v", err)
-	}
-	if tcpResp.Code != 0 {
-		t.Fatalf("TCP SELECT id 业务失败: %s", tcpResp.Message)
-	}
-	// server.Response.Data 是 any，需要 Marshal 后再 Unmarshal
-	tcpData, err := json.Marshal(tcpResp.Data)
-	if err != nil {
-		t.Fatalf("marshal TCP Data 失败: %v", err)
-	}
-	gotTCP := subprocGenParseIDColumn(t, json.RawMessage(tcpData))
-	if !int64SliceEqual(gotTCP, expected) {
-		t.Errorf("TCP 返回的 id 集合与期望不一致\n期望: %v\n实际: %v", expected, gotTCP)
-	}
-}
-
-// subprocGenExtractCount 从 SELECT COUNT(*) 响应中提取整数结果。
-//
-// 响应 Data 是 []map[string]any，仅 1 行（聚合值），取该行第一列转 int64。
-// 接收 *testing.T 用于 t.Helper 标记；worker goroutine 内部不调用 t.Fatal
-// （解析失败时返回 -1），由调用方在 errCh 内处理。
+// server.Response.Data 已经是 []any（解析后），取第一行第一列转 int64。
 func subprocGenExtractCount(t *testing.T, data any) int64 {
 	t.Helper()
 	if data == nil {
@@ -388,7 +359,70 @@ func subprocGenExtractCount(t *testing.T, data any) int64 {
 	return -1
 }
 
-// subprocGenParseIDColumn 从响应 Data（JSON 数组）解析 id 列。
+// subprocGenExtractCountJSON 从 json.RawMessage 提取 COUNT 值（HTTP 路径）。
+func subprocGenExtractCountJSON(data json.RawMessage) int64 {
+	if len(data) == 0 || string(data) == "null" {
+		return -1
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(data, &rows); err != nil || len(rows) == 0 {
+		return -1
+	}
+	for _, v := range rows[0] {
+		if n, ok := toInt64(v); ok {
+			return n
+		}
+	}
+	return -1
+}
+
+// subprocGenCheckCrossProtocolConsistency 通过 TCP 与 HTTP 各读一次，验证结果一致。
+//
+// id 列经排序后应完全相同，否则视为协议间结果不一致。
+func subprocGenCheckCrossProtocolConsistency(
+	t *testing.T, s *subprocServer, expectedIDs []int64,
+) {
+	t.Helper()
+	expected := make([]int64, len(expectedIDs))
+	copy(expected, expectedIDs)
+	sort.Slice(expected, func(i, j int) bool { return expected[i] < expected[j] })
+
+	httpCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, _, _, httpData, err := httpPostQueryNoT(httpCtx, s.httpAddr,
+		fmt.Sprintf("SELECT id FROM %s ORDER BY id", subprocGenTable))
+	if err != nil {
+		t.Fatalf("HTTP SELECT id 失败: %v", err)
+	}
+	gotHTTP := subprocGenParseIDColumn(t, httpData)
+	if !int64SliceEqual(gotHTTP, expected) {
+		t.Errorf("HTTP 返回的 id 集合与期望不一致\n期望: %v\n实际: %v", expected, gotHTTP)
+	}
+
+	tc, err := dialTCP(s.tcpAddr)
+	if err != nil {
+		t.Fatalf("TCP 拨号失败: %v", err)
+	}
+	defer tc.close()
+	tcpResp, err := tc.query(
+		fmt.Sprintf("SELECT id FROM %s ORDER BY id", subprocGenTable))
+	if err != nil {
+		t.Fatalf("TCP SELECT id 失败: %v", err)
+	}
+	if tcpResp.Code != 0 {
+		t.Fatalf("TCP SELECT id 业务失败: %s", tcpResp.Message)
+	}
+	tcpData, err := json.Marshal(tcpResp.Data)
+	if err != nil {
+		t.Fatalf("marshal TCP Data 失败: %v", err)
+	}
+	gotTCP := subprocGenParseIDColumn(t, json.RawMessage(tcpData))
+	if !int64SliceEqual(gotTCP, expected) {
+		t.Errorf("TCP 返回的 id 集合与期望不一致\n期望: %v\n实际: %v", expected, gotTCP)
+	}
+}
+
+// subprocGenParseIDColumn 从响应 Data 解析 id 列（支持 []any 与 []map[string]any）。
 func subprocGenParseIDColumn(t *testing.T, data json.RawMessage) []int64 {
 	t.Helper()
 	if len(data) == 0 || string(data) == "null" {
@@ -427,12 +461,6 @@ func int64SliceEqual(a, b []int64) bool {
 }
 
 // subprocGenCheckErrorPaths 验证子进程对错误 SQL 返回非零 code。
-//
-// 覆盖四类典型错误：
-//  1. 重复主键 INSERT
-//  2. 未知列 SELECT
-//  3. 错误 SQL 语法
-//  4. 正常 LIMIT 查询应仍可工作（错误路径不应污染正常查询）
 func subprocGenCheckErrorPaths(t *testing.T, s *subprocServer) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -442,46 +470,86 @@ func subprocGenCheckErrorPaths(t *testing.T, s *subprocServer) {
 	dupID := int64(subprocGenBaseID)
 	dupSQL := fmt.Sprintf("INSERT INTO %s (id, name, score, active) VALUES (%d, 'dup', 0.0, 1)",
 		subprocGenTable, dupID)
-	code, msg, _, _, err := httpPostQueryNoT(ctx, s.httpAddr, dupSQL)
+	code, _, _, _, err := httpPostQueryNoT(ctx, s.httpAddr, dupSQL)
 	if err != nil {
 		t.Fatalf("重复主键 INSERT 请求失败: %v", err)
 	}
 	if code == 0 {
 		t.Errorf("重复主键 INSERT 应返回非零 code, 实际为 0")
 	}
-	_ = msg
 
 	// 2. 未知列 SELECT
 	badColSQL := fmt.Sprintf("SELECT non_existing_col FROM %s LIMIT 1", subprocGenTable)
-	code, msg, _, _, err = httpPostQueryNoT(ctx, s.httpAddr, badColSQL)
+	code, _, _, _, err = httpPostQueryNoT(ctx, s.httpAddr, badColSQL)
 	if err != nil {
 		t.Fatalf("未知列 SELECT 请求失败: %v", err)
 	}
 	if code == 0 {
 		t.Errorf("未知列 SELECT 应返回非零 code, 实际为 0")
 	}
-	_ = msg
 
 	// 3. 错误 SQL 语法
 	bareSQL := "THIS IS NOT SQL"
-	code, msg, _, _, err = httpPostQueryNoT(ctx, s.httpAddr, bareSQL)
+	code, _, _, _, err = httpPostQueryNoT(ctx, s.httpAddr, bareSQL)
 	if err != nil {
 		t.Fatalf("错误语法请求失败: %v", err)
 	}
 	if code == 0 {
 		t.Errorf("错误语法应返回非零 code, 实际为 0")
 	}
-	_ = msg
 
 	// 4. 正常 LIMIT 工作
 	goodLimitSQL := fmt.Sprintf("SELECT id FROM %s ORDER BY id LIMIT %d", subprocGenTable, subprocGenPerClient)
-	code, msg, _, _, err = httpPostQueryNoT(ctx, s.httpAddr, goodLimitSQL)
+	code, msg, _, _, err := httpPostQueryNoT(ctx, s.httpAddr, goodLimitSQL)
 	if err != nil {
 		t.Fatalf("正常 LIMIT 查询请求失败: %v", err)
 	}
 	if code != 0 {
 		t.Errorf("正常 LIMIT 查询被错误路径影响: %s", msg)
 	}
+}
+
+// subprocGenExpectedIDs 拼接全部 worker ID 区间的全集（按升序）。
+func subprocGenExpectedIDs() []int64 {
+	out := make([]int64, 0, subprocGenClients*subprocGenPerClient)
+	for c := 0; c < subprocGenClients; c++ {
+		lo, hi := subprocGenClientIDRange(c)
+		for id := lo; id < hi; id++ {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// subprocGenRunWorkers 启动 2 TCP + 2 HTTP worker 并等待完成。
+//
+// 返回值：errs 切片（空表示全部成功）、TCP/HTTP 各自完成数。
+func subprocGenRunWorkers(t *testing.T, s *subprocServer) (errs []error, tcpOK, httpOK int64) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+	errCh := make(chan error, subprocGenClients*subprocGenRounds*subprocGenPerClient*2)
+	for i := 0; i < subprocGenClients; i++ {
+		i := i
+		isTCP := i%2 == 0
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if isTCP {
+				subprocGenRunTCPWorker(ctx, t, s.tcpAddr, i, subprocGenRounds, errCh)
+				atomic.AddInt64(&tcpOK, 1)
+			} else {
+				subprocGenRunHTTPWorker(ctx, s.httpAddr, i, subprocGenRounds, errCh)
+				atomic.AddInt64(&httpOK, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for e := range errCh {
+		errs = append(errs, e)
+	}
+	return
 }
 
 // TestSubprocGeneralSQLMultiClient 主测试：子进程 + 多客户端一般 SQL 端到端。
@@ -506,59 +574,24 @@ func TestSubprocGeneralSQLMultiClient(t *testing.T) {
 		}
 	})
 
-	// /health 探活
 	hp := httpHealthHit(t, s.httpAddr)
 	_ = hp.Body.Close()
 	if hp.StatusCode != 200 {
 		t.Fatalf("/health 状态码 = %d, want 200", hp.StatusCode)
 	}
 
-	// 建表
 	createResp := httpPostQuery(t, s.httpAddr, subprocGenCreateSQL())
 	if createResp.Code != 0 {
 		t.Fatalf("建表失败: %s", createResp.Message)
 	}
 
-	// 启动 worker：2 TCP + 2 HTTP
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var wg sync.WaitGroup
-	errCh := make(chan error, subprocGenClients*subprocGenRounds*subprocGenPerClient*2)
-	var tcpOK, httpOK int64
-
-	for i := 0; i < subprocGenClients; i++ {
-		i := i
-		isTCP := i%2 == 0
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if isTCP {
-				subprocGenRunTCPWorker(ctx, t, s.tcpAddr, i, subprocGenRounds, errCh)
-				atomic.AddInt64(&tcpOK, 1)
-			} else {
-				subprocGenRunHTTPWorker(ctx, s.httpAddr, i, subprocGenRounds, errCh)
-				atomic.AddInt64(&httpOK, 1)
-			}
-		}()
-	}
-
-	wg.Wait()
-	close(errCh)
-
-	// 收集并断言错误
-	var errs []error
-	for e := range errCh {
-		errs = append(errs, e)
-	}
+	errs, tcpOK, httpOK := subprocGenRunWorkers(t, s)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			t.Errorf("worker 错误: %v", e)
 		}
 		t.FailNow()
 	}
-
-	// 验证 TCP / HTTP 各有 subprocGenClients/2 个 worker 成功跑完
 	if got := atomic.LoadInt64(&tcpOK); got != int64(subprocGenClients/2) {
 		t.Errorf("TCP worker 完成数 = %d, 期望 %d", got, subprocGenClients/2)
 	}
@@ -566,21 +599,9 @@ func TestSubprocGeneralSQLMultiClient(t *testing.T) {
 		t.Errorf("HTTP worker 完成数 = %d, 期望 %d", got, subprocGenClients/2)
 	}
 
-	// 计算预期 id 全集
-	expectedIDs := make([]int64, 0, subprocGenClients*subprocGenPerClient)
-	for c := 0; c < subprocGenClients; c++ {
-		lo, hi := subprocGenClientIDRange(c)
-		for id := lo; id < hi; id++ {
-			expectedIDs = append(expectedIDs, id)
-		}
-	}
-	// 跨协议一致性
-	subprocGenCheckCrossProtocolConsistency(t, s, expectedIDs)
-
-	// 错误路径
+	subprocGenCheckCrossProtocolConsistency(t, s, subprocGenExpectedIDs())
 	subprocGenCheckErrorPaths(t, s)
 
-	// 子进程优雅关闭
 	sendSignalToSubprocess(t, s, syscall.SIGTERM)
 	code, err := waitForSubprocessExit(t, s, subprocStopTimeout)
 	if err != nil && code != 0 {
@@ -589,9 +610,6 @@ func TestSubprocGeneralSQLMultiClient(t *testing.T) {
 }
 
 // TestSubprocGeneralSQLHealthMetricsOnly 最小子进程烟测：/health + /metrics + 1 条 SELECT。
-//
-// 与 TestSubprocServerSmoke 互补：后者验证"建表→写入→查询→SIGTERM"完整链路；
-// 本测试专注"子进程 listen + 暴露端点 + 退出"最薄路径，避免与现有烟测重复。
 func TestSubprocGeneralSQLHealthMetricsOnly(t *testing.T) {
 	dir := t.TempDir()
 	s, log := startSubprocessServer(t,
@@ -605,7 +623,6 @@ func TestSubprocGeneralSQLHealthMetricsOnly(t *testing.T) {
 		}
 	})
 
-	// /health + /metrics
 	hp := httpHealthHit(t, s.httpAddr)
 	_ = hp.Body.Close()
 	if hp.StatusCode != 200 {
@@ -616,7 +633,6 @@ func TestSubprocGeneralSQLHealthMetricsOnly(t *testing.T) {
 		t.Fatal("/metrics 返回空")
 	}
 
-	// 建表（用真实表名做一次 COUNT(*)，验证空表场景下也能工作）
 	createResp := httpPostQuery(t, s.httpAddr, subprocGenCreateSQL())
 	if createResp.Code != 0 {
 		t.Fatalf("建表失败: %s", createResp.Message)
@@ -629,7 +645,6 @@ func TestSubprocGeneralSQLHealthMetricsOnly(t *testing.T) {
 		t.Errorf("COUNT 空表返回 %d 行, 期望 1", resp.Rows)
 	}
 
-	// 优雅关闭
 	sendSignalToSubprocess(t, s, syscall.SIGTERM)
 	code, err := waitForSubprocessExit(t, s, subprocStopTimeout)
 	if err != nil && code != 0 {
