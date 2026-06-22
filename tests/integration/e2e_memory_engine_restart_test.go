@@ -21,8 +21,6 @@
 package integration
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -59,11 +57,11 @@ func restartMemoryRows() []map[string]any {
 
 // startSQLServerWithDir 在指定的 dataDir 上启动一个 server 实例，便于「重启」场景复用同一目录。
 // 返回的 *sqlServer 持有 server 句柄与监听地址；调用方负责在测试结束时调用 srv.Stop()。
+//
+// dataDir 应由调用方持有（推荐 t.TempDir()，在整测试结束后自动清理），本函数不再单独
+// 做 RemoveAll，避免与调用方 Cleanup 顺序耦合。
 func startSQLServerWithDir(t *testing.T, dataDir string) *sqlServer {
 	t.Helper()
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		t.Fatalf("创建数据目录失败: %v", err)
-	}
 	cfg := server.Config{
 		TCPAddr:  "127.0.0.1:0",
 		HTTPAddr: "127.0.0.1:0",
@@ -74,6 +72,8 @@ func startSQLServerWithDir(t *testing.T, dataDir string) *sqlServer {
 		t.Fatalf("NewServer 失败: %v", err)
 	}
 	if err := srv.Start(); err != nil {
+		// Start 失败时 Best-effort 释放已分配资源；t.Fatalf 会终止测试，
+		// 此处 Stop 的错误即便发生也无法继续上报，忽略是合理的。
 		_ = srv.Stop()
 		t.Fatalf("Start 失败: %v", err)
 	}
@@ -153,10 +153,9 @@ func restartAssertCount(t *testing.T, s *sqlServer, table string, want float64) 
 //  3. 在同一 DataDir 启动 server #2，复用 catalog.json 与 LSM Segment/WAL；
 //  4. 通过 SQL 校验：内存表 COUNT=0、LSM 表 COUNT>0、SHOW TABLES 包含两张表。
 func TestMemoryEngineRestartDropsData(t *testing.T) {
-	// 使用固定子目录而非 t.TempDir，确保 Stop 后目录仍可被第二个 server 复用。
-	dataDir := filepath.Join(os.TempDir(), "widb-it-mem-restart")
-	_ = os.RemoveAll(dataDir)
-	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	// 使用 t.TempDir()：在整测试（含 Cleanup）结束前一直存在，可被两个 server 阶段复用，
+	// 测试结束后由 testing 框架自动清理；同时避免并发 CI job 或重复运行时的目录污染。
+	dataDir := t.TempDir()
 
 	// ---------- 阶段 1：写入阶段 ----------
 	s1 := startSQLServerWithDir(t, dataDir)
@@ -229,9 +228,8 @@ func TestMemoryEngineRestartDropsData(t *testing.T) {
 //  2. Stop 后重启；
 //  3. SHOW TABLES 不应列出已 DROP 的内存表，且同名 CREATE 应当成功。
 func TestMemoryEngineRestartAfterDropIsClean(t *testing.T) {
-	dataDir := filepath.Join(os.TempDir(), "widb-it-mem-restart-drop")
-	_ = os.RemoveAll(dataDir)
-	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	// 同 TestMemoryEngineRestartDropsData，使用 t.TempDir() 即可。
+	dataDir := t.TempDir()
 
 	// 阶段 1：建表 → DROP。
 	s1 := startSQLServerWithDir(t, dataDir)
