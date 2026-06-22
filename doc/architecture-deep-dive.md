@@ -4,7 +4,7 @@
 
 ## 1. 阅读指引
 
-- 第 2-4 节覆盖三条核心数据流（写入 / 点查 / 范围扫描），含端到端函数调用链
+- 第 2-4 节覆盖三条核心数据流（写入 / SELECT 范围扫描 / DML 主键等值快路径），含端到端函数调用链
 - 第 5-6 节覆盖后台任务（Flush / Compaction）与崩溃恢复
 - 第 7-8 节覆盖内存模型与磁盘格式（直接读源码时用于核对 magic number / 字段偏移）
 - 第 9-10 节覆盖常见故障与性能调优切入点
@@ -50,11 +50,11 @@ Client                 Server                 Engine              MemTable      
 ### 2.2 函数调用链（关键路径）
 
 ```
-server/handlers_dml.go#handleWrite
-  └─ server/converter.go#convertWriteRow            (JSON → common.Value)
+server/server_handlers.go#handleWrite
+  └─ server/server_handlers.go#convertWriteRow     (JSON → common.Value)
       └─ storage.Engine.WriteBatch
           ├─ e.nextVersion.Add(N)                   (atomic, 无锁)
-          ├─ storage/wal_record.go#serializeBatchWriteRecord   (二进制序列化)
+          ├─ storage/wal_codec.go#serializeBatchWriteRecord   (二进制序列化)
           ├─ e.wal.AppendBatch                      (WAL 内部 mu 串行化)
           ├─ e.submitWALSync
           │   ├─ (GroupCommit) gc.Submit → 返回 syncCh
@@ -87,9 +87,9 @@ server/handlers_dml.go#handleWrite
 | `gc.Submit` 成功但 sync 失败 | `<-syncCh` 阻塞直至重试成功 | 默认 GroupCommitter 会持续重试，最多丢弃最旧的 4096 个请求 |
 | `activeMem.Put` 失败 | `e.mu.Unlock` + 立即返回 | 客户端收到 500；WAL 已写入但 MemTable 缺记录（异常路径，由上层保证） |
 
-## 3. 端到端点查路径
+## 3. 端到端查询执行路径
 
-### 3.1 时序概览
+### 3.1 时序概览（SELECT 默认路径）
 
 ```
 Client            Server                Engine             MemTable           PrimaryIndex       BloomIndex         Segment
@@ -98,65 +98,49 @@ Client            Server                Engine             MemTable           Pr
   │                 │ handleQuery          │                    │                    │                   │                │
   │                 │  └─ parser+analyzer  │                    │                    │                   │                │
   │                 │  └─ executor         │                    │                    │                   │                │
-  │                 │      └─ Engine.Get   │                    │                    │                   │                │
-  │                 │          ├─ e.mu.RLock                    │                    │                   │                │
-  │                 │          ├─ activeMem.Get (skiplist)      │                    │                   │                │
-  │                 │          │  hit? → return (skip 3-5)      │                    │                   │                │
-  │                 │          ├─ immutable[i].Get (新→旧)       │                    │                   │                │
-  │                 │          ├─ getFromSegments               │                    │                   │                │
-  │                 │          │  └─ primaryIndex.Lookup ───────▶│                   │                │
-  │                 │          │  └─ (sort segIDs if > 1)        │                   │                │
-  │                 │          │  └─ for each segID (新→旧):    │                   │                │
-  │                 │          │     ├─ bloomIndex.MayContain ────────────────────▶│                │
-  │                 │          │     │  miss → continue         │                   │                │
-  │                 │          │     ├─ seg.FindRowByKey (二分)  │                   │                │
-  │                 │          │     └─ fetchColumnsFromSegment │                   │                │
-  │                 │          │        └─ blockCache.get        │                   │                │
-  │                 │          │           miss → seg.GetColumnValue (decode+cache)
-  │                 │          └─ e.mu.RUnlock                   │                   │                │
+  │                 │      └─ Engine.ScanRange / ScanRangeWithPruning
+  │                 │          ├─ 范围匹配每个 Segment（key range 裁剪）
+  │                 │          ├─ 可选谓词下推：sparseIndex.CanSkip
+  │                 │          ├─ bloomIndex.MayContain（O(K) 哈希检查）
+  │                 │          ├─ 段内二分定位 + 合并迭代器
+  │                 │          └─ 返回 []ScanEntry，行级求值 WHERE/聚合
   │  200 OK         │                      │                    │                    │                   │                │
   │◀────────────────│                      │                    │                    │                   │                │
 ```
 
-### 3.2 函数调用链
+> **注**：SELECT 路径**不**调用 `Engine.Get`。点查（`SELECT ... WHERE id = ?`）与范围查走同一条 `ScanRange` 路径，差异在段裁剪与下推谓词的命中率。DML（DELETE/UPDATE）主键等值快路径单独使用 `Engine.Get`（`pkg/storage/engine_ops.go#Engine.Get`），见 `pkg/server/handlers_dml.go#deleteByPK` / `updateByPK`。
+
+### 3.2 函数调用链（SELECT）
 
 ```
-pkg/server/handlers_dml.go#handleQuery
-  └─ pkg/query/executor.go#execute
-      └─ pkg/storage/engine.go#Engine.Get
-          ├─ e.mu.RLock
-          ├─ e.activeMem.Get                          (skiplist O(log N))
-          ├─ for i := len(immutable)-1; i >= 0; i--  (新→旧)
-          │   └─ e.immutable[i].Get
-          └─ e.getFromSegments
-              ├─ e.primaryIndex.Lookup                (返回 segID 列表)
-              ├─ if len > 1: sort.Slice
-              └─ for i := len-1; i >= 0; i--
-                  ├─ e.bloomIndex.MayContainString    (O(K) 哈希检查)
-                  ├─ e.findSegmentByID                (map O(1))
-                  ├─ seg.FindRowByKey                 (binary search O(log N))
-                  └─ e.fetchColumnsFromSegment
-                      └─ for col in columns
-                          ├─ blockCache.get           (LRU O(1))
-                          └─ seg.GetColumnValue        (decode + blockCache.put)
+pkg/server/server_handlers.go#handleQuery
+  └─ pkg/query/executor.go#Execute
+      └─ pkg/storage/engine.go#Engine.ScanRangeWithPruning (有谓词)
+      │   或 Engine.ScanRange (无谓词)
+      ├─ 对每个 Segment：key range 裁剪
+      ├─ sparseIndex.CanSkip (per-column min/max)
+      ├─ 构造 ScanIterator 并 NewMergeIterator
+      ├─ 逐条 mi.Entry() → 跳过墓碑 → 物化 ScanEntry
+      └─ pkg/server/handlers_dml.go#convertWriteRow / convertScanEntry
+          （行级 `WHERE` 求值、投影、`ORDER BY`、`LIMIT` 等）
 ```
 
 ### 3.3 关键设计点
 
-- **多级索引剪枝**：PrimaryIndex（主键 → segID 列表）→ BloomFilter（segID + key → bool）→ Segment 二分（segID + key → rowIdx）→ BlockCache（segID + colIdx → decodedColumn）
-- **优先级排序**：`getFromSegments` 从最新 segment 开始读，与 MergeIterator 的「高 index = 高优先级」一致
-- **缓存分层**：BlockCache 缓存解压后的列数据（避免重复解码），IndexCache 缓存列统计（避免重复计算 Min/Max）
-- **延迟物化**：`iterator.go#segmentIterator.buildRowMap` 在 `Entry()` 被调用时才构造 `map[string]Value`，扫描时可先比 Key 再物化
+- **段裁剪先于迭代器构造**：`buildScanIteratorsWithPruning` 在 `NewMergeIterator` 之前先按 `seg.MinKey/MaxKey` 与 `sparseIndex.CanSkip` 过滤
+- **MergeIterator 优先级**：seg index 越大越新，高 index = 高优先级；墓碑（Delete 记录）会被迭代器跳过（`tombstoneFilter`）
+- **延迟物化**：`iterator.go#segmentIterator.buildRowMap` 在 `Entry()` 被调用时才构造 `map[string]Value`，扫描时先比 Key 再物化
+- **谓词下推边界**：仅等值/范围列谓词会被下推；`OR` / `LIKE` / `IS NULL` 仍走行级 `EvalRowPredicate` 二次过滤
 
 ### 3.4 性能特征
 
 | 场景 | 关键路径 | 典型延迟 | 瓶颈 |
 |------|----------|----------|------|
-| 命中 MemTable | `activeMem.Get` (skiplist) | < 10µs | 跳表节点分配（GC） |
-| 命中 BlockCache | `blockCache.get` + `extractValue` | < 100µs | map 分配（columns map） |
-| 命中 Segment（未缓存） | `bloomIndex` + `seg.FindRowByKey` + 列解码 | < 1ms | ZSTD 解压 + Row 物化 |
+| 点查（PK 命中） | `ScanRange` + 段二分 + 列解码 | < 1ms | ZSTD 解压 + Row 物化 |
+| 点查（PK 未命中，命中 Bloom） | `bloomIndex` 过滤后二分 | < 500µs | Bloom 哈希 + 二分 |
 | 范围扫描（选择性高） | `ScanRangeWithPruning` + 列裁剪 | 取决于命中行 | 多段 MergeIterator + 列解码 |
 | 范围扫描（全表） | `ScanRange` + 多段全量读取 | 取决于总行数 | 列解码 + Row 物化 |
+| 主键等值 DML 快路径 | `Engine.Get` + 写入 | O(log n) | 跳表节点分配（GC） |
 
 ## 4. 端到端范围扫描路径
 
@@ -223,8 +207,12 @@ Chunk → formatter → response
 | 任务 | 默认间隔 | 触发条件 | 关键函数 |
 |------|----------|----------|----------|
 | Flush | 5s | `len(immutable) > 0` | `Engine.tryFlush` → `Flusher.Flush` |
-| Compact | 10s | `l0SegmentCount >= defaultL0CompactionThreshold (4)` | `Engine.tryCompact` → `Compactor.Compact` |
-| WAL Clean | 30s | `wal.size() >= walCleanThreshold` | `Engine.cleanWAL` → `wal.Rotate` |
+| Compact | 10s | `l0SegmentCount > 0`（任意 L0 段数 > 0） | `Engine.tryCompact` → `Compactor.Compact` |
+| WAL Clean | 30s | 上一份 WAL 文件大小 < `WALCleanThreshold`（可安全删除） | `Engine.tryCleanWAL` → `os.Remove(prevPath)` |
+
+> **注**：`Engine.Compact` 一次性合并**所有** L0 + L1 segments（无「默认 4 段」阈值）。
+> WAL 清理并非通过 `wal.Rotate` 触发，而是判定「上一份 WAL 已落入 Segment，可删除」
+> 后直接 `os.Remove`；没有显式的 `Rotate` 调用。
 
 ### 5.2 Flush 流程
 
@@ -237,7 +225,7 @@ tryFlush (engine.go)
   │   ├─ mem.All()                            (O(N) 收集所有行)
   │   ├─ buildSegment
   │   │   ├─ keys 数组构造
-  │   │   ├─ 对每列: 选择编码 (Plain / Dict / RLE / Bitmap)
+  │   │   ├─ 对每列: 按类型启发式选择编码 (Plain / Dict / RLE / Bitmap)
   │   │   ├─ 对每列: ZSTD 压缩
   │   │   ├─ Footer: ColumnMeta + Min/Max + NullCount + BloomFilter
   │   │   └─ 构造 Segment 对象
@@ -246,14 +234,14 @@ tryFlush (engine.go)
   ├─ addSegment(seg, level=0)                 (注册到索引)
   ├─ e.immutable = e.immutable[1:]            (移除已刷盘的 memtable)
   ├─ e.mu.Unlock
-  └─ wal.AppendCommit + wal.AppendCheckpoint  (标记 Checkpoint)
+  └─ wal.AppendCheckpoint                     (标记 Checkpoint；不调 AppendCommit)
 ```
 
 ### 5.3 Compaction 流程
 
 ```
 tryCompact
-  ├─ 选择 L0 中待合并的 segments（默认 4 个）
+  ├─ 选择所有 L0 + L1 segments 作为合并输入
   ├─ compactor.Compact(segs, cols)
   │   ├─ mergeSegments (K-way merge via heap)
   │   │   ├─ 为每个 seg: decode 所有列 → segReader
@@ -275,7 +263,7 @@ tryCompact
 
 - Flush 失败：保留 immutable，下次重试；不更新 lastFlushedVersion
 - Compact 失败：保留旧 segments，不删除；下次重试
-- WAL Clean 失败：保留旧 WAL，不旋转；下次重试
+- WAL Clean 失败：保留旧 WAL，不删除；下次重试
 
 后台任务失败不影响前台写入路径（独立 goroutine + 各自 mu）。
 
@@ -286,7 +274,7 @@ tryCompact
 ```
 NewEngine (engine.go)
   ├─ loadSegments (engine.go)
-  │   ├─ glob "{dataDir}/*.seg"
+  │   ├─ glob "{dataDir}/segment_*.widb"
   │   └─ for each file: deserialize → addSegment(level=0)
   │       （启动时假设所有 segment 都在 L0，第一次 Compaction 后重分布）
   ├─ initWAL
@@ -438,10 +426,11 @@ NewEngine (engine.go)
 | RLE | 连续重复 | (值, 重复次数) 对 | 10-1000× |
 | Bitmap | BOOL / 二值 | 位数组 | 8×（vs 单字节存储） |
 
-选择策略（`flusher.go#buildEncodedColumn`）：
-1. 计算每个编码的估算大小
-2. 选择最小者
-3. 若 Plain 最优，强制使用 Plain（避免小数据集字典开销）
+选择策略（`flusher.go#encodeColumnVector`，类型启发式）：
+1. 按 `ColumnVector.Typ` 分支：整数类用 Plain/Int64 路径，浮点用 Float64，
+   字符串用 String，BOOL 用 Bool，时间戳转 int64（UnixNano）后用 Int64 路径
+2. RLE/Dict 等列存编码由具体列的 `Encode` 方法在内部决定；
+   `encodeColumnVector` 不做"估算大小后选最小"的全局挑选
 
 所有编码后数据再经过 ZSTD 压缩（Block 级别），进一步减小体积 2-5×。
 
@@ -466,8 +455,9 @@ NewEngine (engine.go)
 
 ### 10.2 读取优化
 
-- **BlockCache 大小** (`-block-cache-size`)：256MB 是经验值，热数据集可增大到 1-2GB
-- **IndexCache 大小** (`-index-cache-size`)：1000 条目，列多时可增大
+- **BlockCache / IndexCache**：当前无命令行 flag 直接控制（YAML 暂未暴露）。
+  调优需修改 `pkg/config` + `pkg/server.Config` 字段并经 `cmdutil` 串通；
+  实际生产可通过热数据集压测后改默认常量（`pkg/storage/segment_cache.go`）
 - **列裁剪 / 谓词下推**：在 SQL 中只 SELECT 必要列，WHERE 条件尽量用主键或索引列
 
 ### 10.3 诊断工具
@@ -477,7 +467,8 @@ NewEngine (engine.go)
   - `widb_write_duration_seconds` 分位数：识别慢写入
   - `widb_memtable_size_bytes`：监控 MemTable 占用
   - `widb_segment_count` / `widb_l0_segment_count`：监控 Compaction 健康度
-- `pprof`：通过 `_ "net/http/pprof"` 暴露 goroutine / heap profile
+- `pprof`：**当前版本未启用**。`net/http/pprof` 未在 `pkg/server` 中导入，
+  如需开启可在 `Server.Start` 注册 `pprof.Handler` 后挂到 `/debug/pprof`
 - Benchmark：`go test -bench=. -benchmem ./pkg/storage/`、`./pkg/query/`
 
 ## 11. 扩展点
