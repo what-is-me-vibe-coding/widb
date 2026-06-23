@@ -374,3 +374,29 @@ func BenchmarkUpdateByPK(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+
+// --- GetTable 微基准测试（验证冗余调用去重收益）---
+
+// BenchmarkCatalogGetTable 衡量 catalog.GetTable 单次调用的耗时与分配，
+// 用于评估 handleDelete 合并两次 GetTable 为一次的优化收益。
+// 每次 GetTable 都会深拷贝 Columns/PrimaryKey/SegmentList 并将 colTypeMap 置 nil，
+// 因此开销主要来自切片分配与拷贝；SegmentList 越长，开销越大。
+func BenchmarkCatalogGetTable(b *testing.B) {
+	srv := newBenchServerWithTable(b)
+	defer func() { _ = srv.Stop() }()
+
+	// 预热 ColTypeMap 的懒初始化
+	if _, err := srv.catalog.GetTable(benchTableName); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbl, err := srv.catalog.GetTable(benchTableName)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_ = tbl.ColTypeMap()
+	}
+	b.ReportAllocs()
+}

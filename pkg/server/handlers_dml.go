@@ -18,18 +18,17 @@ import (
 //  2. 段裁剪路径：谓词下推到 ScanRangeWithPruning，跳过不可能命中的 Segment。
 //  3. 全表扫描路径：复杂谓词（OR、LIKE 等）走 EvalRowPredicate 完整求值。
 func (s *Server) handleDelete(del *query.DeleteStatement) (*Response, error) {
-	if _, err := s.catalog.GetTable(del.Table); err != nil {
+	tbl, err := s.catalog.GetTable(del.Table)
+	if err != nil {
 		return s.queryErrResp(MetricQueryExecuteError, "表不存在: %v", err), nil
 	}
 
 	eng := s.adapter.engineForTable(del.Table)
 
 	// 优化 1：主键等值快路径（仅当 WHERE 是 PK 列的等值 AND 时生效）
-	if tbl, tblErr := s.catalog.GetTable(del.Table); tblErr == nil {
-		if key, ok := tryBuildKeyFromPKEquality(del.Where, tbl); ok {
-			if applied, resp := s.deleteByPK(eng, key); applied {
-				return resp, nil
-			}
+	if key, ok := tryBuildKeyFromPKEquality(del.Where, tbl); ok {
+		if applied, resp := s.deleteByPK(eng, key); applied {
+			return resp, nil
 		}
 	}
 
