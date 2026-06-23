@@ -267,5 +267,25 @@ func (e *Engine) RowCount() int {
 	return len(e.rows)
 }
 
+// EngineStats 汇总内存引擎的运行时状态。
+// 与 pkg/storage.EngineStats 字段不一一对应，因为内存引擎无 Segment / MemTable 概念。
+type EngineStats struct {
+	RowCount    int64
+	ColumnCount int
+}
+
+// Stats 返回内存引擎的运行时状态快照。
+// 字段意义：
+//   - RowCount：当前内存表中的存活行数。
+//   - ColumnCount：列元数据中已声明的列数。
+func (e *Engine) Stats() EngineStats {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return EngineStats{
+		RowCount:    int64(len(e.rows)),
+		ColumnCount: len(e.columnMeta),
+	}
+}
+
 // errEngineClosed 表示在引擎已关闭后执行操作。
 var errEngineClosed = fmt.Errorf("memory engine: already closed")

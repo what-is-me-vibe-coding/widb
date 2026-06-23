@@ -181,6 +181,11 @@ SELECT * FROM sensor WHERE name LIKE '%al%' LIMIT 10;
 | `/write` | POST | 批量写入数据 |
 | `/health` | GET | 健康检查 |
 | `/metrics` | GET | Prometheus 指标 |
+| `/admin/flush` | POST | 强制 flush LSM MemTable |
+| `/admin/compact` | POST | 强制触发一次 LSM Compaction |
+| `/admin/stats` | GET | 全库 + 每张表实时统计（行数/Segment数/MemTable大小等） |
+
+> 完整的 `/admin/*` 字段说明与运维示例见 [doc/operations.md §10](doc/operations.md#10-常见运维操作清单) 与 [doc/api.md §1.5](doc/api.md#15-管理与运维端点)。
 
 ### 查询请求
 

@@ -84,7 +84,7 @@ func (m *Metrics) initLabels() {
 	m.CacheEntries.WithLabelValues("block").Set(0)
 	m.CacheEntries.WithLabelValues("index").Set(0)
 	// 预热 HTTP 耗时直方图：每个端点 + 方法在首次请求前可见
-	for _, ep := range []string{"/query", "/write", "/health", "/admin/flush", "/admin/compact", "other"} {
+	for _, ep := range []string{"/query", "/write", "/health", "/admin/flush", "/admin/compact", "/admin/stats", "other"} {
 		m.HTTPDuration.WithLabelValues(ep, "GET").Observe(0)
 		m.HTTPDuration.WithLabelValues(ep, "POST").Observe(0)
 	}

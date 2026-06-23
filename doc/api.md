@@ -93,6 +93,39 @@
 
 返回 Prometheus 格式的监控指标。详见 README 中的监控指标表。
 
+### 1.5 管理与运维端点
+
+`/admin/*` 系列端点用于运维介入，**不参与业务请求**。请求与返回格式均使用 `code/message/...` 包装。
+
+| 端点 | 方法 | 用途 | 成功响应 | 失败语义 |
+|------|------|------|----------|----------|
+| `/admin/flush` | POST | 把每张 LSM 表的活跃/不可变 MemTable 立即落盘 | `{"code":0,"message":"强制 flush 成功","affected":N}` | 任一表失败 500；非 POST 405 |
+| `/admin/compact` | POST | 立即尝试对每张 LSM 表做一次 Compaction | `{"code":0,"message":"强制 compact 成功","affected":N}` | 同上 |
+| `/admin/stats` | GET | 全库 + 每张表的元信息与运行时统计 | 见下 | 非 GET 405 |
+
+`/admin/stats` 响应字段：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `summary.total_tables` | int | 全库表总数 |
+| `summary.lsm_tables` | int | LSM 表数量 |
+| `summary.memory_tables` | int | 内存表数量 |
+| `summary.total_segments` | int | 所有 LSM 表的 Segment 总数 |
+| `summary.total_rows` | int64 | 所有表存活行数之和 |
+| `tables[].name` | string | 表名 |
+| `tables[].engine` | string | `lsm` 或 `memory` |
+| `tables[].columns` | int | 列数 |
+| `tables[].primary_key` | []string | 主键列名 |
+| `tables[].row_count` | int64 | 存活行数（LSM=MemTable+Segment；memory=字典 keys） |
+| `tables[].segment_count` | int（仅 LSM） | Segment 总数 |
+| `tables[].l0_segment_count` | int（仅 LSM） | L0 层 Segment 数；持续偏高表示 Compaction 滞后 |
+| `tables[].immutable_count` | int（仅 LSM） | 不可变 MemTable 数 |
+| `tables[].memtable_size` | int64（仅 LSM） | 活跃 MemTable 当前字节数 |
+| `tables[].active_row_count` | int64（仅 LSM） | 活跃 MemTable 中行数 |
+| `tables[].immutable_row_count` | int64（仅 LSM） | 不可变 MemTable 行数之和 |
+
+完整示例与运维场景见 [doc/operations.md §10.2](operations.md#102-数据库统计端点)。
+
 ## 2. TCP 协议
 
 ### 2.1 协议格式

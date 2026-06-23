@@ -743,6 +743,71 @@ systemctl start widb
 
 `affected` 表示被检查/处理过的 LSM 引擎数；`affected=0` 意味着库里没有 LSM 表（只有内存表或空库）。该端点仅影响 LSM 表，内存表（`ENGINE=memory`）不参与，因其数据驻内存、关闭即丢。
 
+### 10.2 数据库统计端点
+
+`/admin/stats` 用于实时获取全库与每张表的元信息 + 运行时统计，便于监控面板与脚本巡检。
+
+| 端点 | 方法 | 行为 | 失败语义 |
+|------|------|------|----------|
+| `/admin/stats` | GET | 遍历 catalog 全部表，按表名升序输出 | 任一内部字段缺失时该项运行时字段降级为 0；不支持 POST/DELETE 等非 GET 方法，返回 405 |
+
+响应 JSON 格式（节选）：
+
+```json
+{
+  "code": 0,
+  "message": "stats 查询成功",
+  "summary": {
+    "total_tables": 2,
+    "lsm_tables": 1,
+    "memory_tables": 1,
+    "total_segments": 1,
+    "total_rows": 5
+  },
+  "tables": [
+    {
+      "name": "lsm_t",
+      "engine": "lsm",
+      "columns": 2,
+      "primary_key": ["id"],
+      "row_count": 2,
+      "segment_count": 1,
+      "l0_segment_count": 1,
+      "immutable_count": 0,
+      "memtable_size": 4096,
+      "active_row_count": 2,
+      "immutable_row_count": 0
+    },
+    {
+      "name": "mem_t",
+      "engine": "memory",
+      "columns": 2,
+      "primary_key": ["id"],
+      "row_count": 3
+    }
+  ]
+}
+```
+
+字段语义：
+
+- `row_count`：表当前存活行数（LSM = 活跃 MemTable + 不可变 MemTable + 全部 Segment；memory = 字典 keys 数）。
+- `segment_count` / `l0_segment_count`：LSM 表当前的 Segment 总数与 L0 层数量；`l0_segment_count` 长期偏高意味着 Compaction 滞后。
+- `memtable_size`：活跃 MemTable 当前占用字节数；趋近配置上限时建议触发 `/admin/flush`。
+- 内存引擎不输出 LSM 专属字段（`segment_count` 等），前端展示时可隐藏。
+
+典型使用：
+
+```bash
+# 巡检每张表的 Segment 数量
+curl -s http://127.0.0.1:8080/admin/stats | jq '.tables[] | {name, engine, row_count, segment_count}'
+
+# 监控 L0 堆积
+curl -s http://127.0.0.1:8080/admin/stats | jq '.tables[] | select(.engine=="lsm" and .l0_segment_count > 4) | .name'
+```
+
+> 注意：`/admin/stats` 调用频率建议控制在 1Hz 以内，每次会遍历全部表 + 读取每张引擎的内部锁；高并发请改用 `/metrics` 抓 Prometheus 计数器。
+
 ## 11. 安全建议
 
 ### 11.1 网络层
