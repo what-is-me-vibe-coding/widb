@@ -1,15 +1,34 @@
 // Package pgwire 实现 PostgreSQL wire 协议（v3）服务端，使 WiDB 可被
 // JDBC 驱动（如 pgJDBC）及 psql 等标准 PostgreSQL 客户端直接连接。
 //
-// 协议流程：
-//   - 客户端发送 StartupMessage（或先发 SSLRequest 协商 SSL）
-//   - 服务端回复 AuthenticationOk + ParameterStatus + BackendKeyData + ReadyForQuery
-//   - 客户端发送 Query（Simple Query 协议）
-//   - 服务端执行 SQL，回复 RowDescription + DataRow* + CommandComplete + ReadyForQuery
-//   - 客户端发送 Terminate 断开连接
+// # 协议流程
 //
-// 当前实现支持 trust 认证（无密码），仅处理 Simple Query 协议。
-// 类型映射：BOOL→16, INT64→int8(20), FLOAT64→float8(701), STRING→text(25), TIMESTAMP→1114。
+// 客户端发送 StartupMessage（或先发 SSLRequest 协商 SSL），服务端回复
+// AuthenticationOk + ParameterStatus + BackendKeyData + ReadyForQuery 完
+// 成握手。之后进入查询循环：
+//
+//   - Simple Query：客户端发 Query('Q')，服务端回复 RowDescription +
+//     DataRow* + CommandComplete + ReadyForQuery。同步、阻塞式，最简。
+//   - Extended Query：客户端发 Parse → Bind → Describe → Execute → Sync，
+//     服务端按阶段回复 ParseComplete / BindComplete / ParameterDescription /
+//     RowDescription / NoData / DataRow* / CommandComplete / ReadyForQuery。
+//     支持预编译语句（prepared statement）与 portal 复用，便于 BI 驱动
+//     （pgx、psql、DBeaver、DataGrip、Navicat 等）走标准 JDBC 路径。
+//
+// 当前实现支持 trust 认证（无密码）。类型映射：BOOL→16, INT8/16→int2(21),
+// INT32→int4(23), INT64/UINT64→int8(20), FLOAT64→float8(701),
+// STRING→text(25), DATE→date(1082), TIMESTAMP→1114。
+//
+// # Extended Query 简化说明
+//
+//  1. 占位符（$1/$2/...）不被解析，Bind 携带的参数值被忽略。客户端通常
+//     在 server-side prepared statement 路径下发送完整 SQL 而非参数化形式。
+//  2. Describe('S') / Describe('P') 一律返回 NoData；RowDescription 在
+//     Execute 阶段按实际结果集补发，符合 PG 协议对 late-binding 的要求。
+//  3. Parse / Bind / Describe 失败进入错误状态：后续消息被吸收，直到
+//     Sync 消息清除状态。Execute 错误不进错误状态（PG 规范）。
+//  4. 同一连接内 prepared statement / portal 命名空间相互隔离（按连接
+//     持有 map），不跨连接共享。
 //
 // # 安全与资源保护
 //

@@ -350,7 +350,7 @@ psql -h 127.0.0.1 -p 5432 -c "SELECT id, name FROM sensor WHERE id = 1"
 psql -h 127.0.0.1 -p 5432
 ```
 
-JDBC 连接字符串示例：`jdbc:postgresql://127.0.0.1:5432/`。当前为 trust 认证 + Simple Query 协议，类型映射与安全注意事项详见 [pgwire.md](pgwire.md)。
+JDBC 连接字符串示例：`jdbc:postgresql://127.0.0.1:5432/`。当前为 trust 认证，支持 Simple Query 与 Extended Query 协议（pgx、psql、DBeaver、DataGrip、Navicat 等真实客户端均可直连），类型映射与安全注意事项详见 [pgwire.md](pgwire.md)。
 
 ## 11. 配置参数详解
 

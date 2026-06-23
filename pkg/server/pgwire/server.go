@@ -18,7 +18,7 @@ const (
 )
 
 // Server 是 PostgreSQL wire 协议服务端，监听 TCP 连接并为每个连接
-// 创建独立的 connHandler 处理 Simple Query 协议。
+// 创建独立的 connHandler 处理 Simple Query 与 Extended Query 协议。
 type Server struct {
 	addr         string
 	executor     SQLExecutor

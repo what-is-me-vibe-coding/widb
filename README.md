@@ -229,7 +229,7 @@ psql -h 127.0.0.1 -p 5432 -c "SELECT id, name FROM sensor WHERE id = 1"
 
 类型映射：BOOL→bool(16)、INT8/INT16→int2(21)、INT32→int4(23)、INT64/UINT64→int8(20)、FLOAT64→float8(701)、STRING→text(25)、DATE→date(1082)、TIMESTAMP→timestamp(1114)。
 
-当前实现为 trust 认证（无密码）+ Simple Query 协议，适合内网与开发环境。生产部署请将监听地址绑定到回环/内网，或在网络边界限制访问。详见 [doc/pgwire.md](doc/pgwire.md)。
+当前实现为 trust 认证（无密码），同时支持 Simple Query 与 Extended Query 协议（pgx、psql、DBeaver、DataGrip、Navicat 等真实客户端均可直连），适合内网与开发环境。生产部署请将监听地址绑定到回环/内网，或在网络边界限制访问。详见 [doc/pgwire.md](doc/pgwire.md)。
 
 ## 支持的数据类型
 
