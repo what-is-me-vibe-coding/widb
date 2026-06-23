@@ -44,12 +44,23 @@ type pgExtClient struct {
 // 与 pgx、psql 等真实驱动内部走相同的协议栈。
 func dialPGExt(t *testing.T, addr string) *pgExtClient {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", addr, pgDialTimeout)
+	c, err := dialPGExtErr(addr)
 	if err != nil {
 		t.Fatalf("拨号 PG wire %s 失败: %v", addr, err)
 	}
+	return c
+}
+
+// dialPGExtErr 是 dialPGExt 的非 testing 版本：失败时返回 error，
+// 供运行在独立 goroutine 中的工作负载复用，避免在子 goroutine 中
+// 调用 t.Fatalf 导致 "go test -race" 报 fatal on non-test goroutine。
+func dialPGExtErr(addr string) (*pgExtClient, error) {
+	conn, err := net.DialTimeout("tcp", addr, pgDialTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("拨号 PG wire %s 失败: %w", addr, err)
+	}
 	fe := pgproto3.NewFrontend(pgproto3.NewChunkReader(conn), conn)
-	return &pgExtClient{fe: fe, conn: conn}
+	return &pgExtClient{fe: fe, conn: conn}, nil
 }
 
 // close 关闭连接。
@@ -510,6 +521,11 @@ func TestPGExtErrorRecovery(t *testing.T) {
 // 全部成功后断言各自表数据一致；如某客户端错误地使用了其他客户端的
 // prepared statement 名空间（理论上不可能，因为服务端按连接隔离），
 // 会以 ErrorResponse 形式暴露。
+//
+// 注意：所有工作负载都在独立 goroutine 中运行，子 goroutine 不能调用
+// t.Fatal/t.Fatalf（Go 测试框架要求 Fatal 必须从运行测试的 goroutine 调用），
+// 因此 worker 函数不持有 *testing.T，所有错误通过 errCh 上报，
+// 由 TestPGExtMultiClientParallel 在主 goroutine 中通过 t.Error 统一记录。
 func TestPGExtMultiClientParallel(t *testing.T) {
 	s := startExtPGWireServer(t)
 
@@ -522,7 +538,7 @@ func TestPGExtMultiClientParallel(t *testing.T) {
 
 	for cid := 0; cid < clientCount; cid++ {
 		wg.Add(1)
-		go runMultiClientWorkload(t, s.srv.PGAddr(), cid, iterations, &wg, errCh)
+		go runMultiClientWorkload(s.srv.PGAddr(), cid, iterations, &wg, errCh)
 	}
 
 	wg.Wait()
@@ -535,9 +551,16 @@ func TestPGExtMultiClientParallel(t *testing.T) {
 // runMultiClientWorkload 在独立连接上执行一个客户端的扩展查询工作负载，
 // 每轮 INSERT/SELECT/UPDATE/SELECT，并通过 errCh 报告任何阶段错误。
 // 独立函数拆出是为了将 TestPGExtMultiClientParallel 的认知复杂度控制在阈值内。
-func runMultiClientWorkload(t *testing.T, addr string, clientID, iterations int, wg *sync.WaitGroup, errCh chan<- error) {
+//
+// 不接受 *testing.T：调用方（goroutine）禁止调用 t.Fatal，错误全部经 errCh
+// 上报给主测试 goroutine。
+func runMultiClientWorkload(addr string, clientID, iterations int, wg *sync.WaitGroup, errCh chan<- error) {
 	defer wg.Done()
-	c := dialPGExt(t, addr)
+	c, err := dialPGExtErr(addr)
+	if err != nil {
+		errCh <- fmt.Errorf("client %d: 拨号: %w", clientID, err)
+		return
+	}
 	defer c.close()
 	if err := c.sendStartup(); err != nil {
 		errCh <- fmt.Errorf("client %d: 启动: %w", clientID, err)
@@ -551,13 +574,16 @@ func runMultiClientWorkload(t *testing.T, addr string, clientID, iterations int,
 	table := fmt.Sprintf("multi_t_%d", clientID)
 	createSQL := "CREATE TABLE " + table +
 		" (id INT64 NOT NULL, payload STRING NULL, PRIMARY KEY(id))"
-	if r := c.runExtendedSQL(t, createSQL); r.errMsg != "" {
+	if r, err := c.runExtendedSQLErr(createSQL); err != nil {
+		errCh <- fmt.Errorf("client %d: CREATE 发送: %w", clientID, err)
+		return
+	} else if r.errMsg != "" {
 		errCh <- fmt.Errorf("client %d: CREATE: %s", clientID, r.errMsg)
 		return
 	}
 
 	for iter := 0; iter < iterations; iter++ {
-		if err := runMultiClientIteration(t, c, clientID, iter, table, errCh); err != nil {
+		if err := runMultiClientIteration(c, clientID, iter, table, errCh); err != nil {
 			return
 		}
 	}
@@ -565,21 +591,32 @@ func runMultiClientWorkload(t *testing.T, addr string, clientID, iterations int,
 
 // runMultiClientIteration 执行一轮 INSERT/SELECT/UPDATE/SELECT 并校验结果。
 // 任何步骤失败时通过 errCh 报告并返回非 nil；调用方负责早退。
-func runMultiClientIteration(t *testing.T, c *pgExtClient, clientID, iter int, table string, errCh chan<- error) error {
+//
+// 不接受 *testing.T：调用方（goroutine）禁止调用 t.Fatal，错误全部经 errCh
+// 上报给主测试 goroutine。
+func runMultiClientIteration(c *pgExtClient, clientID, iter int, table string, errCh chan<- error) error {
 	id := int64(clientID*1000 + iter + 1)
 	payload := fmt.Sprintf("c%d-iter%d", clientID, iter)
 	newPayload := payload + "_u"
 
 	// INSERT
-	ins := c.runExtendedSQL(t, fmt.Sprintf(
+	ins, err := c.runExtendedSQLErr(fmt.Sprintf(
 		"INSERT INTO %s (id, payload) VALUES (%d, '%s')", table, id, payload))
+	if err != nil {
+		errCh <- fmt.Errorf("client %d iter %d: INSERT 发送: %w", clientID, iter, err)
+		return fmt.Errorf("insert send")
+	}
 	if ins.errMsg != "" {
 		errCh <- fmt.Errorf("client %d iter %d: INSERT: %s", clientID, iter, ins.errMsg)
 		return fmt.Errorf("insert failed")
 	}
 	// 校验 SELECT
-	sel := c.runExtendedSQL(t, fmt.Sprintf(
+	sel, err := c.runExtendedSQLErr(fmt.Sprintf(
 		"SELECT payload FROM %s WHERE id = %d", table, id))
+	if err != nil {
+		errCh <- fmt.Errorf("client %d iter %d: SELECT 发送: %w", clientID, iter, err)
+		return fmt.Errorf("select send")
+	}
 	if sel.rowCount() != 1 {
 		errCh <- fmt.Errorf("client %d iter %d: SELECT 期望 1 行，得到 %d",
 			clientID, iter, sel.rowCount())
@@ -591,15 +628,23 @@ func runMultiClientIteration(t *testing.T, c *pgExtClient, clientID, iter int, t
 		return fmt.Errorf("select value")
 	}
 	// UPDATE
-	upd := c.runExtendedSQL(t, fmt.Sprintf(
+	upd, err := c.runExtendedSQLErr(fmt.Sprintf(
 		"UPDATE %s SET payload = '%s' WHERE id = %d", table, newPayload, id))
+	if err != nil {
+		errCh <- fmt.Errorf("client %d iter %d: UPDATE 发送: %w", clientID, iter, err)
+		return fmt.Errorf("update send")
+	}
 	if upd.errMsg != "" {
 		errCh <- fmt.Errorf("client %d iter %d: UPDATE: %s", clientID, iter, upd.errMsg)
 		return fmt.Errorf("update failed")
 	}
 	// 校验 UPDATE 后值
-	sel2 := c.runExtendedSQL(t, fmt.Sprintf(
+	sel2, err := c.runExtendedSQLErr(fmt.Sprintf(
 		"SELECT payload FROM %s WHERE id = %d", table, id))
+	if err != nil {
+		errCh <- fmt.Errorf("client %d iter %d: 校验 SELECT 发送: %w", clientID, iter, err)
+		return fmt.Errorf("post-update select send")
+	}
 	if v, _ := sel2.cell(0, "payload"); v != newPayload {
 		errCh <- fmt.Errorf("client %d iter %d: UPDATE 后 payload 期望 %q 得到 %q",
 			clientID, iter, newPayload, v)
