@@ -77,6 +77,22 @@ go test -bench=BenchmarkEngineWrite -count=5 -benchtime=2s ./pkg/storage/...
 |------|--------|----------|
 | `BenchmarkParserSelect` | SELECT 解析耗时 | SQL 解析延迟基线 |
 | `BenchmarkParserInsert` | INSERT 解析耗时 | 写入路径 SQL 解析 |
+| `BenchmarkParserCreateTable` | CREATE TABLE 解析耗时 | DDL 路径解析基线 |
+| `BenchmarkPreprocessSQLNoMatch` | 无关键字预处理的零拷贝快速路径 | 验证常见 DML 的预处理开销 |
+| `BenchmarkPreprocessSQLWithMatch` | 含关键字（CREATE TABLE）预处理 | 验证关键字替换路径开销 |
+| `BenchmarkAnalyzer` | 语义分析（绑定/类型/Schema 解析） | 分析阶段吞吐基线 |
+| `BenchmarkOptimizer` | 优化器整体耗时（谓词下推/常量折叠/列裁剪等） | 优化阶段延迟基线 |
+| `BenchmarkExecutorScan` | 执行器全表扫描 | 扫描算子基线 |
+| `BenchmarkEndToEndSelect` | 解析→分析→优化→执行 全链路 | 端到端 SELECT 延迟基线 |
+| `BenchmarkFilterInt64FastPath` | INT64 列过滤快速路径 | 类型特化过滤算子吞吐 |
+| `BenchmarkFilterFloat64FastPath` | FLOAT64 列过滤快速路径 | 类型特化过滤算子吞吐 |
+| `BenchmarkFilterStringFastPath` | STRING 列过滤快速路径 | 字符串等值/范围过滤 |
+| `BenchmarkFilterInt64FastPathWithNulls` | 含 NULL 的 INT64 列过滤 | 验证 NULL 检查分支开销 |
+| `BenchmarkFilterStringFastPathWithNulls` | 含 NULL 的 STRING 列过滤 | 验证 NULL 检查分支开销 |
+| `BenchmarkAggregateGroupBySum` | 窄表（3 列）GROUP BY + SUM 聚合 | 聚合算子基线 |
+| `BenchmarkAggregateWideGroupBySum` | 宽表（32 列）GROUP BY + SUM 聚合 | 宽表聚合扩展性 |
+| `BenchmarkProjectNarrow` | 窄表（3 列）3 个投影表达式 | 投影算子基线 |
+| `BenchmarkProjectWide` | 宽表（32 列）32 个投影表达式 | 宽表投影扩展性 |
 
 ### 2.3 `pkg/server`（接入层）
 
@@ -93,7 +109,12 @@ go test -bench=BenchmarkEngineWrite -count=5 -benchtime=2s ./pkg/storage/...
 | `BenchmarkChunksToRows` | 单 chunk → 行结果 | HTTP/TCP 结果拼装 |
 | `BenchmarkChunksToRowsMultiChunk` | 多 chunk → 行结果 | 大结果集拼装 |
 | `BenchmarkChunksToRowsWideTable` | 宽表 chunk → 行结果 | 宽表列数对拼装的影响 |
-| `BenchmarkInterfaceToValue` | `any` → `common.Value` 转换 | 列数据类型断言成本 |
+| `BenchmarkInterfaceToValue` | `any` → `common.Value` 转换（数值类型） | 列数据类型断言成本 |
+| `BenchmarkInterfaceToValueString` | `any` → `common.Value` 转换（字符串类型） | 字符串列转换成本 |
+| `BenchmarkConvertWriteRow` | HTTP/TCP 写入行转换 | 写入预处理基线 |
+| `BenchmarkTCPPing` | TCP ping/pong 往返 | 长连接保活与心跳延迟 |
+| `BenchmarkDeleteByPK` | 主键等值 DELETE 路径 | 点查快路径收益验证 |
+| `BenchmarkUpdateByPK` | 主键等值 UPDATE 路径 | 点查快路径收益验证 |
 
 ### 2.4 `tests/integration`（端到端基准）
 
