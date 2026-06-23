@@ -11,8 +11,8 @@
 //     per-connection 状态（prepared statement / portal 映射）相互隔离。
 //   - 错误路径：解析失败时收到 ErrorResponse + Sync 后 ReadyForQuery，连接仍可用。
 //
-// 复用 e2e_pgwire_sql_test.go 中的 startPGWireServer；本文件独立实现
-// pgExtClient（用 pgproto3.Frontend 收发消息）以与 Simple Query 客户端解耦，
+// 复用 e2e_pgwire_sql_test.go 中的 startPGWireServer（同一进程同时监听 TCP/HTTP/PG wire）。
+// 本文件独立实现 pgExtClient（用 pgproto3.Frontend 收发消息）以与 Simple Query 客户端解耦，
 // 便于未来 Extended Query 路径单独演进。
 package integration
 
@@ -20,16 +20,12 @@ import (
 	"bytes"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/jackc/pgproto3/v2"
-	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/what-is-me-vibe-coding/test-db/pkg/server"
 )
 
 // pgExtClient 是基于 pgproto3.Frontend 的"真实 PG 客户端"，驱动
@@ -63,7 +59,9 @@ func dialPGExtErr(addr string) (*pgExtClient, error) {
 	return &pgExtClient{fe: fe, conn: conn}, nil
 }
 
-// close 关闭连接。
+// close 关闭底层连接。
+// 故意忽略 Close 的错误：客户端生命周期由 defer 关闭，错误已无可挽回；
+// 若调用方需要诊断，应在调用方层面显式处理。
 func (c *pgExtClient) close() { _ = c.conn.Close() }
 
 // handshake 完成启动握手：发送 StartupMessage 并消费至 ReadyForQuery。
@@ -84,8 +82,9 @@ func (c *pgExtClient) sendStartup() error {
 	return c.fe.Send(startup)
 }
 
-// consumeUntilReadyForQuery 读取消息直到 ReadyForQuery，返回吸收的消息类型序列。
+// consumeUntilReadyForQuery 持续读取消息直到收到 ReadyForQuery。
 // 启动握手阶段忽略非 ReadyForQuery 消息（ParameterStatus / NoticeResponse 等）。
+// 收到 ReadyForQuery 时返回 nil；连接出错时返回 error。
 func (c *pgExtClient) consumeUntilReadyForQuery() error {
 	for {
 		msg, err := c.fe.Receive()
@@ -212,7 +211,11 @@ func (r *pgExtResult) getColumnIndex(name string) int {
 }
 
 // cell 取第 rowIdx 行的 colName 列文本值；列不存在或行越界返回 false。
+// rowIdx 必须 >= 0，否则视为越界返回 (zero, false)，避免负数索引触发 panic。
 func (r *pgExtResult) cell(rowIdx int, colName string) (string, bool) {
+	if rowIdx < 0 {
+		return "", false
+	}
 	col := r.getColumnIndex(colName)
 	if col < 0 || rowIdx >= len(r.rows) {
 		return "", false
@@ -221,7 +224,11 @@ func (r *pgExtResult) cell(rowIdx int, colName string) (string, bool) {
 }
 
 // cellIsNull 报告 (rowIdx, colName) 是否为 NULL。
+// rowIdx 必须 >= 0，否则视为越界返回 false。
 func (r *pgExtResult) cellIsNull(rowIdx int, colName string) bool {
+	if rowIdx < 0 {
+		return false
+	}
 	col := r.getColumnIndex(colName)
 	if col < 0 || rowIdx >= len(r.nilMask) {
 		return false
@@ -262,32 +269,6 @@ func pgExtFloat(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
 // pgExtInt 将 PG 文本值转为 int64。
 func pgExtInt(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
 
-// startExtPGWireServer 启动一个同时监听 TCP/HTTP/PG wire 的服务器。
-func startExtPGWireServer(t *testing.T) *sqlServer {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "e2e-pgext-*")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-
-	cfg := server.Config{
-		TCPAddr:  "127.0.0.1:0",
-		HTTPAddr: "127.0.0.1:0",
-		PGAddr:   "127.0.0.1:0",
-		DataDir:  dir,
-	}
-	srv, err := server.NewServer(cfg, server.WithMetricsRegistry(prometheus.NewRegistry()))
-	if err != nil {
-		t.Fatalf("NewServer 失败: %v", err)
-	}
-	if err := srv.Start(); err != nil {
-		t.Fatalf("Start 失败: %v", err)
-	}
-	t.Cleanup(func() { _ = srv.Stop() })
-	return &sqlServer{srv: srv, tcpAddr: srv.TCPAddr(), httpAddr: srv.HTTPAddr()}
-}
-
 // pgExtCreateSensorTable 通过 Extended Query 创建 sensor 表并插入初始数据。
 func pgExtCreateSensorTable(t *testing.T, c *pgExtClient) {
 	t.Helper()
@@ -310,14 +291,16 @@ func pgExtCreateSensorTable(t *testing.T, c *pgExtClient) {
 // TestPGExtQuerySelect 验证 extended query 路径下 SELECT 正常返回数据行。
 // 这是 issue #234 的核心修复：Simple Query 之外的 Parse/Bind/Describe/Execute 序列
 // 必须返回 DataRow + CommandComplete，而非仅 ReadyForQuery。
+// 注：断言首行 name == "sensor-A" 依赖稳定顺序，因此显式加 ORDER BY id，
+// 避免在不同 segment 布局/compaction 状态下出现 flake。
 func TestPGExtQuerySelect(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 	c := dialPGExt(t, s.srv.PGAddr())
 	defer c.close()
 	c.handshake(t)
 	pgExtCreateSensorTable(t, c)
 
-	res := c.runExtendedSQL(t, "SELECT id, name, temperature FROM sensor")
+	res := c.runExtendedSQL(t, "SELECT id, name, temperature FROM sensor ORDER BY id")
 	if res.errMsg != "" {
 		t.Fatalf("extended SELECT 失败: %s", res.errMsg)
 	}
@@ -337,7 +320,7 @@ func TestPGExtQuerySelect(t *testing.T) {
 
 // TestPGExtQueryPointRange 验证点查、范围查询、LIKE 在 extended query 路径下正确。
 func TestPGExtQueryPointRange(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 	c := dialPGExt(t, s.srv.PGAddr())
 	defer c.close()
 	c.handshake(t)
@@ -370,7 +353,7 @@ func TestPGExtQueryPointRange(t *testing.T) {
 
 // TestPGExtQueryGroupByAggregate 验证 extended query 路径下 GROUP BY 聚合正确。
 func TestPGExtQueryGroupByAggregate(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 	c := dialPGExt(t, s.srv.PGAddr())
 	defer c.close()
 	c.handshake(t)
@@ -415,7 +398,7 @@ func TestPGExtQueryGroupByAggregate(t *testing.T) {
 // TestPGExtWriteDML 验证 extended query 路径下 UPDATE/DELETE 的 CommandComplete
 // 标签与受影响行数，并通过后续 SELECT 验证数据正确性。
 func TestPGExtWriteDML(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 	c := dialPGExt(t, s.srv.PGAddr())
 	defer c.close()
 	c.handshake(t)
@@ -444,7 +427,7 @@ func TestPGExtWriteDML(t *testing.T) {
 
 // TestPGExtMetaCommands 验证 SHOW TABLES / DESCRIBE 在 extended query 路径下可用。
 func TestPGExtMetaCommands(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 	c := dialPGExt(t, s.srv.PGAddr())
 	defer c.close()
 	c.handshake(t)
@@ -466,7 +449,7 @@ func TestPGExtMetaCommands(t *testing.T) {
 
 // TestPGExtNullValue 验证 NULL 值在 extended query 路径下正确编解码。
 func TestPGExtNullValue(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 	c := dialPGExt(t, s.srv.PGAddr())
 	defer c.close()
 	c.handshake(t)
@@ -493,7 +476,7 @@ func TestPGExtNullValue(t *testing.T) {
 //   - 无效 SQL 触发 ErrorResponse + 后续 ReadyForQuery
 //   - 错误后连接仍可用，下一次 extended query 周期能正常返回
 func TestPGExtErrorRecovery(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 	c := dialPGExt(t, s.srv.PGAddr())
 	defer c.close()
 	c.handshake(t)
@@ -527,7 +510,7 @@ func TestPGExtErrorRecovery(t *testing.T) {
 // 因此 worker 函数不持有 *testing.T，所有错误通过 errCh 上报，
 // 由 TestPGExtMultiClientParallel 在主 goroutine 中通过 t.Error 统一记录。
 func TestPGExtMultiClientParallel(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 
 	const (
 		clientCount = 6
@@ -657,7 +640,7 @@ func runMultiClientIteration(c *pgExtClient, clientID, iter int, table string, e
 // ParseComplete -> BindComplete -> (NoData) -> (RowDescription) -> DataRow* ->
 // CommandComplete -> ReadyForQuery。本测试是 issue #234 的"协议层防回归"用例。
 func TestPGExtRoundTrip(t *testing.T) {
-	s := startExtPGWireServer(t)
+	s := startPGWireServer(t)
 	c := dialPGExt(t, s.srv.PGAddr())
 	defer c.close()
 	c.handshake(t)
@@ -733,6 +716,10 @@ func receiveUntilReadyForQuery(t *testing.T, fe *pgproto3.Frontend) (types []byt
 		}
 	}
 }
+
+// pgExtResult 辅助函数（cell / cellIsNull / findRow / rowCount / columnCount）的
+// 单元测试已拆分到 e2e_pgwire_extended_query_helpers_test.go，避免主文件超过
+// CI 强制 800 行上限；本文件只保留端到端集成测试。
 
 // 未使用导入保护：当前实现中 pgproto3.Frontend 已封装所有底层编解码，
 // 无需直接操作字节或时间常量，故本文件不再额外 import encoding/binary 或 time。
