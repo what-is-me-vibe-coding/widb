@@ -245,6 +245,64 @@ func BenchmarkConvertWriteRow(b *testing.B) {
 	b.ReportAllocs()
 }
 
+// --- buildPrimaryKey 基准测试 ---
+
+// BenchmarkBuildPrimaryKey_SingleFloat64 衡量单主键（float64，主键来自 JSON 数字）
+// 路径下 buildPrimaryKey 的开销，是 HTTP /write 与 TCP WriteBatch 的热点之一。
+func BenchmarkBuildPrimaryKey_SingleFloat64(b *testing.B) {
+	srv := newBenchServerWithTable(b)
+	defer func() { _ = srv.Stop() }()
+
+	tbl, _ := srv.catalog.GetTable(benchTableName)
+	row := map[string]interface{}{
+		"id":         float64(42),
+		benchColName: "alice",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = srv.buildPrimaryKey(tbl, row)
+	}
+	b.ReportAllocs()
+}
+
+// BenchmarkBuildPrimaryKey_SingleInt 衡量单主键（int，TCP 协议常见形态）下的开销。
+func BenchmarkBuildPrimaryKey_SingleInt(b *testing.B) {
+	srv := newBenchServerWithTable(b)
+	defer func() { _ = srv.Stop() }()
+
+	tbl, _ := srv.catalog.GetTable(benchTableName)
+	row := map[string]interface{}{
+		"id":         int(42),
+		benchColName: "alice",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = srv.buildPrimaryKey(tbl, row)
+	}
+	b.ReportAllocs()
+}
+
+// BenchmarkBuildPrimaryKey_CompositeString 衡量复合主键（region:string + id:int）下的开销。
+func BenchmarkBuildPrimaryKey_CompositeString(b *testing.B) {
+	srv := newBenchServerWithTable(b)
+	defer func() { _ = srv.Stop() }()
+
+	tbl := &catalog.Table{Name: benchTableName, PrimaryKey: []string{"region", "id"}}
+	row := map[string]interface{}{
+		"region":     "us-east",
+		"id":         int64(42),
+		benchColName: "alice",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = srv.buildPrimaryKey(tbl, row)
+	}
+	b.ReportAllocs()
+}
+
 // --- TCP 端到端基准测试 ---
 
 func BenchmarkTCPPing(b *testing.B) {

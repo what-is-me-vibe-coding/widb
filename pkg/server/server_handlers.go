@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -372,6 +373,11 @@ func (s *Server) convertWriteRow(
 
 // buildPrimaryKey 从行数据中提取主键值，拼接为存储 key。
 // 使用 \x00 作为分隔符，避免主键值包含分隔符时产生碰撞。
+//
+// 性能：主键格式化的输出需与 fmt.Fprintf("%v", v) 完全一致（键空间一致性）。
+// JSON 解码的常见类型（string / int / float64 / bool）走类型 switch + strconv
+// 快速路径，避免 fmt 的反射开销与中间分配；其它类型（time.Time / 自定义类型
+// 等）回退到 fmt.Fprintf，保证向后兼容。
 func (s *Server) buildPrimaryKey(
 	tbl *catalog.Table, row map[string]any,
 ) (string, error) {
@@ -384,7 +390,92 @@ func (s *Server) buildPrimaryKey(
 		if i > 0 {
 			builder.WriteByte(0)
 		}
-		fmt.Fprintf(&builder, "%v", rawVal)
+		if !writePKValue(&builder, rawVal) {
+			// 未匹配的非常见类型（如 time.Time、自定义结构体）回退到 fmt 反射路径
+			fmt.Fprintf(&builder, "%v", rawVal)
+		}
 	}
 	return builder.String(), nil
+}
+
+// writePKValue 将常见主键值类型写入 builder，返回 true 表示命中快速路径。
+// 支持的类型与 fmt.Fprintf("%v", v) 的输出完全等价（基于 strconv 与字面量拼接）。
+// 整型按有符号/无符号分组，浮点按位宽分组，避免巨型 type switch 推高
+// gocyclo 复杂度。
+func writePKValue(b *strings.Builder, v any) bool {
+	switch val := v.(type) {
+	case string:
+		b.WriteString(val)
+		return true
+	case bool:
+		writePKBool(b, val)
+		return true
+	case int, int8, int16, int32, int64:
+		writePKInt(b, val)
+		return true
+	case uint, uint8, uint16, uint32, uint64:
+		writePKUint(b, val)
+		return true
+	case float32, float64:
+		writePKFloat(b, val)
+		return true
+	default:
+		return false
+	}
+}
+
+// writePKBool 将 bool 主键值按 fmt.Fprintf("%v", v) 的输出写入 builder。
+func writePKBool(b *strings.Builder, v bool) {
+	if v {
+		b.WriteString("true")
+	} else {
+		b.WriteString("false")
+	}
+}
+
+// writePKInt 将有符号整数主键值按 fmt.Fprintf("%v", v) 的输出写入 builder。
+func writePKInt(b *strings.Builder, v any) {
+	var n int64
+	switch x := v.(type) {
+	case int:
+		n = int64(x)
+	case int8:
+		n = int64(x)
+	case int16:
+		n = int64(x)
+	case int32:
+		n = int64(x)
+	case int64:
+		n = x
+	}
+	b.WriteString(strconv.FormatInt(n, 10))
+}
+
+// writePKUint 将无符号整数主键值按 fmt.Fprintf("%v", v) 的输出写入 builder。
+func writePKUint(b *strings.Builder, v any) {
+	var n uint64
+	switch x := v.(type) {
+	case uint:
+		n = uint64(x)
+	case uint8:
+		n = uint64(x)
+	case uint16:
+		n = uint64(x)
+	case uint32:
+		n = uint64(x)
+	case uint64:
+		n = x
+	}
+	b.WriteString(strconv.FormatUint(n, 10))
+}
+
+// writePKFloat 将浮点主键值按 fmt.Fprintf("%v", v) 的输出写入 builder。
+func writePKFloat(b *strings.Builder, v any) {
+	switch x := v.(type) {
+	case float32:
+		// FormatFloat 走通用转换路径，避免 %g 在小数点形式下的精度差异
+		b.WriteString(strconv.FormatFloat(float64(x), 'g', -1, 32))
+	case float64:
+		b.WriteString(strconv.FormatFloat(x, 'g', -1, 64))
+	}
 }

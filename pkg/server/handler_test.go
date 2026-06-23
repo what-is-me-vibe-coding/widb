@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,6 +198,46 @@ func TestBuildPrimaryKeySeparatorNoCollision(t *testing.T) {
 			t.Errorf("主键碰撞: %q 和 %q 生成了相同 key %q", prev, tt.name, key)
 		}
 		keys[key] = tt.name
+	}
+}
+
+// TestBuildPrimaryKey_TypeCoverage 验证 buildPrimaryKey 对常见主键类型
+// （覆盖快速路径 + fmt 回退路径）的输出与 fmt.Fprintf("%v", v) 完全等价，
+// 避免主键格式变更导致键空间不一致而出现命中/未命中偏差。
+func TestBuildPrimaryKey_TypeCoverage(t *testing.T) {
+	srv := newTestServer(t)
+	tbl := &catalog.Table{Name: testTableName, PrimaryKey: []string{"a", "b", "c"}}
+
+	tests := []struct {
+		name string
+		row  map[string]interface{}
+	}{
+		{"string-int-float64", map[string]interface{}{"a": "hello", "b": int(42), "c": float64(3.14)}},
+		{"int64-uint64-bool", map[string]interface{}{"a": int64(-9223372036854775807), "b": uint64(18446744073709551615), "c": true}},
+		{"float32-negative", map[string]interface{}{"a": float32(1.5), "b": float64(-1e20), "c": false}},
+		{"small-int-variants", map[string]interface{}{"a": int8(-1), "b": int16(32767), "c": int32(-2147483648)}},
+		{"uint-variants", map[string]interface{}{"a": uint(0), "b": uint8(255), "c": uint16(65535)}},
+		// time.Time 走 fmt 回退路径
+		{"time.Time-fmt-fallback", map[string]interface{}{"a": time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), "b": int(1), "c": "x"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := srv.buildPrimaryKey(tbl, tt.row)
+			if err != nil {
+				t.Fatalf("buildPrimaryKey 失败: %v", err)
+			}
+			// 用 fmt.Fprintf 复现旧实现产出，与新实现 byte-for-byte 比较
+			var want strings.Builder
+			fmt.Fprintf(&want, "%v", tt.row["a"])
+			want.WriteByte(0)
+			fmt.Fprintf(&want, "%v", tt.row["b"])
+			want.WriteByte(0)
+			fmt.Fprintf(&want, "%v", tt.row["c"])
+			if got != want.String() {
+				t.Errorf("buildPrimaryKey = %q，期望（fmt.Fprintf 等价输出）= %q", got, want.String())
+			}
+		})
 	}
 }
 
