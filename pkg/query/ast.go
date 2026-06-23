@@ -232,6 +232,11 @@ type ExplainStatement struct {
 
 func (s *ExplainStatement) statementNode() {}
 func (s *ExplainStatement) String() string {
+	// 防御：Inner 为 nil 时输出 "EXPLAIN" 而不是 panic，
+	// 避免在 explain.go 早期异常或测试构造时崩溃。
+	if s.Inner == nil {
+		return "EXPLAIN"
+	}
 	return fmt.Sprintf("EXPLAIN %s", s.Inner.String())
 }
 
