@@ -229,8 +229,8 @@ func TestMetricsHTTPDurationObserve(t *testing.T) {
 
 	m.HTTPDuration.WithLabelValues("/query", "POST").Observe(0.123)
 
-	hist, ok := findHTTPHistogram(t, registry, "/query", "POST")
-	if !ok {
+	hist := findHTTPHistogram(t, registry, "/query", "POST")
+	if hist == nil {
 		t.Error("应包含 widb_http_request_duration_seconds 指标 (endpoint=/query, method=POST)")
 		return
 	}
@@ -243,8 +243,8 @@ func TestMetricsHTTPDurationObserve(t *testing.T) {
 }
 
 // findHTTPHistogram 在 registry 中查找匹配 endpoint/method 的 HTTP 耗时直方图。
-// 未找到时通过 t.Fatal 失败并返回 false。
-func findHTTPHistogram(t *testing.T, registry *prometheus.Registry, endpoint, method string) (dto.Histogram, bool) {
+// 未找到时通过 t.Fatal 失败并返回 nil。
+func findHTTPHistogram(t *testing.T, registry *prometheus.Registry, endpoint, method string) *dto.Histogram {
 	t.Helper()
 	mfs, err := registry.Gather()
 	if err != nil {
@@ -265,10 +265,10 @@ func findHTTPHistogram(t *testing.T, registry *prometheus.Registry, endpoint, me
 			if h == nil {
 				continue
 			}
-			return *h, true
+			return h
 		}
 	}
-	return dto.Histogram{}, false
+	return nil
 }
 
 // histogramHasLabel 判断指标是否包含指定 name=value 标签。
