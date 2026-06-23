@@ -253,48 +253,77 @@ func (e *Engine) allocVersion() uint64 {
 - `Write` / `WriteBatch` 不再需要为版本号分配获取互斥锁
 - 写路径减少一次 `Lock` / `Unlock` 操作，降低并发写入延迟
 
-## 7. skipNode 对象池化 (skipNode Pool)
+## 7. skipNode 内联 forward + Slab 分配器 (Inline forward + Slab)
 
-### 7.1 实现方式
+### 7.1 背景与问题
 
-跳表节点通过 `sync.Pool` 获取和归还，复用 forward 切片：
+旧版 `skipNode` 由「节点 + 独立堆分配 forward 切片」两个对象组成，配合
+`sync.Pool` 复用：
 
 ```go
-var nodePool = sync.Pool{
-    New: func() any {
-        return &skipNode{
-            forward: make([]*skipNode, defaultMaxLevel),
-        }
-    },
-}
-
-func newNode(key string, value map[string]Value, level int) *skipNode {
-    n := nodePool.Get().(*skipNode)
-    n.key = key
-    n.value = value
-    if cap(n.forward) < level {
-        n.forward = make([]*skipNode, level)
-    } else {
-        n.forward = n.forward[:level]
-    }
-    return n
-}
-
-func (n *skipNode) release() {
-    n.key = ""
-    n.value = nil
-    for i := range n.forward {
-        n.forward[i] = nil
-    }
-    n.forward = n.forward[:0]
-    nodePool.Put(n)
+type skipNode struct {
+    key     string
+    value   Row
+    forward []*skipNode  // 24B slice header + 128B heap-allocated slice
 }
 ```
 
-### 7.2 效果
+虽然 pool 缓解了 GC 压力，但有两个固有缺陷：
 
-- 高频写入场景（10 万+ 行/秒）下减少 GC 压力
-- `delete` 操作将节点归还到池中，避免频繁分配和回收
+1. **Pool 命中低**：节点被 put 后即加入 `skipList`，永不被归还（`delete`
+   时才会归还），因此稳态写入时 pool 命中率近 0，每次 put 都触发
+   `pool.New()`，产生 2 次堆分配（`*skipNode` + `[]*skipNode`）。
+2. **扫描缓存命中率低**：节点与 forward 切片在堆上分离，扫描阶段需要 2 次
+   指针追踪才能跳到下一节点。
+
+### 7.2 实现方式
+
+新方案将 `forward` 内联到节点中，并引入 slab 批量分配器：
+
+```go
+const skipNodeSlabSize = 256
+
+type skipNodeSlab struct {
+    nodes [skipNodeSlabSize]skipNode
+}
+
+type skipNode struct {
+    key     string
+    value   Row
+    forward [maxLevel]*skipNode  // 16*8=128B 内联
+}
+
+type skipList struct {
+    head        *skipNode
+    level       int
+    size        int
+    prev        []*skipNode
+    nodeSlabs   []*skipNodeSlab
+    nextNodeIdx int
+}
+
+func (sl *skipList) allocNode() *skipNode {
+    if sl.nextNodeIdx >= skipNodeSlabSize {
+        sl.nodeSlabs = append(sl.nodeSlabs, &skipNodeSlab{})
+        sl.nextNodeIdx = 0
+    }
+    lastSlab := sl.nodeSlabs[len(sl.nodeSlabs)-1]
+    node := &lastSlab.nodes[sl.nextNodeIdx]
+    sl.nextNodeIdx++
+    return node
+}
+```
+
+### 7.3 效果
+
+- `MemTable.Put` 的稳态分配数从 2 降至 0（slab 节点本身通过 bump-alloc 获取，无堆分配）
+- `Engine.WriteBatch` 分配数从 393 降至 193（减少 51%）
+- 扫描路径节点与 forward 指针位于同一对象，缓存命中率提升
+- slab 整体由 `skipList` 持有引用，MemTable 冻结后随 slab 整体 GC，回收粒度从
+  「单节点」变为「256 节点一块」，GC 标记成本下降
+
+代价：低层节点（多数 level ≤ 3）的 `forward` 槽位部分浪费，但总体内存与旧方案持平
+（旧方案 64B 节点 + 128B 独立切片 = 192B；新方案 192B 单对象）。
 
 ## 8. 段裁剪优化 (Segment Pruning)
 

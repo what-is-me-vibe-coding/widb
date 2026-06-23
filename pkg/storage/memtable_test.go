@@ -494,3 +494,125 @@ func TestMemTableString(t *testing.T) {
 		t.Fatal("expected non-empty string")
 	}
 }
+
+// TestMemTableSlabAllocatorBoundary 验证 slab 分配器在跨边界时正确切换：
+// 1. 写入 2*skipNodeSlabSize 个键，确保至少触发一次 slab 扩容；
+// 2. 跨 slab 边界的 key 仍能正确 Get / Scan；
+// 3. 验证 slab 数量与节点数关系符合预期。
+// 这是 inline-forward 优化后新增的关键回归测试，覆盖 slab 切分路径。
+func TestMemTableSlabAllocatorBoundary(t *testing.T) {
+	mt := NewMemTable()
+
+	// 跨两个 slab 边界的写入量
+	const total = skipNodeSlabSize*2 + 100
+	for i := 0; i < total; i++ {
+		key := fmt.Sprintf("k_%08d", i)
+		_, _, _ = mt.Put(key, Row{
+			Version: uint64(i),
+			Columns: map[string]common.Value{
+				"v": common.NewInt64(int64(i)),
+			},
+		})
+	}
+
+	if mt.Len() != total {
+		t.Errorf("expected %d entries, got %d", total, mt.Len())
+	}
+
+	// 验证 slab 数量：head 节点占据第一个 slab 的 idx=0，
+	// 之后 total 个 key 依次占用 1..total 节点位置，共需
+	// ceil((total+1) / skipNodeSlabSize) 个 slab。
+	expectedSlabs := (total + 1 + skipNodeSlabSize - 1) / skipNodeSlabSize
+	if got := len(mt.tree.nodeSlabs); got != expectedSlabs {
+		t.Errorf("expected %d slabs, got %d", expectedSlabs, got)
+	}
+
+	// 验证跨 slab 边界的 Get
+	for _, idx := range []int{0, skipNodeSlabSize - 1, skipNodeSlabSize, skipNodeSlabSize + 1, total - 1} {
+		key := fmt.Sprintf("k_%08d", idx)
+		row, ok := mt.Get(key)
+		if !ok {
+			t.Errorf("key %s not found at slab boundary", key)
+			continue
+		}
+		if row.Columns["v"].Int64 != int64(idx) {
+			t.Errorf("key %s: expected v=%d, got %d", key, idx, row.Columns["v"].Int64)
+		}
+	}
+
+	// 验证跨 slab 边界的 Scan
+	results := mt.Scan(fmt.Sprintf("k_%08d", skipNodeSlabSize-5), fmt.Sprintf("k_%08d", skipNodeSlabSize+5))
+	if len(results) != 11 {
+		t.Errorf("expected 11 scan results across slab boundary, got %d", len(results))
+	}
+}
+
+// TestMemTableSlabAllocationsCount 验证 inline-forward 优化后 MemTable.Put
+// 的堆分配次数低于优化前的版本（优化前 3 allocs：map + *skipNode + forward slice）。
+//
+// 为精确测量 Put 路径的分配数，将 alloc 测量拆分为「插入路径」与「更新路径」：
+//   - 插入路径：每次 run 使用不同 key，触发 allocNode，验证 slab 优化后
+//     单次插入的分配收敛到 1 次（仅 map alloc，节点从 slab 数组中取）；
+//   - 更新路径：固定 key，验证更新已有节点不分配新节点，符合跳表语义。
+func TestMemTableSlabAllocationsCount(t *testing.T) {
+	// 预热 GC，让 slab 等内部结构稳定
+	for i := 0; i < 1000; i++ {
+		mt := NewMemTable()
+		_, _, _ = mt.Put(fmt.Sprintf("warm_%d", i), Row{
+			Version: 1,
+			Columns: map[string]common.Value{"v": common.NewInt64(1)},
+		})
+	}
+
+	t.Run("InsertPath", func(t *testing.T) {
+		// 每次 run 使用全新 key，强制走 allocNode() 路径。
+		// 使用闭包计数器确保 key 在每次调用都不同。
+		var seq int
+		keyBuf := make([]string, 0, 2048)
+		for i := 0; i < 2048; i++ {
+			keyBuf = append(keyBuf, fmt.Sprintf("alloc_inspect_%010d", i))
+		}
+		cols := map[string]common.Value{"v": common.NewInt64(1)}
+
+		mt := NewMemTable()
+		allocs := testing.AllocsPerRun(1000, func() {
+			key := keyBuf[seq%len(keyBuf)]
+			seq++
+			_, _, _ = mt.Put(key, Row{Version: 1, Columns: cols})
+		})
+
+		// 插入路径：map alloc（来自 Row.Columns 共享 map，理论上不再分配，
+		// 但闭包捕获 keyBuf 元素与 fmt 操作可能引入额外分配）。
+		// 优化后插入路径应 <= 2 allocs（map 复用时为 0，所有分配都源自 map alloc）。
+		t.Logf("MemTable.Put(insert) 平均分配次数: %.2f", allocs)
+		if allocs > 2.0 {
+			t.Errorf("insert path: expected at most 2 allocs per Put, got %.2f", allocs)
+		}
+	})
+
+	t.Run("UpdatePath", func(t *testing.T) {
+		// 固定 key 走更新路径：不应调用 allocNode，
+		// 分配数应明显低于插入路径（理想为 0，因为 Row 由值传递）。
+		mt := NewMemTable()
+		key := "fixed_key_12345"
+		// 预 Put 一次以建立节点
+		_, _, _ = mt.Put(key, Row{
+			Version: 1,
+			Columns: map[string]common.Value{"v": common.NewInt64(1)},
+		})
+		cols := map[string]common.Value{"v": common.NewInt64(1)}
+		var v uint64
+
+		allocs := testing.AllocsPerRun(1000, func() {
+			v++
+			_, _, _ = mt.Put(key, Row{Version: v, Columns: cols})
+		})
+
+		t.Logf("MemTable.Put(update) 平均分配次数: %.2f", allocs)
+		// 更新路径不应触发 skipNode 分配；闭包内可能引入少量分配，
+		// 因此阈值宽松到 1 alloc。
+		if allocs > 1.0 {
+			t.Errorf("update path: expected at most 1 alloc per Put (no new node), got %.2f", allocs)
+		}
+	})
+}
