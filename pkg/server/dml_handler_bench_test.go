@@ -28,20 +28,22 @@ func BenchmarkInsert(b *testing.B) {
 
 // BenchmarkInsertBatch 衡量批量 INSERT 经 HTTP /write 入口的耗时与分配。
 // 每批 100 行，与单行 INSERT 对照，可观察到 WriteBatch 相对逐行 INSERT 的摊销收益。
+// 每次迭代按 i*batchSize 偏移主键 id，避免与上一轮产生主键冲突。
 func BenchmarkInsertBatch(b *testing.B) {
 	srv := newBenchServerWithTable(b)
 	defer func() { _ = srv.Stop() }()
 
 	const batchSize = 100
 	rows := make([]map[string]any, batchSize)
-	for i := 0; i < batchSize; i++ {
-		rows[i] = map[string]any{"id": int64(i + 1), benchColName: "x"}
-	}
-	body, _ := encodeBenchWriteBody(benchTableName, rows)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// 调整 id 偏移避免与上一轮主键冲突
+		// 调整 id 偏移避免与上一轮主键冲突：第 i 轮 id 范围 [i*batchSize+1, (i+1)*batchSize]
+		offset := int64(i) * batchSize
+		for j := 0; j < batchSize; j++ {
+			rows[j] = map[string]any{"id": offset + int64(j) + 1, benchColName: "x"}
+		}
+		body, _ := encodeBenchWriteBody(benchTableName, rows)
 		req := httptest.NewRequest(http.MethodPost, "/write", strings.NewReader(body))
 		w := httptest.NewRecorder()
 		srv.httpWrite(w, req)
