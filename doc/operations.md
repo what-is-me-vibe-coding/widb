@@ -810,7 +810,7 @@ curl -s http://127.0.0.1:8080/admin/stats | jq '.tables[] | select(.engine=="lsm
 
 ### 10.3 慢查询日志端点
 
-`/admin/slow-queries` 用于回放与定位执行耗时超过阈值的 SQL，辅助排障。**仅记录 HTTP `/query`、`/write` 与内部 `ExecuteQuery` 调用**，目前不覆盖 TCP / PG wire 接入。
+`/admin/slow-queries` 用于回放与定位执行耗时超过阈值的 SQL，辅助排障。覆盖所有接入入口：HTTP `/query`、`/write`、自定义 TCP 协议、PostgreSQL wire 协议，以及进程内 `ExecuteQuery` / `ExecuteWrite`（`cmd/widb` 一键启动模式），并通过 `source` 字段（`http` / `tcp` / `pgwire` / `inproc`）区分来源。
 
 | 端点 | 方法 | 行为 | 失败语义 |
 |------|------|------|----------|

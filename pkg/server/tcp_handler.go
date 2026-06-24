@@ -120,7 +120,7 @@ func (s *Server) handleQueryPacket(pkt *Packet) (*Packet, error) {
 		if err := json.Unmarshal(payload, &req); err != nil {
 			return nil, fmt.Errorf("解析查询请求: %w", err)
 		}
-		return s.handleQuery(&req)
+		return s.handleQuerySource(SlowQuerySourceTCP, &req)
 	})
 }
 
@@ -131,7 +131,7 @@ func (s *Server) handleWritePacket(pkt *Packet) (*Packet, error) {
 		if err := json.Unmarshal(payload, &req); err != nil {
 			return nil, fmt.Errorf("解析写入请求: %w", err)
 		}
-		return s.handleWrite(&req)
+		return s.handleWriteSource(SlowQuerySourceTCP, &req)
 	})
 }
 

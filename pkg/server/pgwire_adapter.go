@@ -13,8 +13,9 @@ type pgwireAdapter struct {
 }
 
 // ExecuteSQL 实现 pgwire.SQLExecutor 接口，通过进程内调用执行 SQL。
+// 慢查询日志中的 source 标记为 SlowQuerySourcePGWire，便于与 HTTP/TCP 区分。
 func (a *pgwireAdapter) ExecuteSQL(sql string) (*pgwire.SQLResult, error) {
-	resp, err := a.server.ExecuteQuery(sql)
+	resp, err := a.server.handleQuerySource(SlowQuerySourcePGWire, &QueryRequest{SQL: sql})
 	if err != nil {
 		return nil, err
 	}

@@ -153,7 +153,7 @@ func (s *Server) handlePostJSON(w http.ResponseWriter, r *http.Request, req any,
 func (s *Server) httpQuery(w http.ResponseWriter, r *http.Request) {
 	var req QueryRequest
 	s.handlePostJSON(w, r, &req, func() (*Response, error) {
-		return s.handleQuery(&req)
+		return s.handleQuerySource(SlowQuerySourceHTTP, &req)
 	})
 }
 
@@ -161,7 +161,7 @@ func (s *Server) httpQuery(w http.ResponseWriter, r *http.Request) {
 func (s *Server) httpWrite(w http.ResponseWriter, r *http.Request) {
 	var req WriteRequest
 	s.handlePostJSON(w, r, &req, func() (*Response, error) {
-		return s.handleWrite(&req)
+		return s.handleWriteSource(SlowQuerySourceHTTP, &req)
 	})
 }
 

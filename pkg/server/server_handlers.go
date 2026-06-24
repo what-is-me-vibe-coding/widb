@@ -11,14 +11,23 @@ import (
 	"github.com/what-is-me-vibe-coding/test-db/pkg/storage"
 )
 
-// handleQuery 执行 SQL 查询。
+// handleQuery 是 HTTP 入口的便捷封装，慢查询 source 固定为 HTTP。
+// TCP / PG wire / inproc 等其他入口请使用 handleQuerySource 显式指定 source，
+// 便于在慢查询日志与 Prometheus 指标中按协议维度区分瓶颈点。
 func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
+	return s.handleQuerySource(SlowQuerySourceHTTP, req)
+}
+
+// handleQuerySource 执行 SQL 查询并在执行完成后把耗时、SQL、错误码记入慢查询日志与
+// Prometheus 指标。source 用于标记请求来源协议（http/tcp/pgwire/inproc）。
+// 任何 nil 字段（log 未初始化）均安全 no-op，避免影响主流程。
+func (s *Server) handleQuerySource(source SlowQuerySource, req *QueryRequest) (*Response, error) {
 	start := time.Now()
 	// respErr 在 defer 内用于「记录执行成功但带错误的响应」；正常返回时 errMsg 为空。
 	resp, queryErr := s.handleQueryInner(req)
 	duration := time.Since(start)
 	s.metrics.QueryDuration.WithLabelValues("sql").Observe(duration.Seconds())
-	s.recordSlowQuery(duration, SlowQuerySourceHTTP, req.SQL, resp, queryErr)
+	s.recordSlowQuery(duration, source, req.SQL, resp, queryErr)
 	return resp, queryErr
 }
 
@@ -247,8 +256,15 @@ func buildPrimaryKeyFromValues(tbl *catalog.Table, values map[string]common.Valu
 	return builder.String(), nil
 }
 
-// handleWrite 批量写入数据。
+// handleWrite 是 HTTP 入口的便捷封装，慢查询 source 固定为 HTTP。
+// TCP / inproc 等其他入口请使用 handleWriteSource 显式指定 source。
 func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
+	return s.handleWriteSource(SlowQuerySourceHTTP, req)
+}
+
+// handleWriteSource 批量写入数据并在执行完成后把耗时、SQL、错误码记入慢查询日志与
+// Prometheus 指标。source 用于标记请求来源协议（http/tcp/inproc）。
+func (s *Server) handleWriteSource(source SlowQuerySource, req *WriteRequest) (*Response, error) {
 	start := time.Now()
 	resp, err := s.handleWriteInner(req)
 	duration := time.Since(start)
@@ -257,7 +273,7 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 	} else {
 		s.metrics.WriteDuration.WithLabelValues("success").Observe(duration.Seconds())
 	}
-	s.recordSlowQuery(duration, SlowQuerySourceHTTP, s.writeSQLForLog(req), resp, err)
+	s.recordSlowQuery(duration, source, s.writeSQLForLog(req), resp, err)
 	return resp, err
 }
 
