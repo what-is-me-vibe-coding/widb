@@ -184,6 +184,7 @@ SELECT * FROM sensor WHERE name LIKE '%al%' LIMIT 10;
 | `/admin/flush` | POST | 强制 flush LSM MemTable |
 | `/admin/compact` | POST | 强制触发一次 LSM Compaction |
 | `/admin/stats` | GET | 全库 + 每张表实时统计（行数/Segment数/MemTable大小等） |
+| `/admin/slow-queries` | GET | 慢查询日志（环形缓冲，按时间倒序回放执行耗时超过阈值的 SQL） |
 
 > 完整的 `/admin/*` 字段说明与运维示例见 [doc/operations.md §10](doc/operations.md#10-常见运维操作清单) 与 [doc/api.md §1.5](doc/api.md#15-管理与运维端点)。
 

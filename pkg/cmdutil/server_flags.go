@@ -25,19 +25,21 @@ import (
 // 字段命名与原 cmd/{server,widb}/main.go 中 cliFlags 保持一致；默认值通过
 // config.Default() 提供，命令行仅作为「显式覆盖」通道，因此所有字段零值表示「未设置」。
 type ServerFlags struct {
-	FS                *flag.FlagSet
-	ConfigPath        *string
-	GenConfigPath     *string
-	TCPAddr           *string
-	HTTPAddr          *string
-	PGAddr            *string
-	DataDir           *string
-	MaxMemTableSize   *int64
-	EnableScheduler   *bool
-	FlushInterval     *time.Duration
-	CompactInterval   *time.Duration
-	WALCleanInterval  *time.Duration
-	WALCleanThreshold *int64
+	FS                   *flag.FlagSet
+	ConfigPath           *string
+	GenConfigPath        *string
+	TCPAddr              *string
+	HTTPAddr             *string
+	PGAddr               *string
+	DataDir              *string
+	MaxMemTableSize      *int64
+	EnableScheduler      *bool
+	FlushInterval        *time.Duration
+	CompactInterval      *time.Duration
+	WALCleanInterval     *time.Duration
+	WALCleanThreshold    *int64
+	SlowQueryThresholdMS *int
+	SlowQueryMaxEntries  *int
 }
 
 // NewServerFlags 在 fs 上注册全部 server/widb 共享 flag 并返回 ServerFlags。
@@ -45,26 +47,28 @@ type ServerFlags struct {
 func NewServerFlags(flagName string) *ServerFlags {
 	fs := flag.NewFlagSet(flagName, flag.ContinueOnError)
 	return &ServerFlags{
-		FS:                fs,
-		ConfigPath:        fs.String("config", "", "配置文件路径（YAML），未指定时依次查找 ./widb.yaml、./config.yaml"),
-		GenConfigPath:     fs.String("gen-config", "", "生成带注释的默认配置模板到指定路径后退出"),
-		TCPAddr:           fs.String("tcp", "", "TCP 监听地址（覆盖配置文件）"),
-		HTTPAddr:          fs.String("http", "", "HTTP 监听地址（覆盖配置文件）"),
-		PGAddr:            fs.String("pg", "", "PostgreSQL wire 协议监听地址（覆盖配置文件，留空禁用）"),
-		DataDir:           fs.String("data", "", "数据目录（覆盖配置文件）"),
-		MaxMemTableSize:   fs.Int64("max-memtable", 0, "MemTable 最大字节数（覆盖配置文件）"),
-		EnableScheduler:   fs.Bool("scheduler", false, "启用后台调度器（覆盖配置文件）"),
-		FlushInterval:     fs.Duration("scheduler.flush-interval", 0, "自动刷盘检查间隔（覆盖配置文件）"),
-		CompactInterval:   fs.Duration("scheduler.compact-interval", 0, "自动 Compaction 检查间隔（覆盖配置文件）"),
-		WALCleanInterval:  fs.Duration("scheduler.wal-clean-interval", 0, "WAL 清理检查间隔（覆盖配置文件）"),
-		WALCleanThreshold: fs.Int64("scheduler.wal-clean-threshold", 0, "WAL 文件大小阈值（覆盖配置文件）"),
+		FS:                   fs,
+		ConfigPath:           fs.String("config", "", "配置文件路径（YAML），未指定时依次查找 ./widb.yaml、./config.yaml"),
+		GenConfigPath:        fs.String("gen-config", "", "生成带注释的默认配置模板到指定路径后退出"),
+		TCPAddr:              fs.String("tcp", "", "TCP 监听地址（覆盖配置文件）"),
+		HTTPAddr:             fs.String("http", "", "HTTP 监听地址（覆盖配置文件）"),
+		PGAddr:               fs.String("pg", "", "PostgreSQL wire 协议监听地址（覆盖配置文件，留空禁用）"),
+		DataDir:              fs.String("data", "", "数据目录（覆盖配置文件）"),
+		MaxMemTableSize:      fs.Int64("max-memtable", 0, "MemTable 最大字节数（覆盖配置文件）"),
+		EnableScheduler:      fs.Bool("scheduler", false, "启用后台调度器（覆盖配置文件）"),
+		FlushInterval:        fs.Duration("scheduler.flush-interval", 0, "自动刷盘检查间隔（覆盖配置文件）"),
+		CompactInterval:      fs.Duration("scheduler.compact-interval", 0, "自动 Compaction 检查间隔（覆盖配置文件）"),
+		WALCleanInterval:     fs.Duration("scheduler.wal-clean-interval", 0, "WAL 清理检查间隔（覆盖配置文件）"),
+		WALCleanThreshold:    fs.Int64("scheduler.wal-clean-threshold", 0, "WAL 文件大小阈值（覆盖配置文件）"),
+		SlowQueryThresholdMS: fs.Int("slow-query-threshold-ms", -1, "慢查询判定阈值（毫秒），<= 0 禁用（覆盖配置文件，-1 表示未设置）"),
+		SlowQueryMaxEntries:  fs.Int("slow-query-max-entries", -1, "慢查询日志环形缓冲容量（覆盖配置文件，-1 表示未设置）"),
 	}
 }
 
 // SetFlags 返回显式传入的 flag 名集合，供 applyOverrides 判定哪些字段被覆盖。
 // 公开给测试使用，避免散落字符串字面量。
 func (f *ServerFlags) SetFlags() map[string]bool {
-	set := make(map[string]bool, 11)
+	set := make(map[string]bool, 13)
 	f.FS.Visit(func(fl *flag.Flag) { set[fl.Name] = true })
 	return set
 }
@@ -103,6 +107,12 @@ func (f *ServerFlags) ApplyOverrides(cfg *config.Config) {
 	if set["scheduler.wal-clean-threshold"] {
 		cfg.Scheduler.WALCleanThreshold = *f.WALCleanThreshold
 	}
+	if set["slow-query-threshold-ms"] {
+		cfg.Server.SlowQueryThresholdMS = *f.SlowQueryThresholdMS
+	}
+	if set["slow-query-max-entries"] {
+		cfg.Server.SlowQueryMaxEntries = *f.SlowQueryMaxEntries
+	}
 }
 
 // LoadConfig 按分层策略加载配置：默认值 < 配置文件。
@@ -133,5 +143,7 @@ func ToServerConfig(cfg config.Config) server.Config {
 			WALCleanInterval:  time.Duration(cfg.Scheduler.WALCleanInterval),
 			WALCleanThreshold: cfg.Scheduler.WALCleanThreshold,
 		},
+		SlowQueryThreshold: time.Duration(cfg.Server.SlowQueryThresholdMS) * time.Millisecond,
+		SlowQueryCapacity:  cfg.Server.SlowQueryMaxEntries,
 	}
 }

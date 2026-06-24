@@ -73,6 +73,7 @@ type Server struct {
 - `widb_memtable_size_bytes`：当前 MemTable 大小。
 - `widb_segment_count`：Segment 数量（按层级标签）。
 - `widb_cache_hit_ratio`：BlockCache 命中率。
+- `widb_slow_queries_total`：慢查询总数（按来源协议），与 `widb_query_duration_seconds` 互补。配套运维端点 `GET /admin/slow-queries` 提供样本原文（环形缓冲）。详见 [doc/operations.md §10.3](../doc/operations.md#103-慢查询日志端点)。
 
 ## 6. 接口定义
 

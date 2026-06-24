@@ -27,6 +27,10 @@ type Metrics struct {
 	CacheEntries      *prometheus.GaugeVec
 	HTTPRequestsTotal *prometheus.CounterVec
 	HTTPDuration      *prometheus.HistogramVec
+	// SlowQueriesTotal 按来源协议统计被记录到 SlowQueryLog 的慢查询次数。
+	// 与 widb_query_duration_seconds 互补：前者只统计超过阈值的慢查询，
+	// 后者覆盖全量耗时分布。
+	SlowQueriesTotal *prometheus.CounterVec
 }
 
 // NewMetrics 创建并注册所有 Prometheus 指标。
@@ -55,6 +59,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		CacheEntries:      newCacheGauge(factory, "cache_entries", "缓存条目数"),
 		HTTPRequestsTotal: newHTTPRequestsTotal(factory),
 		HTTPDuration:      newHTTPDuration(factory),
+		SlowQueriesTotal:  newSlowQueriesTotal(factory),
 	}
 
 	m.initLabels()
@@ -84,9 +89,13 @@ func (m *Metrics) initLabels() {
 	m.CacheEntries.WithLabelValues("block").Set(0)
 	m.CacheEntries.WithLabelValues("index").Set(0)
 	// 预热 HTTP 耗时直方图：每个端点 + 方法在首次请求前可见
-	for _, ep := range []string{"/query", "/write", "/health", "/admin/flush", "/admin/compact", "/admin/stats", "other"} {
+	for _, ep := range []string{"/query", "/write", "/health", "/admin/flush", "/admin/compact", "/admin/stats", "/admin/slow-queries", "other"} {
 		m.HTTPDuration.WithLabelValues(ep, "GET").Observe(0)
 		m.HTTPDuration.WithLabelValues(ep, "POST").Observe(0)
+	}
+	// 预热慢查询计数器：每个来源协议在首次记录前可见
+	for _, src := range []string{string(SlowQuerySourceHTTP), string(SlowQuerySourceTCP), string(SlowQuerySourcePGWire), string(SlowQuerySourceInProc)} {
+		m.SlowQueriesTotal.WithLabelValues(src).Add(0)
 	}
 }
 
@@ -161,4 +170,12 @@ func newHTTPDuration(f promauto.Factory) *prometheus.HistogramVec {
 		Help:    "HTTP 请求耗时分布（按端点/方法）",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"endpoint", "method"})
+}
+
+// newSlowQueriesTotal 创建慢查询计数器，标签为 source（来源协议）。
+// 该指标与 SlowQueryLog 配合：SlowQueryLog 保存样本原文，Counter 提供聚合趋势。
+func newSlowQueriesTotal(f promauto.Factory) *prometheus.CounterVec {
+	return f.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Name: "slow_queries_total", Help: "慢查询总数（按来源协议），执行耗时超过 server.slow_query_threshold_ms 时递增",
+	}, []string{"source"})
 }

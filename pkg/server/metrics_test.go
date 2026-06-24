@@ -29,6 +29,7 @@ func TestNewMetrics(t *testing.T) {
 	assertNotNil(t, "WALCleanTotal", m.WALCleanTotal)
 	assertNotNil(t, "HTTPRequestsTotal", m.HTTPRequestsTotal)
 	assertNotNil(t, "HTTPDuration", m.HTTPDuration)
+	assertNotNil(t, "SlowQueriesTotal", m.SlowQueriesTotal)
 }
 
 // assertNotNil 简化 NewMetrics 字段非 nil 断言。

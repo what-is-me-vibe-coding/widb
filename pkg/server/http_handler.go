@@ -22,7 +22,7 @@ const (
 )
 
 // registerHTTPHandlers 注册 HTTP REST 路由。
-// 已知端点（/query、/write、/health、/admin/flush、/admin/compact、/admin/stats）
+// 已知端点（/query、/write、/health、/admin/flush、/admin/compact、/admin/stats、/admin/slow-queries）
 // 逐个注册以便指标中间件能按端点打标；其余路径统一归到 "other" 标签。
 func (s *Server) registerHTTPHandlers() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -33,6 +33,7 @@ func (s *Server) registerHTTPHandlers() *http.ServeMux {
 	mux.HandleFunc("/admin/flush", s.httpMetricsMiddleware("/admin/flush", s.handleAdminFlush))
 	mux.HandleFunc("/admin/compact", s.httpMetricsMiddleware("/admin/compact", s.handleAdminCompact))
 	mux.HandleFunc("/admin/stats", s.httpMetricsMiddleware("/admin/stats", s.handleAdminStats))
+	mux.HandleFunc("/admin/slow-queries", s.httpMetricsMiddleware("/admin/slow-queries", s.handleAdminSlowQueries))
 	// 兜底路由：未匹配路径归到 "other" 标签，避免任意 URL 撑爆基数
 	mux.HandleFunc("/", s.httpMetricsMiddleware(endpointOther, s.httpNotFound))
 

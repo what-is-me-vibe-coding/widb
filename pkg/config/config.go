@@ -44,6 +44,10 @@ type ServerConfig struct {
 	TCPAddr  string `yaml:"tcp_addr"`
 	HTTPAddr string `yaml:"http_addr"`
 	PGAddr   string `yaml:"pg_addr"`
+	// SlowQueryThresholdMS 是慢查询判定阈值（毫秒）。<= 0 时禁用慢查询日志。
+	SlowQueryThresholdMS int `yaml:"slow_query_threshold_ms"`
+	// SlowQueryMaxEntries 是慢查询日志环形缓冲容量。
+	SlowQueryMaxEntries int `yaml:"slow_query_max_entries"`
 }
 
 // StorageConfig 是存储引擎相关的配置。
@@ -72,9 +76,11 @@ type Config struct {
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
-			TCPAddr:  "0.0.0.0:9000",
-			HTTPAddr: "0.0.0.0:8080",
-			PGAddr:   "0.0.0.0:5432",
+			TCPAddr:              "0.0.0.0:9000",
+			HTTPAddr:             "0.0.0.0:8080",
+			PGAddr:               "0.0.0.0:5432",
+			SlowQueryThresholdMS: 100,
+			SlowQueryMaxEntries:  100,
 		},
 		Storage: StorageConfig{
 			DataDir:         "./data",
@@ -97,6 +103,12 @@ func (c Config) Validate() error {
 	}
 	if c.Server.HTTPAddr == "" {
 		return errors.New("server.http_addr 不能为空")
+	}
+	if c.Server.SlowQueryThresholdMS < 0 {
+		return fmt.Errorf("server.slow_query_threshold_ms 不能为负数，当前 %d", c.Server.SlowQueryThresholdMS)
+	}
+	if c.Server.SlowQueryMaxEntries < 0 {
+		return fmt.Errorf("server.slow_query_max_entries 不能为负数，当前 %d", c.Server.SlowQueryMaxEntries)
 	}
 	if c.Storage.DataDir == "" {
 		return errors.New("storage.data_dir 不能为空")

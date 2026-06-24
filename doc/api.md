@@ -102,6 +102,7 @@
 | `/admin/flush` | POST | 把每张 LSM 表的活跃/不可变 MemTable 立即落盘 | `{"code":0,"message":"强制 flush 成功","affected":N}` | 任一表失败 500；非 POST 405 |
 | `/admin/compact` | POST | 立即尝试对每张 LSM 表做一次 Compaction | `{"code":0,"message":"强制 compact 成功","affected":N}` | 同上 |
 | `/admin/stats` | GET | 全库 + 每张表的元信息与运行时统计 | 见下 | 非 GET 405 |
+| `/admin/slow-queries` | GET | 慢查询日志：回放执行耗时超过 `slow_query_threshold_ms` 的 SQL | 见下 | 非 GET 405；禁用时返回 200 + 空 `queries` |
 
 `/admin/stats` 响应字段：
 
@@ -125,6 +126,22 @@
 | `tables[].immutable_row_count` | int64（仅 LSM） | 不可变 MemTable 行数之和 |
 
 完整示例与运维场景见 [doc/operations.md §10.2](operations.md#102-数据库统计端点)。
+
+`/admin/slow-queries` 响应字段：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `config.enabled` | bool | 慢查询日志是否启用（`threshold_ms > 0`） |
+| `config.threshold_ms` | int | 当前阈值（毫秒）；`<= 0` 表示禁用 |
+| `config.capacity` | int | 环形缓冲容量；超容量后覆盖最旧条目 |
+| `queries[].timestamp` | string | RFC3339Nano 编码的执行时间 |
+| `queries[].duration_ms` | float64 | 耗时（毫秒，便于人读） |
+| `queries[].duration_ns` | int64 | 耗时（纳秒，高精度聚合） |
+| `queries[].source` | string | 来源协议：`http` / `tcp` / `pgwire` / `inproc` |
+| `queries[].sql` | string | 执行的 SQL；超过 4KB 会被截断 |
+| `queries[].error` | string | 错误信息（业务码非 0 时由响应 message 填入）；成功时省略 |
+
+完整示例与运维场景见 [doc/operations.md §10.3](operations.md#103-慢查询日志端点)。
 
 ## 2. TCP 协议
 

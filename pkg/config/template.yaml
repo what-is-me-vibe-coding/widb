@@ -12,6 +12,11 @@ server:
   http_addr: "0.0.0.0:8080"
   # PostgreSQL wire 协议监听地址（JDBC/psql 接入，留空则不启用）
   pg_addr: "0.0.0.0:5432"
+  # 慢查询判定阈值（毫秒）。耗时 >= 该阈值的 SQL 会进入慢查询日志
+  # 并递增 widb_slow_queries_total 指标；<= 0 时禁用慢查询日志
+  slow_query_threshold_ms: 100
+  # 慢查询日志环形缓冲容量，超过后覆盖最旧条目
+  slow_query_max_entries: 100
 
 # 存储引擎配置
 storage:

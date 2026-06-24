@@ -808,6 +808,72 @@ curl -s http://127.0.0.1:8080/admin/stats | jq '.tables[] | select(.engine=="lsm
 
 > 注意：`/admin/stats` 调用频率建议控制在 1Hz 以内，每次会遍历全部表 + 读取每张引擎的内部锁；高并发请改用 `/metrics` 抓 Prometheus 计数器。
 
+### 10.3 慢查询日志端点
+
+`/admin/slow-queries` 用于回放与定位执行耗时超过阈值的 SQL，辅助排障。**仅记录 HTTP `/query`、`/write` 与内部 `ExecuteQuery` 调用**，目前不覆盖 TCP / PG wire 接入。
+
+| 端点 | 方法 | 行为 | 失败语义 |
+|------|------|------|----------|
+| `/admin/slow-queries` | GET | 返回当前慢查询环形缓冲内的全部记录（按时间倒序），并回显当前阈值与容量 | 日志禁用（threshold<=0）时仍返回 200 + 空 `queries`；非 GET 方法返回 405 |
+
+响应 JSON 格式：
+
+```json
+{
+  "code": 0,
+  "message": "slow queries 查询成功",
+  "config": {
+    "enabled": true,
+    "threshold_ms": 100,
+    "capacity": 100
+  },
+  "queries": [
+    {
+      "timestamp": "2025-01-01T00:00:00.123456789Z",
+      "duration_ns": 152000000,
+      "duration_ms": 152.0,
+      "source": "http",
+      "sql": "SELECT * FROM wide_table WHERE id < 1000",
+      "error": ""
+    }
+  ]
+}
+```
+
+字段语义：
+
+- `config.threshold_ms`：当前慢查询判定阈值（毫秒）。`<= 0` 表示禁用。
+- `config.capacity`：环形缓冲容量；超容量后覆盖最旧条目。
+- `timestamp`：RFC3339Nano 编码的执行开始时间。
+- `duration_ms` / `duration_ns`：查询耗时；纳秒值保留高精度，便于 `p99` 等聚合计算。
+- `source`：来源协议标签（`http` / `tcp` / `pgwire` / `inproc`），便于区分瓶颈点。
+- `sql`：执行的 SQL 文本；超过 4KB 会被截断并追加 `... (truncated)` 标记。
+- `error`：执行错误信息（业务码非 0 时由 `response.message` 填入）；成功执行时省略。
+
+配套配置（`server` 段）：
+
+```yaml
+server:
+  # 慢查询判定阈值（毫秒）。<= 0 时禁用慢查询日志
+  slow_query_threshold_ms: 100
+  # 慢查询环形缓冲容量
+  slow_query_max_entries: 100
+```
+
+配套 Prometheus 指标：`widb_slow_queries_total{source=http|tcp|pgwire|inproc}`，与 `widb_query_duration_seconds` 互补——后者覆盖全量耗时分布，前者只统计超过阈值的次数。
+
+典型使用：
+
+```bash
+# 查看最近 10 条慢查询
+curl -s http://127.0.0.1:8080/admin/slow-queries | jq '.queries[:10]'
+
+# 统计每个来源协议的慢查询次数
+curl -s http://127.0.0.1:8080/metrics | grep widb_slow_queries_total
+```
+
+> 注意：日志采用环形缓冲，进程重启后清空。如需长期归档，可把 `widb_slow_queries_total` 接入监控系统（Prometheus / Grafana）形成告警闭环。
+
 ## 11. 安全建议
 
 ### 11.1 网络层

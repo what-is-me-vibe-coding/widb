@@ -14,10 +14,16 @@ import (
 // handleQuery 执行 SQL 查询。
 func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 	start := time.Now()
-	defer func() {
-		s.metrics.QueryDuration.WithLabelValues("sql").Observe(time.Since(start).Seconds())
-	}()
+	// respErr 在 defer 内用于「记录执行成功但带错误的响应」；正常返回时 errMsg 为空。
+	resp, queryErr := s.handleQueryInner(req)
+	duration := time.Since(start)
+	s.metrics.QueryDuration.WithLabelValues("sql").Observe(duration.Seconds())
+	s.recordSlowQuery(duration, SlowQuerySourceHTTP, req.SQL, resp, queryErr)
+	return resp, queryErr
+}
 
+// handleQueryInner 是 handleQuery 的核心实现，剥离计时与慢查询记录后便于单测。
+func (s *Server) handleQueryInner(req *QueryRequest) (*Response, error) {
 	stmt, err := s.parser.Parse(req.SQL)
 	if err != nil {
 		return s.queryErrResp(MetricQueryParseError, "SQL 解析错误: %v", err), nil
@@ -73,6 +79,33 @@ func (s *Server) handleQuery(req *QueryRequest) (*Response, error) {
 
 	s.querySuccessInc()
 	return &Response{Code: 0, Data: data, Rows: totalRows, Columns: colNames, ColumnTypes: colTypes}, nil
+}
+
+// recordSlowQuery 在执行完成后统一把耗时、SQL、错误码记入慢查询日志与 Prometheus 指标。
+// 任何 nil 字段（log 未初始化）均安全 no-op，避免影响主流程。
+func (s *Server) recordSlowQuery(duration time.Duration, source SlowQuerySource, sql string, resp *Response, execErr error) {
+	if s == nil {
+		return
+	}
+	if s.slowQueries == nil || !s.slowQueries.Enabled() {
+		return
+	}
+	// 同时具备：日志未命中阈值 -> 退出
+	if duration < s.slowQueries.Threshold() {
+		return
+	}
+	// 错误信息汇总：execErr 优先，其次是 resp.Message（业务语义错误，如 Code != 0）
+	var errMsg string
+	switch {
+	case execErr != nil:
+		errMsg = execErr.Error()
+	case resp != nil && resp.Code != 0:
+		errMsg = resp.Message
+	}
+	s.slowQueries.Record(duration, source, sql, errMsg)
+	if s.metrics != nil && s.metrics.SlowQueriesTotal != nil {
+		s.metrics.SlowQueriesTotal.WithLabelValues(string(source)).Inc()
+	}
 }
 
 // handleInsert 执行 INSERT 语句，将行数据写入存储引擎。
@@ -217,7 +250,19 @@ func buildPrimaryKeyFromValues(tbl *catalog.Table, values map[string]common.Valu
 // handleWrite 批量写入数据。
 func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 	start := time.Now()
+	resp, err := s.handleWriteInner(req)
+	duration := time.Since(start)
+	if err != nil {
+		s.metrics.WriteDuration.WithLabelValues("error").Observe(duration.Seconds())
+	} else {
+		s.metrics.WriteDuration.WithLabelValues("success").Observe(duration.Seconds())
+	}
+	s.recordSlowQuery(duration, SlowQuerySourceHTTP, s.writeSQLForLog(req), resp, err)
+	return resp, err
+}
 
+// handleWriteInner 是 handleWrite 的核心实现。
+func (s *Server) handleWriteInner(req *WriteRequest) (*Response, error) {
 	tbl, err := s.catalog.GetTable(req.Table)
 	if err != nil {
 		return s.writeErrResp(MetricWriteTableNotFound, "表不存在: %v", err), nil
@@ -237,8 +282,16 @@ func (s *Server) handleWrite(req *WriteRequest) (*Response, error) {
 	}
 
 	s.writeSuccessInc(len(writeRows))
-	s.metrics.WriteDuration.WithLabelValues("success").Observe(time.Since(start).Seconds())
 	return &Response{Code: 0, Rows: len(writeRows)}, nil
+}
+
+// writeSQLForLog 把 /write 请求投影为慢查询日志里的 SQL 描述。
+// 直接写原始 JSON payload 会暴露数据且占用过多缓冲，因此只保留表名与行数。
+func (s *Server) writeSQLForLog(req *WriteRequest) string {
+	if req == nil {
+		return ""
+	}
+	return fmt.Sprintf("WRITE INTO %s (%d rows)", req.Table, len(req.Rows))
 }
 
 // handleCreateTable 处理 CREATE TABLE 语句：在 catalog 中注册表，

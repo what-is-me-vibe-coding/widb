@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/what-is-me-vibe-coding/test-db/pkg/catalog"
@@ -31,6 +32,12 @@ type Config struct {
 	MaxConnections  int                     // 最大并发 TCP 连接数，0 表示不限制
 	EnableScheduler bool                    // 是否启用后台调度器
 	SchedulerConfig storage.SchedulerConfig // 调度器配置
+	// SlowQueryThreshold 是慢查询判定阈值（duration 形式）。
+	// 转换层（pkg/cmdutil）已把 YAML 的毫秒值换算成 time.Duration。
+	// <= 0 时禁用慢查询日志。
+	SlowQueryThreshold time.Duration
+	// SlowQueryCapacity 是慢查询环形缓冲容量；<= 0 时 NewSlowQueryLog 内部回退到 100。
+	SlowQueryCapacity int
 }
 
 // Server 是数据库服务器，同时提供 TCP 和 HTTP 接入。
@@ -45,6 +52,8 @@ type Server struct {
 	metrics   *Metrics
 	registry  prometheus.Registerer
 	adapter   *routingAdapter // 表路由适配器，按表名选择 LSM 或内存引擎
+	// slowQueries 是慢查询日志；可能为 nil（禁用时 NewServer 内部判空）。
+	slowQueries *SlowQueryLog
 
 	tcpListener  net.Listener
 	httpServer   *http.Server
@@ -92,16 +101,17 @@ func NewServer(cfg Config, opts ...Option) (*Server, error) {
 	exec := query.NewExecutor(adapter)
 
 	s := &Server{
-		cfg:       cfg,
-		storage:   eng,
-		catalog:   cat,
-		parser:    query.NewParser(),
-		analyzer:  query.NewAnalyzer(cat),
-		optimizer: query.NewOptimizer(),
-		executor:  exec,
-		adapter:   adapter,
-		done:      make(chan struct{}),
-		conns:     make(map[net.Conn]struct{}),
+		cfg:         cfg,
+		storage:     eng,
+		catalog:     cat,
+		parser:      query.NewParser(),
+		analyzer:    query.NewAnalyzer(cat),
+		optimizer:   query.NewOptimizer(),
+		executor:    exec,
+		adapter:     adapter,
+		slowQueries: NewSlowQueryLog(cfg.SlowQueryThreshold, cfg.SlowQueryCapacity),
+		done:        make(chan struct{}),
+		conns:       make(map[net.Conn]struct{}),
 	}
 
 	// 恢复每张 LSM 表的独立引擎（位于 dataDir/tables/<name>/），
@@ -222,6 +232,12 @@ func (s *Server) PGAddr() string {
 // Catalog 返回服务器的 Catalog 实例。
 func (s *Server) Catalog() *catalog.Catalog {
 	return s.catalog
+}
+
+// SlowQueryLog 返回慢查询日志实例；可能为 nil（已禁用时 NewServer 返回零值 SlowQueryLog，
+// 上层应通过 Enabled() 判定而非 nil 判定，避免漏掉「未设置阈值」的常见误用）。
+func (s *Server) SlowQueryLog() *SlowQueryLog {
+	return s.slowQueries
 }
 
 // Stop 优雅关闭服务器，等待所有活跃连接完成。
